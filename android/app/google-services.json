@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "377919689277",
+    "firebase_url": "https://shoq-bfa54-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "shoq-bfa54",
+    "storage_bucket": "shoq-bfa54.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:377919689277:android:004ab00751723f6ef75054",
+        "android_client_info": {
+          "package_name": "com.example.shoq"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "377919689277-bc5h32j66of8ldgo6de7k1hqarkr0olk.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.shoq",
+            "certificate_hash": "a9756bb7e7c111a931136714d073eed5be037b50"
+          }
+        },
+        {
+          "client_id": "377919689277-tpgo1k9rqmkss9sbj8ou2n49j35k243k.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDW-MIvjpgegCfrlOuDWpmuT5lF0iRHPgg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "377919689277-tpgo1k9rqmkss9sbj8ou2n49j35k243k.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "377919689277-0co4v7267bl27dg5i4vtbr5k782iq9lk.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.shoq"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
