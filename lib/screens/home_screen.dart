@@ -67,12 +67,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       drawer: _buildDrawer(context, user),
       body: _buildChatsList(),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          _showAddFriendDialog(context);
-        },
-        child: const Icon(Icons.person_add),
-      ),
     );
   }
 
@@ -276,9 +270,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 24),
                 ElevatedButton.icon(
-                  onPressed: () => _showAddFriendDialog(context),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const FriendsListScreen()),
+                    );
+                  },
                   icon: const Icon(Icons.person_add),
-                  label: const Text('Add Friend'),
+                  label: const Text('Add Friends'),
                 ),
               ],
             ),
@@ -387,161 +386,6 @@ class _HomeScreenState extends State<HomeScreen> {
       return '${diff.inDays}d ago';
     } else {
       return '${date.day}/${date.month}/${date.year}';
-    }
-  }
-
-  void _showAddFriendDialog(BuildContext context) {
-    final emailController = TextEditingController();
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Send Friend Request'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Enter your friend\'s email address:'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: emailController,
-              decoration: const InputDecoration(
-                labelText: 'Email',
-                hintText: 'friend@example.com',
-                prefixIcon: Icon(Icons.email),
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.emailAddress,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final email = emailController.text.trim();
-              if (email.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter an email')),
-                );
-                return;
-              }
-              
-              Navigator.pop(context);
-              await _sendFriendRequest(email);
-            },
-            child: const Text('Send Request'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _sendFriendRequest(String email) async {
-    final currentUser = _auth.currentUser;
-    if (currentUser == null) return;
-
-    try {
-      // Find user by email
-      final userQuery = await _firestore
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .limit(1)
-          .get();
-
-      if (userQuery.docs.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('User not found')),
-          );
-        }
-        return;
-      }
-
-      final friendUser = userQuery.docs.first;
-      final friendId = friendUser.id;
-      
-      if (friendId == currentUser.uid) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('You cannot add yourself')),
-          );
-        }
-        return;
-      }
-
-      // Check if user is blocked
-      final blockedDoc = await _firestore
-          .collection('contacts')
-          .doc(friendId)
-          .collection('blocked')
-          .doc(currentUser.uid)
-          .get();
-
-      if (blockedDoc.exists) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Unable to send request')),
-          );
-        }
-        return;
-      }
-
-      // Check if already friends
-      final existingFriend = await _firestore
-          .collection('contacts')
-          .doc(currentUser.uid)
-          .collection('friends')
-          .doc(friendId)
-          .get();
-
-      if (existingFriend.exists) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Already friends')),
-          );
-        }
-        return;
-      }
-
-      // Check for existing pending request
-      final existingRequest = await _firestore
-          .collection('friendRequests')
-          .where('senderId', isEqualTo: currentUser.uid)
-          .where('receiverId', isEqualTo: friendId)
-          .where('status', isEqualTo: 'pending')
-          .get();
-
-      if (existingRequest.docs.isNotEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Friend request already sent')),
-          );
-        }
-        return;
-      }
-
-      // Create friend request
-      await _firestore.collection('friendRequests').add({
-        'senderId': currentUser.uid,
-        'receiverId': friendId,
-        'status': 'pending',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend request sent!')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
-      }
     }
   }
 }
