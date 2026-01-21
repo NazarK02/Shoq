@@ -1,18 +1,21 @@
 # iOS platform version
 platform :ios, '13.0'
 
-# CocoaPods target for the Flutter Runner app
+# CocoaPods target for Flutter Runner
 target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  
-  # Force compatible pod versions to fix Firebase + MLKit conflicts
+  # Flutter pods
+  # Only works if the Flutter iOS folder exists (Flutter-generated Podfile)
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  # Pin versions to fix Firebase + MLKit conflicts
   pod 'Firebase/CoreOnly', '11.15.0'
   pod 'FirebaseCore', '11.15.0'
   pod 'FirebaseAuth', '11.15.0'
   pod 'FirebaseMessaging', '11.15.0'
-  pod 'CloudFirestore', '11.15.0'
+  pod 'FirebaseFirestore', '11.15.0'
   pod 'GoogleUtilities', '8.1.0'
   pod 'GoogleMLKit/MLKitCore', '6.0.0'
   pod 'GoogleMLKit/BarcodeScanning', '6.0.0'
