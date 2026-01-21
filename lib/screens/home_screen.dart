@@ -60,6 +60,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         backgroundColor: Colors.white,
         elevation: 1,
+        actions: [
+          // Friend requests notification badge
+          _buildFriendRequestsBadge(),
+        ],
       ),
       drawer: _buildDrawer(context, user),
       body: _buildChatsList(),
@@ -69,6 +73,62 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         child: const Icon(Icons.person_add),
       ),
+    );
+  }
+
+  // Friend requests badge in app bar
+  Widget _buildFriendRequestsBadge() {
+    final user = _auth.currentUser;
+    if (user == null) return const SizedBox.shrink();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: _firestore
+          .collection('friendRequests')
+          .where('receiverId', isEqualTo: user.uid)
+          .where('status', isEqualTo: 'pending')
+          .snapshots(),
+      builder: (context, snapshot) {
+        final count = snapshot.hasData ? snapshot.data!.docs.length : 0;
+        
+        return Stack(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.notifications),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const FriendsListScreen()),
+                );
+              },
+            ),
+            if (count > 0)
+              Positioned(
+                right: 8,
+                top: 8,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
+                  child: Text(
+                    '$count',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
@@ -336,7 +396,7 @@ class _HomeScreenState extends State<HomeScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Add Friend'),
+        title: const Text('Send Friend Request'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -370,20 +430,21 @@ class _HomeScreenState extends State<HomeScreen> {
               }
               
               Navigator.pop(context);
-              await _addFriendByEmail(email);
+              await _sendFriendRequest(email);
             },
-            child: const Text('Add'),
+            child: const Text('Send Request'),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _addFriendByEmail(String email) async {
+  Future<void> _sendFriendRequest(String email) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
 
     try {
+      // Find user by email
       final userQuery = await _firestore
           .collection('users')
           .where('email', isEqualTo: email)
@@ -411,6 +472,24 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
+      // Check if user is blocked
+      final blockedDoc = await _firestore
+          .collection('contacts')
+          .doc(friendId)
+          .collection('blocked')
+          .doc(currentUser.uid)
+          .get();
+
+      if (blockedDoc.exists) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Unable to send request')),
+          );
+        }
+        return;
+      }
+
+      // Check if already friends
       final existingFriend = await _firestore
           .collection('contacts')
           .doc(currentUser.uid)
@@ -427,48 +506,34 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      final conversationId = _getDirectConversationId(currentUser.uid, friendId);
-      
-      await _firestore.collection('conversations').doc(conversationId).set({
-        'type': 'direct',
-        'participants': [currentUser.uid, friendId],
-        'createdBy': currentUser.uid,
+      // Check for existing pending request
+      final existingRequest = await _firestore
+          .collection('friendRequests')
+          .where('senderId', isEqualTo: currentUser.uid)
+          .where('receiverId', isEqualTo: friendId)
+          .where('status', isEqualTo: 'pending')
+          .get();
+
+      if (existingRequest.docs.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Friend request already sent')),
+          );
+        }
+        return;
+      }
+
+      // Create friend request
+      await _firestore.collection('friendRequests').add({
+        'senderId': currentUser.uid,
+        'receiverId': friendId,
+        'status': 'pending',
         'createdAt': FieldValue.serverTimestamp(),
-        'lastMessage': null,
-      });
-
-      await _firestore
-          .collection('contacts')
-          .doc(currentUser.uid)
-          .collection('friends')
-          .doc(friendId)
-          .set({
-        'userId': friendId,
-        'displayName': friendUser.data()['displayName'] ?? 'User',
-        'email': friendUser.data()['email'],
-        'photoURL': friendUser.data()['photoURL'],
-        'addedAt': FieldValue.serverTimestamp(),
-        'conversationId': conversationId,
-      });
-
-      final currentUserData = await _firestore.collection('users').doc(currentUser.uid).get();
-      await _firestore
-          .collection('contacts')
-          .doc(friendId)
-          .collection('friends')
-          .doc(currentUser.uid)
-          .set({
-        'userId': currentUser.uid,
-        'displayName': currentUserData.data()?['displayName'] ?? 'User',
-        'email': currentUserData.data()?['email'],
-        'photoURL': currentUserData.data()?['photoURL'],
-        'addedAt': FieldValue.serverTimestamp(),
-        'conversationId': conversationId,
       });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend added successfully!')),
+          const SnackBar(content: Text('Friend request sent!')),
         );
       }
     } catch (e) {
@@ -478,10 +543,5 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     }
-  }
-
-  String _getDirectConversationId(String userId1, String userId2) {
-    final sortedIds = [userId1, userId2]..sort();
-    return 'direct_${sortedIds.join('_')}';
   }
 }

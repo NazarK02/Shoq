@@ -35,78 +35,81 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     super.dispose();
   }
 
-  // Email/Password Registration - FIXED VERSION
-  Future<void> _registerWithEmail() async {
-    if (!_formKey.currentState!.validate()) return;
+  // Email/Password Registration 
+Future<void> _registerWithEmail() async {
+  if (!_formKey.currentState!.validate()) return;
 
-    if (!_acceptedTerms) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please accept the Terms and Conditions')),
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    try {
-      final email = _emailController.text.trim();
-      final password = _passwordController.text.trim();
-      final name = _nameController.text.trim();
-
-      // Create user
-      UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-      Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const EmailVerificationScreen()),
-      );
-
-      // Update display name
-      await userCredential.user?.updateDisplayName(name);
-
-      // Save user to Firestore
-      if (userCredential.user != null) {
-        await UserService().saveUserToFirestore(user: userCredential.user!);
-      }
-
-      // Send verification email
-      await userCredential.user?.sendEmailVerification();
-      
-
-      await userCredential.user?.reload();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Verification email sent')),
-        
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      String message = 'An error occurred';
-      if (e.code == 'weak-password') {
-        message = 'The password is too weak';
-      } else if (e.code == 'email-already-in-use') {
-        message = 'An account already exists for this email';
-      } else if (e.code == 'invalid-email') {
-        message = 'Invalid email address';
-      }
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
-      }
-    } catch (e) {
-      // Only show error if it's not from the sign-in after registration
-      if (mounted && !e.toString().contains('network')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+  if (!_acceptedTerms) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please accept the Terms and Conditions')),
+    );
+    return;
   }
+
+  setState(() => _isLoading = true);
+
+  try {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+    final name = _nameController.text.trim();
+
+    // Create user
+    UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+
+    // Update display name
+    await userCredential.user?.updateDisplayName(name);
+    
+    // IMPORTANT: Reload the user to get the updated displayName
+    await userCredential.user?.reload();
+    
+    // Get the refreshed user object
+    User? refreshedUser = _auth.currentUser;
+
+    // Save user to Firestore with the updated name
+    if (refreshedUser != null) {
+      await UserService().saveUserToFirestore(user: refreshedUser);
+    }
+
+    // Send verification email
+    await refreshedUser?.sendEmailVerification();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Verification email sent')),
+      );
+      
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const EmailVerificationScreen()),
+      );
+    }
+  } on FirebaseAuthException catch (e) {
+    String message = 'An error occurred';
+    if (e.code == 'weak-password') {
+      message = 'The password is too weak';
+    } else if (e.code == 'email-already-in-use') {
+      message = 'An account already exists for this email';
+    } else if (e.code == 'invalid-email') {
+      message = 'Invalid email address';
+    }
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}')),
+      );
+    }
+  } finally {
+    if (mounted) setState(() => _isLoading = false);
+  }
+}
 
   // Google Sign-In
   Future<void> _signInWithGoogle() async {
