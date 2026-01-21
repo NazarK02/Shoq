@@ -6,9 +6,7 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  # Flutter helper: only works if iOS folder exists
-  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-
+  
   # Force compatible pod versions to fix Firebase + MLKit conflicts
   pod 'Firebase/CoreOnly', '11.15.0'
   pod 'FirebaseCore', '11.15.0'
