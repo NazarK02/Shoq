@@ -38,11 +38,11 @@ class AuthWrapper extends StatelessWidget {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.userChanges(), // <-- detects emailVerified changes
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
           return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          body: Center(child: CircularProgressIndicator()),
           );
-        }
+      }
 
         final user = snapshot.data;
 
