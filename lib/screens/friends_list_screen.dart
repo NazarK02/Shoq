@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'chat_screen.dart';
+import '../services/notification_service.dart';
 
 class FriendsListScreen extends StatefulWidget {
   const FriendsListScreen({super.key});
@@ -489,9 +490,6 @@ class _FriendsListScreenState extends State<FriendsListScreen> with SingleTicker
         }
         return;
       }
-      
-      // Note: We cannot check if they blocked you (no permission)
-      // The request will just not be visible to them if they blocked you
 
       // Check if already friends
       final existingFriend = await _firestore
@@ -547,7 +545,7 @@ class _FriendsListScreenState extends State<FriendsListScreen> with SingleTicker
         return;
       }
 
-      // Create friend request - FIXED: use .add() with proper data structure
+      // Create friend request
       await _firestore.collection('friendRequests').add({
         'senderId': currentUser.uid,
         'receiverId': friendId,
@@ -555,13 +553,27 @@ class _FriendsListScreenState extends State<FriendsListScreen> with SingleTicker
         'createdAt': FieldValue.serverTimestamp(),
       });
 
+      // Send notification - NOW friendId is defined!
+      try {
+        final currentUserData = await _firestore.collection('users').doc(currentUser.uid).get();
+        final senderName = currentUserData.data()?['displayName'] ?? 'Someone';
+        
+        await NotificationService().sendFriendRequestNotification(
+          recipientId: friendId,
+          senderName: senderName,
+        );
+      } catch (notificationError) {
+        print('Error sending notification: $notificationError');
+        // Don't fail the whole operation if notification fails
+      }
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Friend request sent!')),
         );
       }
     } catch (e) {
-      print('Error sending friend request: $e'); // Debug print
+      print('Error sending friend request: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: ${e.toString()}')),

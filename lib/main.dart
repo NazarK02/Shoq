@@ -1,15 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/email_verification_screen.dart';
 import 'services/firebase_options.dart';
+import 'services/notification_service.dart';
 
+// Top-level function for background messages
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  print('Handling a background message: ${message.messageId}');
+  print('Title: ${message.notification?.title}');
+  print('Body: ${message.notification?.body}');
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform,);
+  
+  // Initialize Firebase
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  
+  // Set up background message handler
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  
+  // Initialize notification service (THIS IS THE KEY ADDITION!)
+  await NotificationService().initialize();
+  
   runApp(const MyApp());
 }
 
@@ -40,9 +61,9 @@ class AuthWrapper extends StatelessWidget {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
           return const Scaffold(
-          body: Center(child: CircularProgressIndicator()),
+            body: Center(child: CircularProgressIndicator()),
           );
-      }
+        }
 
         final user = snapshot.data;
 
