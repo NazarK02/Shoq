@@ -62,9 +62,11 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
 
-    setState(() {
-      _isLoading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   String _getDirectConversationId(String userId1, String userId2) {
@@ -109,7 +111,6 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       } catch (notificationError) {
         print('Error sending notification: $notificationError');
-        // Don't fail the message if notification fails
       }
 
       _scrollToBottom();
@@ -125,11 +126,13 @@ class _ChatScreenState extends State<ChatScreen> {
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       Future.delayed(const Duration(milliseconds: 100), () {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
       });
     }
   }
@@ -205,123 +208,15 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
-          Expanded(child: _buildMessagesList()),
+          Expanded(
+            child: _MessagesList(
+              conversationId: _conversationId!,
+              recipientName: widget.recipientName,
+              scrollController: _scrollController,
+            ),
+          ),
           _buildMessageInput(),
         ],
-      ),
-    );
-  }
-
-  Widget _buildMessagesList() {
-    final currentUser = _auth.currentUser;
-    if (currentUser == null || _conversationId == null) {
-      return const Center(child: Text('Error loading messages'));
-    }
-
-    return StreamBuilder<QuerySnapshot>(
-      stream: _firestore
-          .collection('conversations')
-          .doc(_conversationId)
-          .collection('messages')
-          .orderBy('timestamp', descending: false)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
-        }
-
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.chat_bubble_outline,
-                  size: 64,
-                  color: Colors.grey[400],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'No messages yet',
-                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Say hi to ${widget.recipientName}!',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-                ),
-              ],
-            ),
-          );
-        }
-
-        final messages = snapshot.data!.docs;
-        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-
-        return ListView.builder(
-          controller: _scrollController,
-          padding: const EdgeInsets.all(16),
-          itemCount: messages.length,
-          itemBuilder: (context, index) {
-            final message = messages[index].data() as Map<String, dynamic>;
-            final isMe = message['senderId'] == currentUser.uid;
-            final timestamp = message['timestamp'] as Timestamp?;
-
-            return _buildMessageBubble(
-              message['text'] ?? '',
-              isMe,
-              timestamp,
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildMessageBubble(String text, bool isMe, Timestamp? timestamp) {
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-        ),
-        decoration: BoxDecoration(
-          color: isMe ? Theme.of(context).primaryColor : Colors.grey[300],
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isMe ? 16 : 4),
-            bottomRight: Radius.circular(isMe ? 4 : 16),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              text,
-              style: TextStyle(
-                color: isMe ? Colors.white : Colors.black87,
-                fontSize: 15,
-              ),
-            ),
-            if (timestamp != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                _formatMessageTime(timestamp),
-                style: TextStyle(
-                  color: isMe ? Colors.white70 : Colors.black54,
-                  fontSize: 11,
-                ),
-              ),
-            ],
-          ],
-        ),
       ),
     );
   }
@@ -330,7 +225,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).scaffoldBackgroundColor,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.05),
@@ -353,18 +248,8 @@ class _ChatScreenState extends State<ChatScreen> {
             Expanded(
               child: TextField(
                 controller: _messageController,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   hintText: 'Type a message...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide.none,
-                  ),
-                  filled: true,
-                  fillColor: Colors.grey[100],
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 10,
-                  ),
                 ),
                 maxLines: null,
                 textCapitalization: TextCapitalization.sentences,
@@ -383,22 +268,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
-  }
-
-  String _formatMessageTime(Timestamp timestamp) {
-    final date = timestamp.toDate();
-    final now = DateTime.now();
-    final diff = now.difference(date);
-
-    if (diff.inDays == 0) {
-      return DateFormat('HH:mm').format(date);
-    } else if (diff.inDays == 1) {
-      return 'Yesterday ${DateFormat('HH:mm').format(date)}';
-    } else if (diff.inDays < 7) {
-      return DateFormat('EEE HH:mm').format(date);
-    } else {
-      return DateFormat('MMM d, HH:mm').format(date);
-    }
   }
 
   void _showClearChatDialog() {
@@ -457,6 +326,187 @@ class _ChatScreenState extends State<ChatScreen> {
           SnackBar(content: Text('Error clearing chat: ${e.toString()}')),
         );
       }
+    }
+  }
+}
+
+// Separate widget for messages list with AutomaticKeepAliveClientMixin
+class _MessagesList extends StatefulWidget {
+  final String conversationId;
+  final String recipientName;
+  final ScrollController scrollController;
+
+  const _MessagesList({
+    required this.conversationId,
+    required this.recipientName,
+    required this.scrollController,
+  });
+
+  @override
+  State<_MessagesList> createState() => _MessagesListState();
+}
+
+class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveClientMixin {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  void _scrollToBottom() {
+    if (widget.scrollController.hasClients) {
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (widget.scrollController.hasClients) {
+          widget.scrollController.animateTo(
+            widget.scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
+
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) {
+      return const Center(child: Text('Error loading messages'));
+    }
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: _firestore
+          .collection('conversations')
+          .doc(widget.conversationId)
+          .collection('messages')
+          .orderBy('timestamp', descending: false)
+          .snapshots(),
+      builder: (context, snapshot) {
+        // REMOVED the ConnectionState.waiting check - no more loading spinner!
+        
+        if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        }
+
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.chat_bubble_outline,
+                  size: 64,
+                  color: Colors.grey[400],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'No messages yet',
+                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Say hi to ${widget.recipientName}!',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final messages = snapshot.data!.docs;
+        
+        // Only scroll on new messages, not on every rebuild
+        if (messages.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (widget.scrollController.hasClients && 
+                widget.scrollController.position.pixels >= widget.scrollController.position.maxScrollExtent - 100) {
+              _scrollToBottom();
+            }
+          });
+        }
+
+        return ListView.builder(
+          controller: widget.scrollController,
+          padding: const EdgeInsets.all(16),
+          itemCount: messages.length,
+          itemBuilder: (context, index) {
+            final messageDoc = messages[index];
+            final message = messageDoc.data() as Map<String, dynamic>;
+            final isMe = message['senderId'] == currentUser.uid;
+            final timestamp = message['timestamp'] as Timestamp?;
+
+            return _buildMessageBubble(
+              message['text'] ?? '',
+              isMe,
+              timestamp,
+              key: ValueKey(messageDoc.id),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildMessageBubble(String text, bool isMe, Timestamp? timestamp, {Key? key}) {
+    return Align(
+      key: key,
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        decoration: BoxDecoration(
+          color: isMe ? Theme.of(context).primaryColor : Colors.grey[300],
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isMe ? 16 : 4),
+            bottomRight: Radius.circular(isMe ? 4 : 16),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              text,
+              style: TextStyle(
+                color: isMe ? Colors.white : Colors.black87,
+                fontSize: 15,
+              ),
+            ),
+            if (timestamp != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                _formatMessageTime(timestamp),
+                style: TextStyle(
+                  color: isMe ? Colors.white70 : Colors.black54,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatMessageTime(Timestamp timestamp) {
+    final date = timestamp.toDate();
+    final now = DateTime.now();
+    final diff = now.difference(date);
+
+    if (diff.inDays == 0) {
+      return DateFormat('HH:mm').format(date);
+    } else if (diff.inDays == 1) {
+      return 'Yesterday ${DateFormat('HH:mm').format(date)}';
+    } else if (diff.inDays < 7) {
+      return DateFormat('EEE HH:mm').format(date);
+    } else {
+      return DateFormat('MMM d, HH:mm').format(date);
     }
   }
 }

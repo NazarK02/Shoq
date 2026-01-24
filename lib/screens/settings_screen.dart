@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/notification_service.dart';
+import '../services/theme_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -22,11 +24,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadNotificationSettings() async {
     final settings = await _notificationService.getNotificationSettings();
-    setState(() {
-      _friendRequestsEnabled = settings['friendRequests'] ?? true;
-      _messagesEnabled = settings['messages'] ?? true;
-      _isLoading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _friendRequestsEnabled = settings['friendRequests'] ?? true;
+        _messagesEnabled = settings['messages'] ?? true;
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _updateNotificationSettings() async {
@@ -38,6 +42,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final themeService = Provider.of<ThemeService>(context);
+    
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: _isLoading
@@ -77,6 +83,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _messagesEnabled = value;
                     });
                     _updateNotificationSettings();
+                  },
+                ),
+                const Divider(),
+                const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text(
+                    'Appearance',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
+                SwitchListTile(
+                  secondary: Icon(
+                    themeService.isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                  ),
+                  title: const Text('Dark Mode'),
+                  subtitle: Text(
+                    themeService.isDarkMode ? 'Dark theme enabled' : 'Light theme enabled',
+                  ),
+                  value: themeService.isDarkMode,
+                  onChanged: (value) {
+                    themeService.toggleTheme();
                   },
                 ),
                 const Divider(),
@@ -123,19 +154,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       fontWeight: FontWeight.bold,
                       color: Colors.grey,
                     ),
-                  ),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.dark_mode),
-                  title: const Text('Dark Mode'),
-                  subtitle: const Text('Enable dark theme'),
-                  trailing: Switch(
-                    value: false,
-                    onChanged: (value) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Dark mode coming soon')),
-                      );
-                    },
                   ),
                 ),
                 ListTile(

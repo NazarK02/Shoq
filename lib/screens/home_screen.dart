@@ -6,6 +6,7 @@ import 'chat_screen.dart';
 import 'friends_list_screen.dart';
 import 'profile_screen.dart';
 import 'settings_screen.dart';
+import '../services/notification_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -37,7 +38,6 @@ class _HomeScreenState extends State<HomeScreen> {
           decoration: InputDecoration(
             hintText: 'Search chats...',
             border: InputBorder.none,
-            hintStyle: TextStyle(color: Colors.grey[400]),
             prefixIcon: const Icon(Icons.search, color: Colors.grey),
             suffixIcon: _searchQuery.isNotEmpty
                 ? IconButton(
@@ -58,7 +58,6 @@ class _HomeScreenState extends State<HomeScreen> {
             });
           },
         ),
-        backgroundColor: Colors.white,
         elevation: 1,
         actions: [
           // Friend requests notification badge
@@ -208,7 +207,8 @@ class _HomeScreenState extends State<HomeScreen> {
             leading: const Icon(Icons.logout, color: Colors.red),
             title: const Text('Logout', style: TextStyle(color: Colors.red)),
             onTap: () async {
-              await _auth.signOut();
+              await NotificationService().clearToken();
+              await FirebaseAuth.instance.signOut();
               if (context.mounted) {
                 Navigator.of(context).pushAndRemoveUntil(
                   MaterialPageRoute(builder: (_) => const RegistrationScreen()),

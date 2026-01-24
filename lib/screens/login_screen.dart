@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../services/user_service.dart';
+import '../services/notification_service.dart';
 import 'registration_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -42,13 +43,14 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _passwordController.text.trim(),
       );
 
+      // IMPORTANT: Re-initialize notifications for new user
+      await NotificationService().initialize();
+      
       // Update last seen
       await UserService().updateLastSeen();
 
       if (mounted) {
         // AuthWrapper will automatically navigate
-        // If email not verified -> EmailVerificationScreen
-        // If email verified -> HomeScreen
       }
     } on FirebaseAuthException catch (e) {
       String message = 'Login failed';
@@ -103,7 +105,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
       // Save/update user in Firestore
       if (userCredential.user != null) {
-        await UserService().saveUserToFirestore(user: userCredential.user!,);
+        await UserService().saveUserToFirestore(user: userCredential.user!);
+        
+        // IMPORTANT: Re-initialize notifications for new user
+        await NotificationService().initialize();
       }
 
       if (mounted) {
@@ -245,7 +250,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       TextButton(
                         onPressed: () {
-                          // TODO: Implement forgot password
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('Forgot password - Coming soon')),
                           );

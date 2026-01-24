@@ -13,6 +13,11 @@ class NotificationService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
+  // Track message counts per conversation for notification grouping
+  final Map<String, int> _messageCountPerSender = {};
+  // Track all messages per sender for inbox style
+  final Map<String, List<String>> _messagesPerSender = {};
+
   // Initialize notifications
   Future<void> initialize() async {
     // Request permission
@@ -72,26 +77,91 @@ class NotificationService {
 
     // Create notification channel for Android
     const AndroidNotificationChannel channel = AndroidNotificationChannel(
-      'high_importance_channel',
-      'High Importance Notifications',
-      description: 'This channel is used for important notifications.',
+      'messages_channel',
+      'Messages',
+      description: 'Notifications for new messages',
       importance: Importance.high,
+      enableVibration: true,
+      playSound: true,
     );
 
-    await _localNotifications
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
+    const AndroidNotificationChannel friendRequestsChannel = AndroidNotificationChannel(
+      'friend_requests_channel',
+      'Friend Requests',
+      description: 'Notifications for friend requests',
+      importance: Importance.high,
+      enableVibration: true,
+      playSound: true,
+    );
+
+    final plugin = _localNotifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    
+    await plugin?.createNotificationChannel(channel);
+    await plugin?.createNotificationChannel(friendRequestsChannel);
   }
 
   // Save FCM token to Firestore
   Future<void> _saveTokenToFirestore(String token) async {
     final user = _auth.currentUser;
-    if (user != null) {
+    if (user == null) return;
+
+    try {
+      // First, remove this token from any other user's document
+      await _removeTokenFromOtherUsers(token, user.uid);
+      
+      // Then save it to the current user
       await _firestore.collection('users').doc(user.uid).update({
         'fcmToken': token,
         'lastTokenUpdate': FieldValue.serverTimestamp(),
       });
+    } catch (e) {
+      print('Error saving token: $e');
     }
+  }
+
+  // Remove token from other users (for account switching on same device)
+  Future<void> _removeTokenFromOtherUsers(String token, String currentUserId) async {
+    try {
+      // Find all users with this token
+      final usersWithToken = await _firestore
+          .collection('users')
+          .where('fcmToken', isEqualTo: token)
+          .get();
+
+      // Remove token from users that are NOT the current user
+      for (var doc in usersWithToken.docs) {
+        if (doc.id != currentUserId) {
+          await _firestore.collection('users').doc(doc.id).update({
+            'fcmToken': FieldValue.delete(),
+          });
+          print('Removed token from old user: ${doc.id}');
+        }
+      }
+    } catch (e) {
+      print('Error removing token from other users: $e');
+    }
+  }
+
+  // Clear token when logging out (IMPORTANT for account switching)
+  Future<void> clearToken() async {
+    final user = _auth.currentUser;
+    if (user != null) {
+      try {
+        await _firestore.collection('users').doc(user.uid).update({
+          'fcmToken': FieldValue.delete(),
+        });
+      } catch (e) {
+        print('Error clearing token: $e');
+      }
+    }
+    
+    // Clear all local notifications
+    await _localNotifications.cancelAll();
+    
+    // Clear message counts and message history
+    _messageCountPerSender.clear();
+    _messagesPerSender.clear();
   }
 
   // Handle foreground messages
@@ -117,35 +187,152 @@ class NotificationService {
     // Handle navigation based on payload
   }
 
-  // Show local notification
+  // Show local notification with grouping
   Future<void> _showLocalNotification(RemoteMessage message) async {
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'high_importance_channel',
-      'High Importance Notifications',
-      channelDescription: 'This channel is used for important notifications.',
+    final data = message.data;
+    final type = data['type'];
+    final senderId = data['senderId'];
+
+    if (type == 'new_message' && senderId != null) {
+      // Increment message count for this sender
+      _messageCountPerSender[senderId] = (_messageCountPerSender[senderId] ?? 0) + 1;
+      final messageCount = _messageCountPerSender[senderId]!;
+
+      // Add message to the list for this sender
+      final messageText = message.notification?.body ?? 'New message';
+      if (!_messagesPerSender.containsKey(senderId)) {
+        _messagesPerSender[senderId] = [];
+      }
+      _messagesPerSender[senderId]!.add(messageText);
+      
+      // Keep only last 5 messages to avoid overflow
+      if (_messagesPerSender[senderId]!.length > 5) {
+        _messagesPerSender[senderId]!.removeAt(0);
+      }
+
+      // Use senderId hash as notification ID to update the same notification
+      final notificationId = senderId.hashCode;
+      
+      final senderName = data['senderName'] ?? 'Someone';
+
+      // Create inbox style notification showing all messages
+      final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+        'messages_channel',
+        'Messages',
+        channelDescription: 'Notifications for new messages',
+        importance: Importance.high,
+        priority: Priority.high,
+        showWhen: true,
+        groupKey: 'messages',
+        setAsGroupSummary: false,
+        styleInformation: InboxStyleInformation(
+          _messagesPerSender[senderId]!,
+          contentTitle: senderName,
+          summaryText: messageCount > 1 ? '$messageCount messages' : null,
+        ),
+        number: messageCount,
+      );
+
+      const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        threadIdentifier: 'messages',
+      );
+
+      final NotificationDetails notificationDetails = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      await _localNotifications.show(
+        notificationId,
+        senderName,
+        messageCount > 1 ? '$messageCount new messages' : messageText,
+        notificationDetails,
+        payload: '{"type": "message", "senderId": "$senderId"}',
+      );
+
+      // Show group summary for Android (if multiple conversations)
+      if (_messageCountPerSender.length > 1) {
+        await _showGroupSummaryNotification();
+      }
+    } else if (type == 'friend_request') {
+      // Friend request notification (separate channel)
+      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+        'friend_requests_channel',
+        'Friend Requests',
+        channelDescription: 'Notifications for friend requests',
+        importance: Importance.high,
+        priority: Priority.high,
+        showWhen: true,
+      );
+
+      const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+
+      const NotificationDetails notificationDetails = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      await _localNotifications.show(
+        DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        message.notification?.title ?? 'New Friend Request',
+        message.notification?.body ?? 'You have a new friend request',
+        notificationDetails,
+        payload: '{"type": "friend_request", "senderId": "$senderId"}',
+      );
+    }
+  }
+
+  // Show group summary notification (Android only)
+  Future<void> _showGroupSummaryNotification() async {
+    final totalMessages = _messageCountPerSender.values.fold<int>(0, (sum, count) => sum + count);
+    
+    final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'messages_channel',
+      'Messages',
+      channelDescription: 'Notifications for new messages',
       importance: Importance.high,
       priority: Priority.high,
-      showWhen: true,
+      groupKey: 'messages',
+      setAsGroupSummary: true,
+      styleInformation: InboxStyleInformation(
+        [],
+        contentTitle: 'New messages',
+        summaryText: '$totalMessages new messages from ${_messageCountPerSender.length} conversations',
+      ),
     );
 
-    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    const NotificationDetails notificationDetails = NotificationDetails(
+    final NotificationDetails notificationDetails = NotificationDetails(
       android: androidDetails,
-      iOS: iosDetails,
     );
 
     await _localNotifications.show(
-      message.hashCode,
-      message.notification?.title,
-      message.notification?.body,
+      0, // Group summary always uses ID 0
+      'New messages',
+      '$totalMessages new messages',
       notificationDetails,
-      payload: message.data.toString(),
     );
+  }
+
+  // Clear notifications for a specific sender (when opening chat)
+  Future<void> clearNotificationsForSender(String senderId) async {
+    final notificationId = senderId.hashCode;
+    await _localNotifications.cancel(notificationId);
+    _messageCountPerSender.remove(senderId);
+    _messagesPerSender.remove(senderId);
+
+    // Update group summary if needed
+    if (_messageCountPerSender.isNotEmpty) {
+      await _showGroupSummaryNotification();
+    } else {
+      await _localNotifications.cancel(0); // Clear group summary
+    }
   }
 
   // Send friend request notification
