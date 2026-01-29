@@ -1,17 +1,35 @@
-# shoq
+# Shoq
 
-A new Flutter project.
+Shoq is a Flutter-based messaging application focused on privacy, simplicity, and real-time communication.
 
-## Getting Started
+## Features
+- Email and Google authentication using Firebase Authentication
+- User data stored in Cloud Firestore
+- Real-time chat functionality
+- Push notifications with user-controlled preferences
+- QR code–based contact system (work in progress)
+- End-to-end message encryption (in progress)
 
-This project is a starting point for a Flutter application.
+## Tech Stack
+- Flutter 
+- Firebase Authentication
+- Cloud Firestore
+- Firebase Cloud Messaging
 
-A few resources to get you started if this is your first Flutter project:
+## Platforms
+- Android
+- iOS
+- Windows
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+## Security
+Shoq is designed with privacy in mind. Messages are intended to be encrypted before storage and transmission.  
+The encryption layer is currently under development.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-S  
+## Setup
+1. Clone the repository
+2. Run `flutter pub get`
+3. Configure Firebase using `flutterfire configure`
+4. Run the app on a physical device or emulator
+
+## Project Status
+This project is under active development. Features and implementation details may change.
