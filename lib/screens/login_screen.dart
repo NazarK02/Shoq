@@ -353,6 +353,20 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
             ),
+            Positioned(
+              top: 16,
+              right: 16,
+              child: IconButton(
+                icon: Icon(
+                  themeService.isDarkMode ? Icons.light_mode : Icons.dark_mode,
+                  size: 28,
+                ),
+                onPressed: () {
+                  themeService.toggleTheme();
+                },
+                tooltip: themeService.isDarkMode ? 'Light Mode' : 'Dark Mode',
+              ),
+            ),
           ],
         ),
       ),

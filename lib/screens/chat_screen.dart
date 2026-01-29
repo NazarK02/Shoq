@@ -18,9 +18,10 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final NotificationService _notificationService = NotificationService();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   
@@ -30,14 +31,47 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    
+    // Add observer to detect app state changes
+    WidgetsBinding.instance.addObserver(this);
+    
+    // Set this chat as active and clear any existing notifications
+    _notificationService.setActiveChat(widget.recipientId);
+    
     _initializeConversation();
   }
 
   @override
   void dispose() {
+    // Clear active chat when leaving the screen
+    _notificationService.setActiveChat(null);
+    
+    // Remove observer
+    WidgetsBinding.instance.removeObserver(this);
+    
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Handle app lifecycle changes
+    switch (state) {
+      case AppLifecycleState.resumed:
+        // User returned to app while on this screen, set active chat again
+        _notificationService.setActiveChat(widget.recipientId);
+        break;
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+        // User left app or switched away, clear active chat
+        // This allows notifications to show when app is in background
+        _notificationService.setActiveChat(null);
+        break;
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        break;
+    }
   }
 
   Future<void> _initializeConversation() async {
@@ -104,7 +138,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // Send push notification
       try {
         final senderName = currentUser.displayName ?? 'Someone';
-        await NotificationService().sendMessageNotification(
+        await _notificationService.sendMessageNotification(
           recipientId: widget.recipientId,
           senderName: senderName,
           messageText: messageText,
@@ -384,8 +418,6 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
           .orderBy('timestamp', descending: false)
           .snapshots(),
       builder: (context, snapshot) {
-        // REMOVED the ConnectionState.waiting check - no more loading spinner!
-        
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}'));
         }

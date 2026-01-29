@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -8,20 +10,54 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._internal();
 
-  final FirebaseMessaging _fcm = FirebaseMessaging.instance;
-  final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  
+  // These will be null on unsupported platforms
+  FirebaseMessaging? _fcm;
+  FlutterLocalNotificationsPlugin? _localNotifications;
 
   // Track message counts per conversation for notification grouping
   final Map<String, int> _messageCountPerSender = {};
   // Track all messages per sender for inbox style
   final Map<String, List<String>> _messagesPerSender = {};
+  
+  // Track which chat is currently active/open
+  String? _activeChatUserId;
+
+  // Check if notifications are supported on this platform
+  bool get isSupported {
+    if (kIsWeb) return false;
+    return Platform.isAndroid || Platform.isIOS;
+  }
+
+  // Set the currently active chat
+  void setActiveChat(String? userId) {
+    _activeChatUserId = userId;
+    print('Active chat set to: $userId');
+    
+    // Clear notifications for this user when opening their chat
+    if (userId != null && isSupported) {
+      clearNotificationsForSender(userId);
+    }
+  }
+
+  // Get the currently active chat
+  String? getActiveChat() => _activeChatUserId;
 
   // Initialize notifications
   Future<void> initialize() async {
+    // Skip initialization on unsupported platforms
+    if (!isSupported) {
+      print('Push notifications not supported on this platform (Windows/Web/macOS/Linux)');
+      return;
+    }
+
+    _fcm = FirebaseMessaging.instance;
+    _localNotifications = FlutterLocalNotificationsPlugin();
+
     // Request permission
-    NotificationSettings settings = await _fcm.requestPermission(
+    NotificationSettings settings = await _fcm!.requestPermission(
       alert: true,
       badge: true,
       sound: true,
@@ -32,13 +68,13 @@ class NotificationService {
       print('User granted permission');
       
       // Get FCM token
-      String? token = await _fcm.getToken();
+      String? token = await _fcm!.getToken();
       if (token != null) {
         await _saveTokenToFirestore(token);
       }
 
       // Listen for token refresh
-      _fcm.onTokenRefresh.listen(_saveTokenToFirestore);
+      _fcm!.onTokenRefresh.listen(_saveTokenToFirestore);
 
       // Initialize local notifications
       await _initializeLocalNotifications();
@@ -53,8 +89,10 @@ class NotificationService {
     }
   }
 
-  // Initialize local notifications for Android
+  // Initialize local notifications for Android/iOS
   Future<void> _initializeLocalNotifications() async {
+    if (!isSupported || _localNotifications == null) return;
+
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
@@ -70,35 +108,37 @@ class NotificationService {
       iOS: initializationSettingsIOS,
     );
 
-    await _localNotifications.initialize(
+    await _localNotifications!.initialize(
       initializationSettings,
       onDidReceiveNotificationResponse: _handleNotificationTap,
     );
 
     // Create notification channel for Android
-    const AndroidNotificationChannel channel = AndroidNotificationChannel(
-      'messages_channel',
-      'Messages',
-      description: 'Notifications for new messages',
-      importance: Importance.high,
-      enableVibration: true,
-      playSound: true,
-    );
+    if (Platform.isAndroid) {
+      const AndroidNotificationChannel channel = AndroidNotificationChannel(
+        'messages_channel',
+        'Messages',
+        description: 'Notifications for new messages',
+        importance: Importance.high,
+        enableVibration: true,
+        playSound: true,
+      );
 
-    const AndroidNotificationChannel friendRequestsChannel = AndroidNotificationChannel(
-      'friend_requests_channel',
-      'Friend Requests',
-      description: 'Notifications for friend requests',
-      importance: Importance.high,
-      enableVibration: true,
-      playSound: true,
-    );
+      const AndroidNotificationChannel friendRequestsChannel = AndroidNotificationChannel(
+        'friend_requests_channel',
+        'Friend Requests',
+        description: 'Notifications for friend requests',
+        importance: Importance.high,
+        enableVibration: true,
+        playSound: true,
+      );
 
-    final plugin = _localNotifications.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    
-    await plugin?.createNotificationChannel(channel);
-    await plugin?.createNotificationChannel(friendRequestsChannel);
+      final plugin = _localNotifications!.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      
+      await plugin?.createNotificationChannel(channel);
+      await plugin?.createNotificationChannel(friendRequestsChannel);
+    }
   }
 
   // Save FCM token to Firestore
@@ -156,8 +196,13 @@ class NotificationService {
       }
     }
     
-    // Clear all local notifications
-    await _localNotifications.cancelAll();
+    // Clear active chat
+    _activeChatUserId = null;
+    
+    // Clear all local notifications (only on supported platforms)
+    if (isSupported && _localNotifications != null) {
+      await _localNotifications!.cancelAll();
+    }
     
     // Clear message counts and message history
     _messageCountPerSender.clear();
@@ -189,11 +234,19 @@ class NotificationService {
 
   // Show local notification with grouping
   Future<void> _showLocalNotification(RemoteMessage message) async {
+    if (!isSupported || _localNotifications == null) return;
+
     final data = message.data;
     final type = data['type'];
     final senderId = data['senderId'];
 
     if (type == 'new_message' && senderId != null) {
+      // Check if user is currently in chat with this sender
+      if (_activeChatUserId == senderId) {
+        print('User is currently in chat with $senderId, skipping notification');
+        return;
+      }
+
       // Increment message count for this sender
       _messageCountPerSender[senderId] = (_messageCountPerSender[senderId] ?? 0) + 1;
       final messageCount = _messageCountPerSender[senderId]!;
@@ -210,10 +263,12 @@ class NotificationService {
         _messagesPerSender[senderId]!.removeAt(0);
       }
 
-      // Use senderId hash as notification ID to update the same notification
-      final notificationId = senderId.hashCode;
+      // Use a consistent notification ID for each sender
+      final notificationId = senderId.hashCode.abs() % 100000;
       
       final senderName = data['senderName'] ?? 'Someone';
+
+      print('Showing notification for $senderName (ID: $notificationId, count: $messageCount)');
 
       // Create inbox style notification showing all messages
       final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
@@ -223,14 +278,13 @@ class NotificationService {
         importance: Importance.high,
         priority: Priority.high,
         showWhen: true,
-        groupKey: 'messages',
-        setAsGroupSummary: false,
         styleInformation: InboxStyleInformation(
           _messagesPerSender[senderId]!,
           contentTitle: senderName,
           summaryText: messageCount > 1 ? '$messageCount messages' : null,
         ),
         number: messageCount,
+        tag: 'message_$senderId',
       );
 
       const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
@@ -245,7 +299,7 @@ class NotificationService {
         iOS: iosDetails,
       );
 
-      await _localNotifications.show(
+      await _localNotifications!.show(
         notificationId,
         senderName,
         messageCount > 1 ? '$messageCount new messages' : messageText,
@@ -253,10 +307,7 @@ class NotificationService {
         payload: '{"type": "message", "senderId": "$senderId"}',
       );
 
-      // Show group summary for Android (if multiple conversations)
-      if (_messageCountPerSender.length > 1) {
-        await _showGroupSummaryNotification();
-      }
+      print('Notification shown successfully');
     } else if (type == 'friend_request') {
       // Friend request notification (separate channel)
       const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
@@ -279,7 +330,7 @@ class NotificationService {
         iOS: iosDetails,
       );
 
-      await _localNotifications.show(
+      await _localNotifications!.show(
         DateTime.now().millisecondsSinceEpoch ~/ 1000,
         message.notification?.title ?? 'New Friend Request',
         message.notification?.body ?? 'You have a new friend request',
@@ -289,50 +340,16 @@ class NotificationService {
     }
   }
 
-  // Show group summary notification (Android only)
-  Future<void> _showGroupSummaryNotification() async {
-    final totalMessages = _messageCountPerSender.values.fold<int>(0, (sum, count) => sum + count);
-    
-    final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'messages_channel',
-      'Messages',
-      channelDescription: 'Notifications for new messages',
-      importance: Importance.high,
-      priority: Priority.high,
-      groupKey: 'messages',
-      setAsGroupSummary: true,
-      styleInformation: InboxStyleInformation(
-        [],
-        contentTitle: 'New messages',
-        summaryText: '$totalMessages new messages from ${_messageCountPerSender.length} conversations',
-      ),
-    );
-
-    final NotificationDetails notificationDetails = NotificationDetails(
-      android: androidDetails,
-    );
-
-    await _localNotifications.show(
-      0, // Group summary always uses ID 0
-      'New messages',
-      '$totalMessages new messages',
-      notificationDetails,
-    );
-  }
-
   // Clear notifications for a specific sender (when opening chat)
   Future<void> clearNotificationsForSender(String senderId) async {
-    final notificationId = senderId.hashCode;
-    await _localNotifications.cancel(notificationId);
+    if (!isSupported || _localNotifications == null) return;
+
+    final notificationId = senderId.hashCode.abs() % 100000;
+    await _localNotifications!.cancel(notificationId);
     _messageCountPerSender.remove(senderId);
     _messagesPerSender.remove(senderId);
-
-    // Update group summary if needed
-    if (_messageCountPerSender.isNotEmpty) {
-      await _showGroupSummaryNotification();
-    } else {
-      await _localNotifications.cancel(0); // Clear group summary
-    }
+    
+    print('Cleared notifications for sender: $senderId');
   }
 
   // Send friend request notification
