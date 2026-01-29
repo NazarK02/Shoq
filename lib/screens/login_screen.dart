@@ -341,7 +341,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: Text(
                               'Sign Up',
                               style: TextStyle(
-                                color: Theme.of(context).primaryColor,
+                                color: Theme.of(context).colorScheme.primary,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
