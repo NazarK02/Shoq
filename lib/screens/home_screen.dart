@@ -7,6 +7,7 @@ import 'friends_list_screen.dart';
 import 'profile_screen.dart';
 import 'settings_screen.dart';
 import '../services/notification_service.dart';
+import '../services/presence_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -208,6 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
             title: const Text('Logout', style: TextStyle(color: Colors.red)),
             onTap: () async {
               await NotificationService().clearToken();
+              await PresenceService().setOffline();
               await FirebaseAuth.instance.signOut();
               if (context.mounted) {
                 Navigator.of(context).pushAndRemoveUntil(
@@ -330,10 +332,36 @@ class _HomeScreenState extends State<HomeScreen> {
                   return const SizedBox.shrink();
                 }
 
+                // Check online status
+                final isOnline = PresenceService.isUserOnline(userData ?? {});
+                final status = userData?['status'] ?? 'offline';
+
                 return ListTile(
-                  leading: CircleAvatar(
-                    backgroundImage: photoURL != null ? NetworkImage(photoURL) : null,
-                    child: photoURL == null ? Text(displayName[0].toUpperCase()) : null,
+                  leading: Stack(
+                    children: [
+                      CircleAvatar(
+                        backgroundImage: photoURL != null ? NetworkImage(photoURL) : null,
+                        child: photoURL == null ? Text(displayName[0].toUpperCase()) : null,
+                      ),
+                      // Online indicator
+                      if (isOnline)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: Colors.green,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Theme.of(context).scaffoldBackgroundColor,
+                                width: 2,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   title: Text(
                     displayName,

@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../services/notification_service.dart';
+import '../services/presence_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final String recipientId;
@@ -199,9 +200,47 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     style: const TextStyle(fontSize: 16),
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const Text(
-                    'Online',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+                  // Real-time status
+                  StreamBuilder<Map<String, dynamic>?>(
+                    stream: PresenceService().getUserStatusStream(widget.recipientId),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) {
+                        return const Text(
+                          'Loading...',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+                        );
+                      }
+
+                      final statusText = PresenceService.getStatusText(snapshot.data);
+                      final isOnline = PresenceService.isUserOnline(snapshot.data ?? {});
+
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Online indicator dot
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: isOnline ? Colors.green : Colors.grey,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              statusText,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.normal,
+                                color: isOnline ? Colors.green : Colors.grey[600],
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ],
               ),

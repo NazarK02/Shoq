@@ -56,7 +56,7 @@ class UserService {
     };
   }
 
-  /// ✅ Create or update user document + device
+  /// ✅ Create or update user document + device + set online status
   Future<void> saveUserToFirestore({
     required User user,
   }) async {
@@ -72,9 +72,10 @@ class UserService {
         'email': user.email ?? '',
         'displayName': user.displayName ?? '',
         'photoUrl': user.photoURL ?? '',
-        'status': '',
-        'createdAt': FieldValue.serverTimestamp(),
+        'status': 'online', // Set as online on login/registration
         'lastSeen': FieldValue.serverTimestamp(),
+        'lastHeartbeat': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
         'devices': {
           deviceId: {
             'deviceType': deviceType,
@@ -110,7 +111,31 @@ class UserService {
 
     await _firestore.collection('users').doc(user.uid).update({
       'lastSeen': FieldValue.serverTimestamp(),
+      'lastHeartbeat': FieldValue.serverTimestamp(),
       'devices.$deviceId.lastActive': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// 🟢 Set user status to online
+  Future<void> setOnline() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    await _firestore.collection('users').doc(user.uid).update({
+      'status': 'online',
+      'lastSeen': FieldValue.serverTimestamp(),
+      'lastHeartbeat': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// 🔴 Set user status to offline
+  Future<void> setOffline() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    await _firestore.collection('users').doc(user.uid).update({
+      'status': 'offline',
+      'lastSeen': FieldValue.serverTimestamp(),
     });
   }
 
@@ -140,6 +165,9 @@ class UserService {
   /// 🔐 Current user
   User? getCurrentUser() => _auth.currentUser;
 
-  /// 🚪 Sign out
-  Future<void> signOut() async => _auth.signOut();
+  /// 🚪 Sign out (set offline before signing out)
+  Future<void> signOut() async {
+    await setOffline();
+    await _auth.signOut();
+  }
 }

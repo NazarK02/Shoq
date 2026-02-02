@@ -11,6 +11,7 @@ import 'screens/email_verification_screen.dart';
 import 'services/firebase_options.dart';
 import 'services/notification_service.dart';
 import 'services/theme_service.dart';
+import 'services/presence_service.dart';
 
 /// Background notification handler
 @pragma('vm:entry-point')
@@ -69,8 +70,56 @@ class MyApp extends StatelessWidget {
 }
 
 /// Reacts to auth + email verification changes automatically
-class AuthWrapper extends StatelessWidget {
+class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
+
+  @override
+  State<AuthWrapper> createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
+  final PresenceService _presenceService = PresenceService();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    
+    // Listen to auth changes and start/stop presence tracking
+    FirebaseAuth.instance.authStateChanges().listen((user) {
+      if (user != null) {
+        _presenceService.startPresenceTracking();
+      } else {
+        _presenceService.stopPresenceTracking();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _presenceService.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    switch (state) {
+      case AppLifecycleState.resumed:
+        _presenceService.setOnline();
+        break;
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+        _presenceService.setOffline();
+        break;
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        break;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
