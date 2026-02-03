@@ -313,8 +313,9 @@ class _HomeScreenState extends State<HomeScreen> {
               orElse: () => '',
             );
 
-            return FutureBuilder<DocumentSnapshot>(
-              future: _firestore.collection('users').doc(otherUserId).get(),
+            // Stream the user doc so the green dot updates live
+            return StreamBuilder<DocumentSnapshot>(
+              stream: _firestore.collection('users').doc(otherUserId).snapshots(),
               builder: (context, userSnapshot) {
                 if (!userSnapshot.hasData) {
                   return const ListTile(
@@ -325,16 +326,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 final userData = userSnapshot.data!.data() as Map<String, dynamic>?;
                 final displayName = userData?['displayName'] ?? 'User';
-                final photoURL = userData?['photoURL'];
+                final photoURL = userData?['photoUrl'];
 
                 if (_searchQuery.isNotEmpty &&
                     !displayName.toLowerCase().contains(_searchQuery)) {
                   return const SizedBox.shrink();
                 }
 
-                // Check online status
                 final isOnline = PresenceService.isUserOnline(userData ?? {});
-                final status = userData?['status'] ?? 'offline';
 
                 return ListTile(
                   leading: Stack(
@@ -343,7 +342,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         backgroundImage: photoURL != null ? NetworkImage(photoURL) : null,
                         child: photoURL == null ? Text(displayName[0].toUpperCase()) : null,
                       ),
-                      // Online indicator
                       if (isOnline)
                         Positioned(
                           right: 0,

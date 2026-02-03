@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -79,14 +80,14 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   final PresenceService _presenceService = PresenceService();
+  StreamSubscription<User?>? _authSubscription;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    
-    // Listen to auth changes and start/stop presence tracking
-    FirebaseAuth.instance.authStateChanges().listen((user) {
+
+    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
       if (user != null) {
         _presenceService.startPresenceTracking();
       } else {
@@ -98,6 +99,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _authSubscription?.cancel();
+    _presenceService.stopPresenceTracking();
     _presenceService.dispose();
     super.dispose();
   }
@@ -107,16 +110,19 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
+    print('📱 Lifecycle changed to: $state');
+
     switch (state) {
       case AppLifecycleState.resumed:
         _presenceService.setOnline();
         break;
+      // paused, inactive, hidden, detached — ALL set offline.
+      // detached is the one that fires on Windows when the window is closed.
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
-        _presenceService.setOffline();
-        break;
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
+        _presenceService.setOffline();
         break;
     }
   }
