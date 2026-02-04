@@ -1,9 +1,11 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import '../services/theme_service.dart';
 
@@ -67,7 +69,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() => _isUploading = true);
 
       // Upload to Firebase Storage
-      final ref = _storage.ref().child('profile_pictures/${user.uid}.jpg');
+      final ref = _storage.ref().child('profile_pictures/${user.uid}');
       final uploadTask = await ref.putFile(File(image.path));
       final downloadUrl = await uploadTask.ref.getDownloadURL();
 
@@ -100,40 +102,131 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showImageSourceDialog() {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera),
-              title: const Text('Take Photo'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickAndUploadImage(ImageSource.camera);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Choose from Gallery'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickAndUploadImage(ImageSource.gallery);
-              },
-            ),
-            if (_userData?['photoUrl'] != null)
+    // For desktop/web, use file picker directly
+    if (kIsWeb || Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      showModalBottomSheet(
+        context: context,
+        builder: (context) => SafeArea(
+          child: Wrap(
+            children: [
               ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text('Remove Photo', style: TextStyle(color: Colors.red)),
+                leading: const Icon(Icons.folder_open),
+                title: const Text('Choose from Files'),
                 onTap: () {
                   Navigator.pop(context);
-                  _removeProfilePicture();
+                  _pickImageFromFiles();
                 },
               ),
-          ],
+              if (_userData?['photoUrl'] != null)
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text('Remove Photo', style: TextStyle(color: Colors.red)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _removeProfilePicture();
+                  },
+                ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      // Mobile - show camera and gallery options
+      showModalBottomSheet(
+        context: context,
+        builder: (context) => SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_camera),
+                title: const Text('Take Photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickAndUploadImage(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('Choose from Gallery'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickAndUploadImage(ImageSource.gallery);
+                },
+              ),
+              if (_userData?['photoUrl'] != null)
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text('Remove Photo', style: TextStyle(color: Colors.red)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _removeProfilePicture();
+                  },
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+  }
+
+  // NEW: Pick image from files (for desktop)
+  Future<void> _pickImageFromFiles() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+      );
+
+      if (result == null || result.files.isEmpty) return;
+
+      final file = result.files.first;
+      
+      setState(() => _isUploading = true);
+
+      // Upload to Firebase Storage
+      final ref = _storage.ref().child('profile_pictures/${user.uid}');
+      
+      UploadTask uploadTask;
+      if (kIsWeb) {
+        // Web upload using bytes
+        uploadTask = ref.putData(file.bytes!);
+      } else {
+        // Desktop upload using file path
+        uploadTask = ref.putFile(File(file.path!));
+      }
+      
+      final uploadResult = await uploadTask;
+      final downloadUrl = await uploadResult.ref.getDownloadURL();
+
+      // Update Firestore
+      await _firestore.collection('users').doc(user.uid).update({
+        'photoUrl': downloadUrl,
+      });
+
+      // Update Firebase Auth
+      await user.updatePhotoURL(downloadUrl);
+      await user.reload();
+
+      // Reload user data
+      await _loadUserData();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profile picture updated!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: ${e.toString()}')),
+        );
+      }
+    } finally {
+      setState(() => _isUploading = false);
+    }
   }
 
   Future<void> _removeProfilePicture() async {
@@ -145,7 +238,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       // Delete from Storage
       try {
-        final ref = _storage.ref().child('profile_pictures/${user.uid}.jpg');
+        final ref = _storage.ref().child('profile_pictures/${user.uid}');
         await ref.delete();
       } catch (e) {
         print('No profile picture to delete: $e');

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:intl/intl.dart';
 import '../services/notification_service.dart';
-import '../services/presence_service.dart';
+import 'user_profile_view_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String recipientId;
@@ -22,34 +23,35 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseDatabase _realtimeDb = FirebaseDatabase.instance;
   final NotificationService _notificationService = NotificationService();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   
   String? _conversationId;
   bool _isLoading = true;
+  bool _isRecipientOnline = false;
+  DateTime? _recipientLastSeen;
+  
+  // Real-time user data
+  Map<String, dynamic>? _recipientData;
 
   @override
   void initState() {
     super.initState();
     
-    // Add observer to detect app state changes
     WidgetsBinding.instance.addObserver(this);
-    
-    // Set this chat as active and clear any existing notifications
     _notificationService.setActiveChat(widget.recipientId);
     
     _initializeConversation();
+    _listenToRecipientStatus();
+    _listenToRecipientData(); // NEW: Listen to profile changes
   }
 
   @override
   void dispose() {
-    // Clear active chat when leaving the screen
     _notificationService.setActiveChat(null);
-    
-    // Remove observer
     WidgetsBinding.instance.removeObserver(this);
-    
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -57,22 +59,73 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Handle app lifecycle changes
     switch (state) {
       case AppLifecycleState.resumed:
-        // User returned to app while on this screen, set active chat again
         _notificationService.setActiveChat(widget.recipientId);
         break;
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
-        // User left app or switched away, clear active chat
-        // This allows notifications to show when app is in background
         _notificationService.setActiveChat(null);
         break;
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
         break;
     }
+  }
+
+  // NEW: Listen to recipient's profile data in real-time
+  void _listenToRecipientData() {
+    _firestore.collection('users').doc(widget.recipientId).snapshots().listen((snapshot) {
+      if (snapshot.exists && mounted) {
+        setState(() {
+          _recipientData = snapshot.data();
+        });
+      }
+    });
+  }
+
+  // Listen to recipient's online status
+  void _listenToRecipientStatus() {
+    _realtimeDb.ref('status/${widget.recipientId}').onValue.listen((event) {
+      if (event.snapshot.value != null) {
+        final data = event.snapshot.value as Map<dynamic, dynamic>;
+        final state = data['state'] as String?;
+        final lastSeenTimestamp = data['lastSeen'] as int?;
+
+        if (mounted) {
+          setState(() {
+            _isRecipientOnline = state == 'online';
+            if (lastSeenTimestamp != null) {
+              _recipientLastSeen = DateTime.fromMillisecondsSinceEpoch(lastSeenTimestamp);
+            }
+          });
+        }
+      }
+    });
+  }
+
+  String _getStatusText() {
+    if (_isRecipientOnline) {
+      return 'Online';
+    } else if (_recipientLastSeen != null) {
+      final now = DateTime.now();
+      final diff = now.difference(_recipientLastSeen!);
+
+      if (diff.inMinutes < 1) {
+        return 'Just now';
+      } else if (diff.inMinutes < 60) {
+        return '${diff.inMinutes}m ago';
+      } else if (diff.inHours < 24) {
+        return '${diff.inHours}h ago';
+      } else if (diff.inDays == 1) {
+        return 'Yesterday';
+      } else if (diff.inDays < 7) {
+        return '${diff.inDays}d ago';
+      } else {
+        return DateFormat('MMM d').format(_recipientLastSeen!);
+      }
+    }
+    return '';
   }
 
   Future<void> _initializeConversation() async {
@@ -136,7 +189,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         'lastSenderId': currentUser.uid,
       });
 
-      // Send push notification
       try {
         final senderName = currentUser.displayName ?? 'Someone';
         await _notificationService.sendMessageNotification(
@@ -172,6 +224,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  // NEW: Navigate to user profile
+  void _openUserProfile() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => UserProfileViewScreen(
+          userId: widget.recipientId,
+          userData: _recipientData,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -181,71 +246,69 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       );
     }
 
+    // Use real-time data for display name and photo
+    final displayName = _recipientData?['displayName'] ?? widget.recipientName;
+    final photoUrl = _recipientData?['photoUrl'];
+
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            CircleAvatar(
-              radius: 18,
-              child: Text(widget.recipientName[0].toUpperCase()),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+        title: InkWell(
+          onTap: _openUserProfile, // NEW: Tap to view profile
+          child: Row(
+            children: [
+              Stack(
                 children: [
-                  Text(
-                    widget.recipientName,
-                    style: const TextStyle(fontSize: 16),
-                    overflow: TextOverflow.ellipsis,
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
+                    child: photoUrl == null
+                        ? Text(displayName[0].toUpperCase())
+                        : null,
                   ),
-                  // Real-time status
-                  StreamBuilder<Map<String, dynamic>?>(
-                    stream: PresenceService().getUserStatusStream(widget.recipientId),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) {
-                        return const Text(
-                          'Loading...',
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
-                        );
-                      }
-
-                      final statusText = PresenceService.getStatusText(snapshot.data);
-                      final isOnline = PresenceService.isUserOnline(snapshot.data ?? {});
-
-                      return Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Online indicator dot
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: isOnline ? Colors.green : Colors.grey,
-                              shape: BoxShape.circle,
-                            ),
+                  // Online indicator
+                  if (_isRecipientOnline)
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Theme.of(context).scaffoldBackgroundColor,
+                            width: 2,
                           ),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              statusText,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.normal,
-                                color: isOnline ? Colors.green : Colors.grey[600],
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      displayName,
+                      style: const TextStyle(fontSize: 16),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      _getStatusText(),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.normal,
+                        color: _isRecipientOnline ? Colors.green : Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           IconButton(
@@ -268,12 +331,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             onSelected: (value) {
               if (value == 'clear') {
                 _showClearChatDialog();
+              } else if (value == 'profile') {
+                _openUserProfile();
               }
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
+                value: 'profile',
+                child: Row(
+                  children: [
+                    Icon(Icons.person, size: 20),
+                    SizedBox(width: 8),
+                    Text('View Profile'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
                 value: 'clear',
-                child: Text('Clear chat'),
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_sweep, size: 20),
+                    SizedBox(width: 8),
+                    Text('Clear chat'),
+                  ],
+                ),
               ),
             ],
           ),
@@ -284,7 +365,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           Expanded(
             child: _MessagesList(
               conversationId: _conversationId!,
-              recipientName: widget.recipientName,
+              recipientName: displayName,
               scrollController: _scrollController,
             ),
           ),
@@ -403,7 +484,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 }
 
-// Separate widget for messages list with AutomaticKeepAliveClientMixin
+// Messages list widget
 class _MessagesList extends StatefulWidget {
   final String conversationId;
   final String recipientName;
@@ -442,7 +523,7 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    super.build(context);
 
     final currentUser = _auth.currentUser;
     if (currentUser == null) {
@@ -488,7 +569,6 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
 
         final messages = snapshot.data!.docs;
         
-        // Only scroll on new messages, not on every rebuild
         if (messages.isNotEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (widget.scrollController.hasClients && 
