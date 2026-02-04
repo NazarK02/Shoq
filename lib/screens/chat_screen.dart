@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
+import 'user_profile_view_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String recipientId;
@@ -193,7 +194,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         title: InkWell(
           onTap: () {
-            // TODO: Navigate to user profile view
+            // Navigate to user profile view
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => UserProfileViewScreen(
+                  userId: widget.recipientId,
+                  userData: _recipientData,
+                ),
+              ),
+            );
           },
           child: Row(
             children: [
