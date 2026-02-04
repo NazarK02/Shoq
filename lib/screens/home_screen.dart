@@ -8,6 +8,7 @@ import 'profile_screen.dart';
 import 'settings_screen.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
+import '../services/cache_warmup_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,9 +22,26 @@ class _HomeScreenState extends State<HomeScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  Timer? _rebuildTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Rebuild every 30s so isUserOnline() (which checks current time vs
+    // lastHeartbeat) is re-evaluated even when no new Firestore snapshot fires.
+    _rebuildTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+    
+    // Preload user images and friend data for instant navigation
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      CacheWarmupService().warmUp(context);
+    });
+  }
 
   @override
   void dispose() {
+    _rebuildTimer?.cancel();
     _searchController.dispose();
     super.dispose();
   }
