@@ -5,7 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
-import 'user_profile_view_screen.dart';
+import '../services/cache_warmup_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final String recipientId;
@@ -72,10 +72,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   // Listen to recipient's profile data in real-time
   void _listenToRecipientData() {
+    // Load from cache immediately
+    final cached = CacheWarmupService().getUserData(widget.recipientId);
+    if (cached != null && mounted) {
+      setState(() {
+        _recipientData = cached;
+      });
+    }
+    
+    // Then listen to stream for updates
     _firestore.collection('users').doc(widget.recipientId).snapshots().listen((snapshot) {
       if (snapshot.exists && mounted) {
+        final data = snapshot.data()!;
+        CacheWarmupService().cacheUserData(widget.recipientId, data);
         setState(() {
-          _recipientData = snapshot.data();
+          _recipientData = data;
         });
       }
     });
@@ -194,16 +205,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         title: InkWell(
           onTap: () {
-            // Navigate to user profile view
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => UserProfileViewScreen(
-                  userId: widget.recipientId,
-                  userData: _recipientData,
-                ),
-              ),
-            );
+            // TODO: Navigate to user profile view
           },
           child: Row(
             children: [
@@ -478,6 +480,12 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
+        // Show loading spinner only during initial connection
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        // Show empty state only when actually empty
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return Center(
             child: Column(

@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -10,6 +9,8 @@ import 'settings_screen.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import '../services/cache_warmup_service.dart';
+import 'dart:async';
+
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -255,7 +256,8 @@ class _HomeScreenState extends State<HomeScreen> {
           .where('participants', arrayContains: user.uid)
           .snapshots(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        // Only show spinner during very first connection
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
@@ -333,17 +335,30 @@ class _HomeScreenState extends State<HomeScreen> {
             );
 
             // Stream the user doc so the green dot updates live
+            // But use cached data immediately to avoid loading flicker
             return StreamBuilder<DocumentSnapshot>(
               stream: _firestore.collection('users').doc(otherUserId).snapshots(),
               builder: (context, userSnapshot) {
-                if (!userSnapshot.hasData) {
+                // Try cache first for instant render
+                Map<String, dynamic>? userData = CacheWarmupService().getUserData(otherUserId);
+                
+                // Update cache when stream fires
+                if (userSnapshot.hasData && userSnapshot.data!.exists) {
+                  final freshData = userSnapshot.data!.data() as Map<String, dynamic>?;
+                  if (freshData != null) {
+                    CacheWarmupService().cacheUserData(otherUserId, freshData);
+                    userData = freshData;
+                  }
+                }
+
+                // Fallback if no cache and no stream data yet
+                if (userData == null && !userSnapshot.hasData) {
                   return const ListTile(
                     leading: CircleAvatar(child: Icon(Icons.person)),
                     title: Text('Loading...'),
                   );
                 }
 
-                final userData = userSnapshot.data!.data() as Map<String, dynamic>?;
                 final displayName = userData?['displayName'] ?? 'User';
                 final photoURL = userData?['photoUrl'];
 
