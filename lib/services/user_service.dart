@@ -21,7 +21,7 @@ class UserService {
     if (Platform.isAndroid) {
       final android = await _deviceInfo.androidInfo;
       return {
-        'deviceId': android.id ?? android.serialNumber ?? 'android',
+        'deviceId': android.id,
         'deviceType': 'android',
       };
     }

@@ -104,7 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const FriendsListScreen()),
+                    MaterialPageRoute(builder: (_) => const ImprovedFriendsListScreen()),
                 );
               },
             ),
@@ -185,7 +185,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Navigator.pop(context);
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const FriendsListScreen()),
+                  MaterialPageRoute(builder: (_) => const ImprovedFriendsListScreen()),
               );
             },
           ),
@@ -289,7 +289,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => const FriendsListScreen()),
+                      MaterialPageRoute(builder: (_) => const ImprovedFriendsListScreen()),
                     );
                   },
                   icon: const Icon(Icons.person_add),

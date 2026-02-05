@@ -113,8 +113,7 @@ class EncryptionService {
 /// Storage for user's encryption keys (store securely on device)
 /// In production, use flutter_secure_storage
 class KeyStorage {
-  static const String _keyPrivateKey = 'user_private_key';
-  static const String _keyPublicKey = 'user_public_key';
+  // Key storage keys removed (TODO: implement secure storage)
   
   // Store keys (use secure storage in production)
   static Future<void> saveKeys(String publicKey, String privateKey) async {
