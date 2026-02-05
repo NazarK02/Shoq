@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'chat_screen.dart';
@@ -288,7 +289,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
             return ListTile(
               leading: CircleAvatar(
                 radius: 20,
-                backgroundImage: blocked['photoURL'] != null ? NetworkImage(blocked['photoURL']) : null,
+                backgroundImage: blocked['photoURL'] != null ? CachedNetworkImageProvider(blocked['photoURL']) : null,
                 child: blocked['photoURL'] == null ? const Icon(Icons.person) : null,
               ),
               title: Text(blocked['displayName']),
@@ -753,7 +754,7 @@ class _FriendListTile extends StatelessWidget {
     return ListTile(
       leading: CircleAvatar(
         radius: 20,
-        backgroundImage: photoURL != null ? NetworkImage(photoURL) : null,
+        backgroundImage: photoURL != null ? CachedNetworkImageProvider(photoURL) : null,
         child: photoURL == null ? const Icon(Icons.person) : null,
       ),
       title: Text(displayName),
@@ -878,7 +879,7 @@ class _FriendRequestTileState extends State<_FriendRequestTile> {
       child: ListTile(
         leading: CircleAvatar(
           radius: 20,
-          backgroundImage: photoURL != null ? NetworkImage(photoURL) : null,
+          backgroundImage: photoURL != null ? CachedNetworkImageProvider(photoURL) : null,
           child: photoURL == null ? const Icon(Icons.person) : null,
         ),
         title: Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold)),

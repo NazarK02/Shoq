@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import 'user_profile_view_screen.dart';
@@ -29,7 +30,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final ScrollController _scrollController = ScrollController();
   
   String? _conversationId;
-  bool _isLoading = true;
   
   // Real-time recipient data (name, photo, status updated live)
   Map<String, dynamic>? _recipientData;
@@ -104,11 +104,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       });
     }
 
-    if (mounted) {
-      setState(() {
-        _isLoading = false;
-      });
-    }
+    // conversation creation finished; conversationId is set so UI updates via StreamBuilder
   }
 
   String _getDirectConversationId(String userId1, String userId2) {
@@ -181,13 +177,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.recipientName)),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
     final displayName = _recipientData?['displayName'] ?? widget.recipientName;
     final photoUrl = _recipientData?['photoUrl'];
 
@@ -211,7 +200,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 children: [
                   CircleAvatar(
                     radius: 18,
-                    backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
+                    backgroundImage: photoUrl != null ? CachedNetworkImageProvider(photoUrl) : null,
                     child: photoUrl == null ? Icon(Icons.person) : null,
                   ),
                   // Online indicator dot (using _LiveStatusWidget's data)
@@ -298,7 +287,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         children: [
           Expanded(
             child: _MessagesList(
-              conversationId: _conversationId!,
+              conversationId: _conversationId,
               recipientName: widget.recipientName,
               scrollController: _scrollController,
             ),
@@ -420,7 +409,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
 // Separate widget for messages list with AutomaticKeepAliveClientMixin
 class _MessagesList extends StatefulWidget {
-  final String conversationId;
+  final String? conversationId;
   final String recipientName;
   final ScrollController scrollController;
 
@@ -462,6 +451,21 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     final currentUser = _auth.currentUser;
     if (currentUser == null) {
       return const Center(child: Text('Error loading messages'));
+    }
+
+    if (widget.conversationId == null) {
+      // Conversation is still being created — show inline indicator instead of a full-screen loader
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            SizedBox(height: 8),
+            CircularProgressIndicator(),
+            SizedBox(height: 12),
+            Text('Preparing chat...'),
+          ],
+        ),
+      );
     }
 
     return StreamBuilder<QuerySnapshot>(

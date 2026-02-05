@@ -7,6 +7,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../services/theme_service.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -473,7 +474,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           radius: 70,
                           backgroundColor: Colors.grey[300],
                           backgroundImage: photoUrl != null
-                              ? NetworkImage(photoUrl)
+                              ? CachedNetworkImageProvider(photoUrl)
                               : null,
                           child: photoUrl == null
                               ? Icon(

@@ -9,6 +9,7 @@ import 'profile_screen.dart';
 import 'settings_screen.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -151,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
             currentAccountPicture: CircleAvatar(
               backgroundColor: Colors.white,
               backgroundImage: user?.photoURL != null
-                  ? NetworkImage(user!.photoURL!)
+                  ? CachedNetworkImageProvider(user!.photoURL!)
                   : null,
               child: user?.photoURL == null
                   ? Icon(
@@ -353,7 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       CircleAvatar(
                         radius: 20,
-                        backgroundImage: photoURL != null ? NetworkImage(photoURL) : null,
+                        backgroundImage: photoURL != null ? CachedNetworkImageProvider(photoURL) : null,
                         child: photoURL == null ? Icon(Icons.person) : null,
                       ),
                       if (isOnline)

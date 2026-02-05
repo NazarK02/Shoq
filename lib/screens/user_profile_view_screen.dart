@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:intl/intl.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class UserProfileViewScreen extends StatefulWidget {
   final String userId;
@@ -29,6 +30,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   DateTime? _lastSeen;
   bool _isFriend = false;
   bool _isBlocked = false;
+  bool _friendStatusLoading = true;
   String _friendRequestStatus = 'none'; // none, pending_sent, pending_received
 
   @override
@@ -126,10 +128,12 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
           } else {
             _friendRequestStatus = 'none';
           }
+          _friendStatusLoading = false;
         });
       }
     } catch (e) {
       print('Error checking friendship status: $e');
+      if (mounted) setState(() => _friendStatusLoading = false);
     }
   }
 
@@ -381,17 +385,17 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
                     ),
                   ),
                   child: CircleAvatar(
-                    radius: 70,
-                    backgroundColor: Colors.grey[300],
-                    backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
-                    child: photoUrl == null
-                        ? Icon(
-                            Icons.person,
-                            size: 70,
-                            color: Colors.grey[600],
-                          )
-                        : null,
-                  ),
+                      radius: 70,
+                      backgroundColor: Colors.grey[300],
+                      backgroundImage: photoUrl != null ? CachedNetworkImageProvider(photoUrl) : null,
+                      child: photoUrl == null
+                          ? Icon(
+                              Icons.person,
+                              size: 70,
+                              color: Colors.grey[600],
+                            )
+                          : null,
+                    ),
                 ),
                 if (_isOnline)
                   Positioned(
@@ -470,6 +474,19 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 side: const BorderSide(color: Colors.green),
+              ),
+            )
+          else if (_friendStatusLoading)
+            OutlinedButton.icon(
+              onPressed: null,
+              icon: const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              label: const Text('Checking...'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
               ),
             )
           else if (_friendRequestStatus == 'pending_sent')
