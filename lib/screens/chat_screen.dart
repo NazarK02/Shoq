@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -6,6 +5,9 @@ import 'package:intl/intl.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import '../services/cache_warmup_service.dart';
+import '../widgets/cached_avatar.dart';
+import 'user_profile_view_screen.dart';
+import 'dart:async';
 
 class ChatScreen extends StatefulWidget {
   final String recipientId;
@@ -205,18 +207,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         title: InkWell(
           onTap: () {
-            // TODO: Navigate to user profile view
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => UserProfileViewScreen(
+                  userId: widget.recipientId,
+                  userData: _recipientData,
+                ),
+              ),
+            );
           },
           child: Row(
             children: [
               Stack(
                 children: [
-                  CircleAvatar(
+                  CachedAvatar(
+                    photoUrl: photoUrl,
+                    fallbackText: displayName,
                     radius: 18,
-                    backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
-                    child: photoUrl == null
-                        ? Text(displayName[0].toUpperCase())
-                        : null,
                   ),
                   // Online indicator dot (using _LiveStatusWidget's data)
                   StreamBuilder<Map<String, dynamic>?>(

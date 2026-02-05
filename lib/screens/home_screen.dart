@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -9,8 +10,7 @@ import 'settings_screen.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import '../services/cache_warmup_service.dart';
-import 'dart:async';
-
+import '../widgets/cached_avatar.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -372,9 +372,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 return ListTile(
                   leading: Stack(
                     children: [
-                      CircleAvatar(
-                        backgroundImage: photoURL != null ? NetworkImage(photoURL) : null,
-                        child: photoURL == null ? Text(displayName[0].toUpperCase()) : null,
+                      CachedAvatar(
+                        photoUrl: photoURL,
+                        fallbackText: displayName,
+                        radius: 20,
                       ),
                       if (isOnline)
                         Positioned(

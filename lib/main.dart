@@ -4,11 +4,10 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:provider/provider.dart';
-
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/email_verification_screen.dart';
-
+import 'services/cache_warmup_service.dart';
 import 'services/firebase_options.dart';
 import 'services/notification_service.dart';
 import 'services/theme_service.dart';
@@ -90,8 +89,16 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
       if (user != null) {
         _presenceService.startPresenceTracking();
+        
+        // Warmup cache immediately on login
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (context.mounted) {
+            CacheWarmupService().warmUp(context);
+          }
+        });
       } else {
         _presenceService.stopPresenceTracking();
+        CacheWarmupService().reset();
       }
     });
   }
