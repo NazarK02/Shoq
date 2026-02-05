@@ -4,8 +4,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
-import '../services/cache_warmup_service.dart';
-import '../widgets/cached_avatar.dart';
 import 'user_profile_view_screen.dart';
 import 'dart:async';
 
@@ -74,19 +72,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   // Listen to recipient's profile data in real-time
   void _listenToRecipientData() {
-    // Load from cache immediately
-    final cached = CacheWarmupService().getUserData(widget.recipientId);
-    if (cached != null && mounted) {
-      setState(() {
-        _recipientData = cached;
-      });
-    }
-    
-    // Then listen to stream for updates
     _firestore.collection('users').doc(widget.recipientId).snapshots().listen((snapshot) {
       if (snapshot.exists && mounted) {
         final data = snapshot.data()!;
-        CacheWarmupService().cacheUserData(widget.recipientId, data);
         setState(() {
           _recipientData = data;
         });
@@ -221,10 +209,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             children: [
               Stack(
                 children: [
-                  CachedAvatar(
-                    photoUrl: photoUrl,
-                    fallbackText: displayName,
+                  CircleAvatar(
                     radius: 18,
+                    backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
+                    child: photoUrl == null ? Icon(Icons.person) : null,
                   ),
                   // Online indicator dot (using _LiveStatusWidget's data)
                   StreamBuilder<Map<String, dynamic>?>(

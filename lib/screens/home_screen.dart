@@ -9,8 +9,6 @@ import 'profile_screen.dart';
 import 'settings_screen.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
-import '../services/cache_warmup_service.dart';
-import '../widgets/cached_avatar.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -33,11 +31,6 @@ class _HomeScreenState extends State<HomeScreen> {
     // lastHeartbeat) is re-evaluated even when no new Firestore snapshot fires.
     _rebuildTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
-    });
-    
-    // Preload user images and friend data for instant navigation
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      CacheWarmupService().warmUp(context);
     });
   }
 
@@ -334,31 +327,17 @@ class _HomeScreenState extends State<HomeScreen> {
               orElse: () => '',
             );
 
-            // Stream the user doc so the green dot updates live
-            // But use cached data immediately to avoid loading flicker
             return StreamBuilder<DocumentSnapshot>(
               stream: _firestore.collection('users').doc(otherUserId).snapshots(),
               builder: (context, userSnapshot) {
-                // Try cache first for instant render
-                Map<String, dynamic>? userData = CacheWarmupService().getUserData(otherUserId);
-                
-                // Update cache when stream fires
-                if (userSnapshot.hasData && userSnapshot.data!.exists) {
-                  final freshData = userSnapshot.data!.data() as Map<String, dynamic>?;
-                  if (freshData != null) {
-                    CacheWarmupService().cacheUserData(otherUserId, freshData);
-                    userData = freshData;
-                  }
-                }
-
-                // Fallback if no cache and no stream data yet
-                if (userData == null && !userSnapshot.hasData) {
+                if (!userSnapshot.hasData) {
                   return const ListTile(
                     leading: CircleAvatar(child: Icon(Icons.person)),
                     title: Text('Loading...'),
                   );
                 }
 
+                final userData = userSnapshot.data!.data() as Map<String, dynamic>?;
                 final displayName = userData?['displayName'] ?? 'User';
                 final photoURL = userData?['photoUrl'];
 
@@ -372,10 +351,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 return ListTile(
                   leading: Stack(
                     children: [
-                      CachedAvatar(
-                        photoUrl: photoURL,
-                        fallbackText: displayName,
+                      CircleAvatar(
                         radius: 20,
+                        backgroundImage: photoURL != null ? NetworkImage(photoURL) : null,
+                        child: photoURL == null ? Icon(Icons.person) : null,
                       ),
                       if (isOnline)
                         Positioned(
