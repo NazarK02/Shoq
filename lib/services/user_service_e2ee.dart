@@ -3,13 +3,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'crypto_service.dart';
 
 class UserService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
+  final CryptoService _crypto = CryptoService();
 
-  /// 🔍 Automatically detect deviceId + deviceType
+  /// Automatically detect deviceId + deviceType
   Future<Map<String, String>> _getDeviceInfo() async {
     if (kIsWeb) {
       return {
@@ -56,7 +58,7 @@ class UserService {
     };
   }
 
-  /// ✅ Create or update user document + device + set online status
+  /// Create or update user document + initialize E2EE
   Future<void> saveUserToFirestore({
     required User user,
   }) async {
@@ -67,12 +69,13 @@ class UserService {
 
       final userRef = _firestore.collection('users').doc(user.uid);
 
+      // Create/update user document
       await userRef.set({
         'uid': user.uid,
         'email': user.email ?? '',
         'displayName': user.displayName ?? '',
         'photoUrl': user.photoURL ?? '',
-        'status': 'online', // Set as online on login/registration
+        'status': 'online',
         'lastSeen': FieldValue.serverTimestamp(),
         'lastHeartbeat': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
@@ -84,13 +87,29 @@ class UserService {
         }
       }, SetOptions(merge: true));
 
-      print('✅ User + device saved successfully');
+      print('✅ User document saved');
+
+      // Initialize E2EE for this user
+      print('🔐 Initializing E2EE for user...');
+      await _crypto.initialize();
+      
+      // Check if user already has a public key
+      final userDoc = await userRef.get();
+      if (userDoc.data()?['publicKey'] == null) {
+        print('📝 No public key found, generating...');
+        // CryptoService.initialize() already generates keys if missing
+        print('✅ E2EE initialized for new user');
+      } else {
+        print('✅ E2EE initialized (existing keys loaded)');
+      }
+
     } catch (e) {
       print('❌ Error saving user: $e');
+      rethrow;
     }
   }
 
-  /// 📥 Get user data
+  /// Get user data
   Future<Map<String, dynamic>?> getUserData(String uid) async {
     try {
       final doc = await _firestore.collection('users').doc(uid).get();
@@ -101,7 +120,7 @@ class UserService {
     }
   }
 
-  /// 🟢 Update lastSeen + current device activity
+  /// Update lastSeen + current device activity
   Future<void> updateLastSeen() async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -116,7 +135,7 @@ class UserService {
     });
   }
 
-  /// 🟢 Set user status to online
+  /// Set user status to online
   Future<void> setOnline() async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -128,7 +147,7 @@ class UserService {
     });
   }
 
-  /// 🔴 Set user status to offline
+  /// Set user status to offline
   Future<void> setOffline() async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -139,7 +158,7 @@ class UserService {
     });
   }
 
-  /// ✏️ Update profile
+  /// Update profile
   Future<void> updateUserProfile({
     String? displayName,
     String? photoUrl,
@@ -162,12 +181,13 @@ class UserService {
     if (photoUrl != null) await user.updatePhotoURL(photoUrl);
   }
 
-  /// 🔐 Current user
+  /// Current user
   User? getCurrentUser() => _auth.currentUser;
 
-  /// 🚪 Sign out (set offline before signing out)
+  /// Sign out (clear encryption keys and set offline)
   Future<void> signOut() async {
     await setOffline();
+    await _crypto.clear(); // Clear encryption keys from memory
     await _auth.signOut();
   }
 }

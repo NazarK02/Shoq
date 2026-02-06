@@ -5,34 +5,40 @@ import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
+import '../services/chat_service_e2ee.dart';
 import 'user_profile_view_screen.dart';
 import 'dart:async';
 
-class ChatScreen extends StatefulWidget {
+/// E2EE-enabled chat screen
+/// 
+/// All messages are encrypted before sending and decrypted on display.
+/// Firestore never sees plaintext.
+class ChatScreenE2EE extends StatefulWidget {
   final String recipientId;
   final String recipientName;
 
-  const ChatScreen({
+  const ChatScreenE2EE({
     super.key,
     required this.recipientId,
     required this.recipientName,
   });
 
   @override
-  State<ChatScreen> createState() => _ChatScreenState();
+  State<ChatScreenE2EE> createState() => _ChatScreenE2EEState();
 }
 
-class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
+class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObserver {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final ChatService _chatService = ChatService();
   final NotificationService _notificationService = NotificationService();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   
   String? _conversationId;
-  
-  // Real-time recipient data (name, photo, status updated live)
   Map<String, dynamic>? _recipientData;
+  bool _isInitializing = true;
+  String? _initError;
 
   @override
   void initState() {
@@ -41,8 +47,39 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _notificationService.setActiveChat(widget.recipientId);
     
-    _initializeConversation();
-    _listenToRecipientData();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      // Initialize encryption
+      await _chatService.initializeEncryption();
+      
+      // Check if recipient has encryption enabled
+      final hasEncryption = await _chatService.userHasEncryption(widget.recipientId);
+      if (!hasEncryption) {
+        setState(() {
+          _initError = 'Recipient does not have E2EE enabled';
+          _isInitializing = false;
+        });
+        return;
+      }
+
+      // Initialize conversation
+      _conversationId = await _chatService.initializeConversation(widget.recipientId);
+      
+      // Listen to recipient data
+      _listenToRecipientData();
+      
+      setState(() {
+        _isInitializing = false;
+      });
+    } catch (e) {
+      setState(() {
+        _initError = e.toString();
+        _isInitializing = false;
+      });
+    }
   }
 
   @override
@@ -70,46 +107,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  // Listen to recipient's profile data in real-time
   void _listenToRecipientData() {
     _firestore.collection('users').doc(widget.recipientId).snapshots().listen((snapshot) {
       if (snapshot.exists && mounted) {
-        final data = snapshot.data()!;
         setState(() {
-          _recipientData = data;
+          _recipientData = snapshot.data()!;
         });
       }
     });
-  }
-
-  Future<void> _initializeConversation() async {
-    final currentUser = _auth.currentUser;
-    if (currentUser == null) return;
-
-    _conversationId = _getDirectConversationId(currentUser.uid, widget.recipientId);
-    
-    final conversationDoc = await _firestore
-        .collection('conversations')
-        .doc(_conversationId)
-        .get();
-
-    if (!conversationDoc.exists) {
-      await _firestore.collection('conversations').doc(_conversationId).set({
-        'type': 'direct',
-        'participants': [currentUser.uid, widget.recipientId],
-        'createdBy': currentUser.uid,
-        'createdAt': FieldValue.serverTimestamp(),
-        'lastMessage': null,
-        'lastMessageTime': null,
-      });
-    }
-
-    // conversation creation finished; conversationId is set so UI updates via StreamBuilder
-  }
-
-  String _getDirectConversationId(String userId1, String userId2) {
-    final sortedIds = [userId1, userId2]..sort();
-    return 'direct_${sortedIds.join('_')}';
   }
 
   Future<void> _sendMessage() async {
@@ -122,30 +127,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       _messageController.clear();
 
-      await _firestore
-          .collection('conversations')
-          .doc(_conversationId)
-          .collection('messages')
-          .add({
-        'senderId': currentUser.uid,
-        'text': messageText,
-        'timestamp': FieldValue.serverTimestamp(),
-        'read': false,
-      });
+      // Send encrypted message
+      await _chatService.sendMessage(
+        conversationId: _conversationId!,
+        messageText: messageText,
+        recipientId: widget.recipientId,
+      );
 
-      await _firestore.collection('conversations').doc(_conversationId).update({
-        'lastMessage': messageText,
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastSenderId': currentUser.uid,
-      });
-
-      // Send push notification
+      // Send push notification (generic - no content)
       try {
         final senderName = currentUser.displayName ?? 'Someone';
         await _notificationService.sendMessageNotification(
           recipientId: widget.recipientId,
           senderName: senderName,
-          messageText: messageText,
+          messageText: 'Sent an encrypted message', // Generic text
         );
       } catch (notificationError) {
         print('Error sending notification: $notificationError');
@@ -177,6 +172,47 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    if (_isInitializing) {
+      return Scaffold(
+        appBar: AppBar(title: Text(widget.recipientName)),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('🔐 Initializing encryption...'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_initError != null) {
+      return Scaffold(
+        appBar: AppBar(title: Text(widget.recipientName)),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const SizedBox(height: 16),
+              Text('Encryption Error', style: Theme.of(context).textTheme.headlineSmall),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  _initError!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.grey),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final displayName = _recipientData?['displayName'] ?? widget.recipientName;
     final photoUrl = _recipientData?['photoUrl'];
 
@@ -201,9 +237,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   CircleAvatar(
                     radius: 18,
                     backgroundImage: photoUrl != null ? CachedNetworkImageProvider(photoUrl) : null,
-                    child: photoUrl == null ? Icon(Icons.person) : null,
+                    child: photoUrl == null ? const Icon(Icons.person) : null,
                   ),
-                  // Online indicator dot (using _LiveStatusWidget's data)
                   StreamBuilder<Map<String, dynamic>?>(
                     stream: PresenceService().getUserStatusStream(widget.recipientId),
                     builder: (context, snapshot) {
@@ -238,12 +273,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      displayName,
-                      style: const TextStyle(fontSize: 16),
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            displayName,
+                            style: const TextStyle(fontSize: 16),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.lock, size: 14, color: Colors.green),
+                      ],
                     ),
-                    // Real-time status (self-refreshing)
                     _LiveStatusWidget(userId: widget.recipientId),
                   ],
                 ),
@@ -252,22 +294,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.videocam),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Video call feature coming soon')),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.call),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Voice call feature coming soon')),
-              );
-            },
-          ),
           PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'clear') {
@@ -285,11 +311,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
       body: Column(
         children: [
+          // E2EE indicator banner
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+            color: Colors.green.withOpacity(0.1),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: const [
+                Icon(Icons.lock, size: 14, color: Colors.green),
+                SizedBox(width: 6),
+                Text(
+                  'End-to-end encrypted',
+                  style: TextStyle(fontSize: 12, color: Colors.green),
+                ),
+              ],
+            ),
+          ),
           Expanded(
             child: _MessagesList(
               conversationId: _conversationId,
               recipientName: widget.recipientName,
               scrollController: _scrollController,
+              chatService: _chatService,
             ),
           ),
           _buildMessageInput(),
@@ -314,14 +357,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       child: SafeArea(
         child: Row(
           children: [
-            IconButton(
-              icon: const Icon(Icons.attach_file),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Attachments coming soon')),
-                );
-              },
-            ),
             Expanded(
               child: TextField(
                 controller: _messageController,
@@ -352,7 +387,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Clear chat'),
-        content: const Text('Are you sure you want to delete all messages? This action cannot be undone.'),
+        content: const Text('Delete all encrypted messages? This cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -361,7 +396,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
-              await _clearChat();
+              await _chatService.clearChat(_conversationId!);
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Clear'),
@@ -370,53 +405,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
     );
   }
-
-  Future<void> _clearChat() async {
-    if (_conversationId == null) return;
-
-    try {
-      final messages = await _firestore
-          .collection('conversations')
-          .doc(_conversationId)
-          .collection('messages')
-          .get();
-
-      final batch = _firestore.batch();
-      for (var doc in messages.docs) {
-        batch.delete(doc.reference);
-      }
-      await batch.commit();
-
-      await _firestore.collection('conversations').doc(_conversationId).update({
-        'lastMessage': null,
-        'lastMessageTime': null,
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Chat cleared')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error clearing chat: ${e.toString()}')),
-        );
-      }
-    }
-  }
 }
 
-// Separate widget for messages list with AutomaticKeepAliveClientMixin
+// Messages list with decryption
 class _MessagesList extends StatefulWidget {
   final String? conversationId;
   final String recipientName;
   final ScrollController scrollController;
+  final ChatService chatService;
 
   const _MessagesList({
     required this.conversationId,
     required this.recipientName,
     required this.scrollController,
+    required this.chatService,
   });
 
   @override
@@ -425,28 +427,13 @@ class _MessagesList extends StatefulWidget {
 
 class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveClientMixin {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   @override
   bool get wantKeepAlive => true;
 
-  void _scrollToBottom() {
-    if (widget.scrollController.hasClients) {
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (widget.scrollController.hasClients) {
-          widget.scrollController.animateTo(
-            widget.scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    super.build(context);
 
     final currentUser = _auth.currentUser;
     if (currentUser == null) {
@@ -454,57 +441,36 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     }
 
     if (widget.conversationId == null) {
-      // Conversation is still being created — show inline indicator instead of a full-screen loader
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            SizedBox(height: 8),
-            CircularProgressIndicator(),
-            SizedBox(height: 12),
-            Text('Preparing chat...'),
-          ],
-        ),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     return StreamBuilder<QuerySnapshot>(
-      stream: _firestore
-          .collection('conversations')
-          .doc(widget.conversationId)
-          .collection('messages')
-          .orderBy('timestamp', descending: false)
-          .snapshots(),
+      stream: widget.chatService.getMessages(widget.conversationId!),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
-        // Show loading spinner only during initial connection
         if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        // Show empty state only when actually empty
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.chat_bubble_outline,
-                  size: 64,
-                  color: Colors.grey[400],
-                ),
+                const Icon(Icons.lock, size: 64, color: Colors.green),
                 const SizedBox(height: 16),
-                Text(
-                  'No messages yet',
-                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                const Text(
+                  'Encrypted chat',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Say hi to ${widget.recipientName}!',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                  'Messages are end-to-end encrypted.\nOnly you and ${widget.recipientName} can read them.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 14, color: Colors.grey),
                 ),
               ],
             ),
@@ -512,17 +478,7 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
         }
 
         final messages = snapshot.data!.docs;
-        
-        if (messages.isNotEmpty) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (widget.scrollController.hasClients && 
-                widget.scrollController.position.pixels >= widget.scrollController.position.maxScrollExtent - 100) {
-              _scrollToBottom();
-            }
-          });
-        }
 
-        // Build list with date dividers
         return ListView.builder(
           controller: widget.scrollController,
           padding: const EdgeInsets.all(16),
@@ -533,20 +489,27 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
             final isMe = message['senderId'] == currentUser.uid;
             final timestamp = message['timestamp'] as Timestamp?;
 
-            // Check if we need a date divider
-            final showDivider = _shouldShowDateDivider(messages, index);
+            return FutureBuilder<String>(
+              future: widget.chatService.decryptMessage(messageData: message),
+              builder: (context, decryptSnapshot) {
+                String displayText;
+                
+                if (decryptSnapshot.connectionState == ConnectionState.waiting) {
+                  displayText = '🔓 Decrypting...';
+                } else if (decryptSnapshot.hasError) {
+                  displayText = '❌ Decryption failed';
+                } else {
+                  displayText = decryptSnapshot.data ?? '[Empty]';
+                }
 
-            return Column(
-              children: [
-                if (showDivider)
-                  _buildDateDivider(timestamp),
-                _buildMessageBubble(
-                  message['text'] ?? '',
+                return _buildMessageBubble(
+                  displayText,
                   isMe,
                   timestamp,
+                  isDecrypting: decryptSnapshot.connectionState == ConnectionState.waiting,
                   key: ValueKey(messageDoc.id),
-                ),
-              ],
+                );
+              },
             );
           },
         );
@@ -554,68 +517,13 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     );
   }
 
-  /// Returns true if a date divider should be shown before this message
-  bool _shouldShowDateDivider(List<QueryDocumentSnapshot> messages, int index) {
-    if (index == 0) return true; // Always show divider for first message
-
-    final currentMsg = messages[index].data() as Map<String, dynamic>;
-    final prevMsg = messages[index - 1].data() as Map<String, dynamic>;
-
-    final currentTimestamp = currentMsg['timestamp'] as Timestamp?;
-    final prevTimestamp = prevMsg['timestamp'] as Timestamp?;
-
-    if (currentTimestamp == null || prevTimestamp == null) return false;
-
-    final currentDate = currentTimestamp.toDate();
-    final prevDate = prevTimestamp.toDate();
-
-    // Different day = show divider
-    return currentDate.year != prevDate.year ||
-           currentDate.month != prevDate.month ||
-           currentDate.day != prevDate.day;
-  }
-
-  /// Build a date divider like "Today", "Yesterday", or "February 26, 2026"
-  Widget _buildDateDivider(Timestamp? timestamp) {
-    if (timestamp == null) return const SizedBox.shrink();
-
-    final date = timestamp.toDate();
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final messageDate = DateTime(date.year, date.month, date.day);
-
-    String label;
-    if (messageDate == today) {
-      label = 'Today';
-    } else if (messageDate == today.subtract(const Duration(days: 1))) {
-      label = 'Yesterday';
-    } else {
-      label = DateFormat('MMMM d, y').format(date);
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Row(
-        children: [
-          Expanded(child: Divider(color: Colors.grey[400])),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              label,
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          Expanded(child: Divider(color: Colors.grey[400])),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMessageBubble(String text, bool isMe, Timestamp? timestamp, {Key? key}) {
+  Widget _buildMessageBubble(
+    String text,
+    bool isMe,
+    Timestamp? timestamp, {
+    required bool isDecrypting,
+    Key? key,
+  }) {
     return Align(
       key: key,
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -637,17 +545,26 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              text,
-              style: TextStyle(
-                color: isMe ? Colors.white : Colors.black87,
-                fontSize: 15,
-              ),
-            ),
-            if (timestamp != null) ...[
+            isDecrypting
+                ? SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: isMe ? Colors.white : Colors.black54,
+                    ),
+                  )
+                : Text(
+                    text,
+                    style: TextStyle(
+                      color: isMe ? Colors.white : Colors.black87,
+                      fontSize: 15,
+                    ),
+                  ),
+            if (timestamp != null && !isDecrypting) ...[
               const SizedBox(height: 4),
               Text(
-                _formatMessageTime(timestamp),
+                DateFormat('HH:mm').format(timestamp.toDate()),
                 style: TextStyle(
                   color: isMe ? Colors.white70 : Colors.black54,
                   fontSize: 11,
@@ -659,28 +576,8 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
       ),
     );
   }
-
-  String _formatMessageTime(Timestamp timestamp) {
-    final date = timestamp.toDate();
-    final now = DateTime.now();
-    final diff = now.difference(date);
-
-    if (diff.inDays == 0) {
-      return DateFormat('HH:mm').format(date);
-    } else if (diff.inDays == 1) {
-      return 'Yesterday ${DateFormat('HH:mm').format(date)}';
-    } else if (diff.inDays < 7) {
-      return DateFormat('EEE HH:mm').format(date);
-    } else {
-      return DateFormat('MMM d, HH:mm').format(date);
-    }
-  }
 }
 
-/// A small stateful widget that listens to the user's Firestore doc AND
-/// ticks every 30 seconds so that isUserOnline() (which compares
-/// lastHeartbeat to DateTime.now()) is re-evaluated even when no new
-/// Firestore snapshot arrives (i.e. the other user's app just died).
 class _LiveStatusWidget extends StatefulWidget {
   final String userId;
   const _LiveStatusWidget({required this.userId});
@@ -691,8 +588,6 @@ class _LiveStatusWidget extends StatefulWidget {
 
 class _LiveStatusWidgetState extends State<_LiveStatusWidget> {
   Timer? _tick;
-  Map<String, dynamic>? _lastData;
-  bool _hasData = false;
 
   @override
   void initState() {
@@ -713,45 +608,19 @@ class _LiveStatusWidgetState extends State<_LiveStatusWidget> {
     return StreamBuilder<Map<String, dynamic>?>(
       stream: PresenceService().getUserStatusStream(widget.userId),
       builder: (context, snapshot) {
-        if (snapshot.hasData) {
-          _lastData = snapshot.data;
-          _hasData = true;
-        }
-
-        if (!_hasData) {
+        if (!snapshot.hasData) {
           return const Text(
             'Loading...',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+            style: TextStyle(fontSize: 12),
           );
         }
 
-        final isOnline = PresenceService.isUserOnline(_lastData ?? {});
-        final statusText = PresenceService.getStatusText(_lastData);
+        final statusText = PresenceService.getStatusText(snapshot.data);
 
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: isOnline ? Colors.green : Colors.grey,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                statusText,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.normal,
-                  color: isOnline ? Colors.green : Colors.grey[600],
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
+        return Text(
+          statusText,
+          style: const TextStyle(fontSize: 12),
+          overflow: TextOverflow.ellipsis,
         );
       },
     );

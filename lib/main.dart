@@ -11,6 +11,7 @@ import 'services/firebase_options.dart';
 import 'services/notification_service.dart';
 import 'services/theme_service.dart';
 import 'services/presence_service.dart';
+import 'services/crypto_service.dart';
 
 /// Background notification handler
 @pragma('vm:entry-point')
@@ -29,7 +30,6 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-
   /// FCM background messages
   FirebaseMessaging.onBackgroundMessage(
     firebaseMessagingBackgroundHandler,
@@ -37,6 +37,7 @@ Future<void> main() async {
 
   /// Initialize notification service
   await NotificationService().initialize();
+  await CryptoService().initialize();
 
   /// Initialize theme service
   final themeService = ThemeService();
