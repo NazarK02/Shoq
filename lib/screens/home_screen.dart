@@ -3,13 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'registration_screen.dart';
-import 'chat_screen.dart';
 import 'friends_list_screen.dart';
 import 'profile_screen.dart';
 import 'settings_screen.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'chat_screen_e2ee.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
