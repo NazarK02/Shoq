@@ -69,7 +69,20 @@ class UserService {
 
       final userRef = _firestore.collection('users').doc(user.uid);
 
-      // Create/update user document
+      // IMPORTANT: Initialize E2EE FIRST before creating user document
+      print('🔐 Initializing E2EE for user...');
+      await _crypto.initialize();
+      
+      // Get the public key that was just generated/loaded
+      final publicKey = _crypto.myPublicKeyBase64;
+      
+      if (publicKey == null) {
+        throw Exception('Failed to generate encryption keys');
+      }
+      
+      print('✅ E2EE initialized, public key: ${publicKey.substring(0, 20)}...');
+
+      // Create/update user document WITH public key
       await userRef.set({
         'uid': user.uid,
         'email': user.email ?? '',
@@ -79,6 +92,8 @@ class UserService {
         'lastSeen': FieldValue.serverTimestamp(),
         'lastHeartbeat': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
+        'publicKey': publicKey,
+        'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
         'devices': {
           deviceId: {
             'deviceType': deviceType,
@@ -87,21 +102,7 @@ class UserService {
         }
       }, SetOptions(merge: true));
 
-      print('✅ User document saved');
-
-      // Initialize E2EE for this user
-      print('🔐 Initializing E2EE for user...');
-      await _crypto.initialize();
-      
-      // Check if user already has a public key
-      final userDoc = await userRef.get();
-      if (userDoc.data()?['publicKey'] == null) {
-        print('📝 No public key found, generating...');
-        // CryptoService.initialize() already generates keys if missing
-        print('✅ E2EE initialized for new user');
-      } else {
-        print('✅ E2EE initialized (existing keys loaded)');
-      }
+      print('✅ User document saved with public key');
 
     } catch (e) {
       print('❌ Error saving user: $e');

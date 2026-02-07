@@ -12,6 +12,7 @@ import 'services/notification_service.dart';
 import 'services/theme_service.dart';
 import 'services/presence_service.dart';
 import 'services/crypto_service.dart';
+import 'services/e2ee_migration_helper.dart';
 
 /// Background notification handler
 @pragma('vm:entry-point')
@@ -30,6 +31,7 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  
   /// FCM background messages
   FirebaseMessaging.onBackgroundMessage(
     firebaseMessagingBackgroundHandler,
@@ -37,6 +39,8 @@ Future<void> main() async {
 
   /// Initialize notification service
   await NotificationService().initialize();
+  
+  /// Initialize crypto service globally
   await CryptoService().initialize();
 
   /// Initialize theme service
@@ -80,17 +84,25 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   final PresenceService _presenceService = PresenceService();
   StreamSubscription<User?>? _authSubscription;
+  bool _migrationComplete = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
+    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) async {
       if (user != null) {
+        // Run E2EE migration for existing users
+        if (!_migrationComplete) {
+          await E2EEMigrationHelper.runMigrationIfNeeded();
+          _migrationComplete = true;
+        }
+        
         _presenceService.startPresenceTracking();
       } else {
         _presenceService.stopPresenceTracking();
+        _migrationComplete = false;
       }
     });
   }
@@ -115,8 +127,6 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       case AppLifecycleState.resumed:
         _presenceService.setOnline();
         break;
-      // paused, inactive, hidden, detached — ALL set offline.
-      // detached is the one that fires on Windows when the window is closed.
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
       case AppLifecycleState.detached:
