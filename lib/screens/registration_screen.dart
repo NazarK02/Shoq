@@ -56,11 +56,15 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       final password = _passwordController.text.trim();
       final name = _nameController.text.trim();
 
+      print('🔵 Creating user account...');
+
       // Create user
       UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
+
+      print('✅ User account created: ${userCredential.user?.uid}');
 
       // Update display name
       await userCredential.user?.updateDisplayName(name);
@@ -71,24 +75,36 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       // Get the refreshed user object
       User? refreshedUser = _auth.currentUser;
 
-      // Save user to Firestore with the updated name
+      print('🔵 Saving user to Firestore...');
+
+      // Save user to Firestore (basic info only, no E2EE yet)
       if (refreshedUser != null) {
         await UserService().saveUserToFirestore(user: refreshedUser);
       }
 
+      print('✅ User saved to Firestore');
+
       // Send verification email
+      print('📧 Sending verification email...');
       await refreshedUser?.sendEmailVerification();
+      print('✅ Verification email sent');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Verification email sent')),
+          const SnackBar(content: Text('Verification email sent! Check your inbox.')),
         );
         
+        // Navigate to email verification screen
+        // Using pushReplacement to prevent going back to registration
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const EmailVerificationScreen()),
+          MaterialPageRoute(
+            builder: (context) => const EmailVerificationScreen(),
+          ),
         );
       }
     } on FirebaseAuthException catch (e) {
+      print('❌ Firebase Auth Error: ${e.code} - ${e.message}');
+      
       String message = 'An error occurred';
       if (e.code == 'weak-password') {
         message = 'The password is too weak';
@@ -96,6 +112,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         message = 'An account already exists for this email';
       } else if (e.code == 'invalid-email') {
         message = 'Invalid email address';
+      } else if (e.code == 'operation-not-allowed') {
+        message = 'Email/password accounts are not enabled';
+      } else if (e.code == 'network-request-failed') {
+        message = 'Network error. Please check your connection.';
       }
       
       if (mounted) {
@@ -104,6 +124,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         );
       }
     } catch (e) {
+      print('❌ Unknown Error: $e');
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: ${e.toString()}')),
@@ -126,12 +148,17 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     setState(() => _isLoading = true);
 
     try {
+      print('🔵 Starting Google Sign-In...');
+      
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
       
       if (googleUser == null) {
+        print('⚠️  Google Sign-In cancelled');
         setState(() => _isLoading = false);
         return;
       }
+
+      print('✅ Google user selected: ${googleUser.email}');
 
       final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
 
@@ -140,21 +167,35 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         idToken: googleAuth.idToken,
       );
 
+      print('🔵 Signing in with Google credentials...');
+      
       UserCredential userCredential = await _auth.signInWithCredential(credential);
 
-      // Save user to Firestore
+      print('✅ Signed in: ${userCredential.user?.uid}');
+
+      // Save user to Firestore (basic info only, no E2EE yet)
       if (userCredential.user != null) {
+        print('🔵 Saving Google user to Firestore...');
         await UserService().saveUserToFirestore(user: userCredential.user!);
+        print('✅ Google user saved to Firestore');
       }
 
       // AuthWrapper will automatically navigate to HomeScreen
+      // No need to manually navigate here
+      
     } on FirebaseAuthException catch (e) {
+      print('❌ Firebase Auth Error: ${e.code} - ${e.message}');
+      
       if (mounted) {
         String message = 'Google Sign-In failed';
         if (e.code == 'account-exists-with-different-credential') {
           message = 'Account already exists with different credentials';
         } else if (e.code == 'invalid-credential') {
           message = 'Invalid credentials';
+        } else if (e.code == 'operation-not-allowed') {
+          message = 'Google Sign-In is not enabled';
+        } else if (e.code == 'user-disabled') {
+          message = 'This account has been disabled';
         }
         
         ScaffoldMessenger.of(context).showSnackBar(
@@ -162,8 +203,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         );
       }
     } catch (e) {
+      print('❌ Unknown Error: $e');
+      
       if (mounted) {
-        print('Google Sign-In Error: $e');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Sign-In error: ${e.toString()}')),
         );

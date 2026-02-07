@@ -11,8 +11,7 @@ import 'services/firebase_options.dart';
 import 'services/notification_service.dart';
 import 'services/theme_service.dart';
 import 'services/presence_service.dart';
-import 'services/crypto_service.dart';
-import 'services/e2ee_migration_helper.dart';
+import 'services/user_service_e2ee.dart';
 
 /// Background notification handler
 @pragma('vm:entry-point')
@@ -39,9 +38,6 @@ Future<void> main() async {
 
   /// Initialize notification service
   await NotificationService().initialize();
-  
-  /// Initialize crypto service globally
-  await CryptoService().initialize();
 
   /// Initialize theme service
   final themeService = ThemeService();
@@ -84,7 +80,7 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   final PresenceService _presenceService = PresenceService();
   StreamSubscription<User?>? _authSubscription;
-  bool _migrationComplete = false;
+  bool _e2eeInitialized = false;
 
   @override
   void initState() {
@@ -93,18 +89,30 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
     _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) async {
       if (user != null) {
-        // Run E2EE migration for existing users
-        if (!_migrationComplete) {
-          await E2EEMigrationHelper.runMigrationIfNeeded();
-          _migrationComplete = true;
+        // Initialize E2EE for logged-in users (only once per session)
+        if (!_e2eeInitialized) {
+          await _initializeE2EEForUser();
+          _e2eeInitialized = true;
         }
         
         _presenceService.startPresenceTracking();
       } else {
         _presenceService.stopPresenceTracking();
-        _migrationComplete = false;
+        _e2eeInitialized = false;
       }
     });
+  }
+
+  Future<void> _initializeE2EEForUser() async {
+    try {
+      print('🔐 Initializing E2EE for logged-in user...');
+      await UserService().initializeE2EE();
+      print('✅ E2EE initialization complete');
+    } catch (e) {
+      print('⚠️  E2EE initialization failed (user may be new): $e');
+      // Don't throw - app should still work for new users
+      // E2EE will be initialized when they first try to send a message
+    }
   }
 
   @override

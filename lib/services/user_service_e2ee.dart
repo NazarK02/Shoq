@@ -58,7 +58,7 @@ class UserService {
     };
   }
 
-  /// Create or update user document + initialize E2EE
+  /// Create or update user document (basic info only, no E2EE yet)
   Future<void> saveUserToFirestore({
     required User user,
   }) async {
@@ -69,20 +69,9 @@ class UserService {
 
       final userRef = _firestore.collection('users').doc(user.uid);
 
-      // IMPORTANT: Initialize E2EE FIRST before creating user document
-      print('🔐 Initializing E2EE for user...');
-      await _crypto.initialize();
-      
-      // Get the public key that was just generated/loaded
-      final publicKey = _crypto.myPublicKeyBase64;
-      
-      if (publicKey == null) {
-        throw Exception('Failed to generate encryption keys');
-      }
-      
-      print('✅ E2EE initialized, public key: ${publicKey.substring(0, 20)}...');
+      print('💾 Saving user document for: ${user.uid}');
 
-      // Create/update user document WITH public key
+      // Create/update user document WITHOUT E2EE (that happens separately)
       await userRef.set({
         'uid': user.uid,
         'email': user.email ?? '',
@@ -92,8 +81,6 @@ class UserService {
         'lastSeen': FieldValue.serverTimestamp(),
         'lastHeartbeat': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
-        'publicKey': publicKey,
-        'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
         'devices': {
           deviceId: {
             'deviceType': deviceType,
@@ -102,10 +89,42 @@ class UserService {
         }
       }, SetOptions(merge: true));
 
-      print('✅ User document saved with public key');
+      print('✅ User document saved successfully');
 
     } catch (e) {
       print('❌ Error saving user: $e');
+      rethrow;
+    }
+  }
+
+  /// Initialize E2EE for existing user (call AFTER user document is created)
+  Future<void> initializeE2EE() async {
+    final user = _auth.currentUser;
+    if (user == null) throw Exception('No user logged in');
+
+    try {
+      print('🔐 Initializing E2EE for user: ${user.uid}');
+      
+      await _crypto.initialize();
+      
+      final publicKey = _crypto.myPublicKeyBase64;
+      
+      if (publicKey == null) {
+        throw Exception('Failed to generate encryption keys');
+      }
+      
+      print('✅ E2EE initialized, public key: ${publicKey.substring(0, 20)}...');
+
+      // Update user document with public key
+      await _firestore.collection('users').doc(user.uid).update({
+        'publicKey': publicKey,
+        'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
+      });
+
+      print('✅ Public key saved to Firestore');
+
+    } catch (e) {
+      print('❌ Error initializing E2EE: $e');
       rethrow;
     }
   }
@@ -188,7 +207,7 @@ class UserService {
   /// Sign out (clear encryption keys and set offline)
   Future<void> signOut() async {
     await setOffline();
-    await _crypto.clear(); // Clear encryption keys from memory
+    await _crypto.clear();
     await _auth.signOut();
   }
 }
