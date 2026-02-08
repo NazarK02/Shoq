@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'crypto_service.dart';
 
 class UserService {
@@ -10,6 +13,8 @@ class UserService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
   final CryptoService _crypto = CryptoService();
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
+  Map<String, dynamic>? _cachedUserData;
 
   /// Automatically detect deviceId + deviceType
   Future<Map<String, String>> _getDeviceInfo() async {
@@ -95,6 +100,69 @@ class UserService {
       print('❌ Error saving user: $e');
       rethrow;
     }
+  }
+
+  /// Start a live listener for the current user's document.
+  void startUserDocListener() {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    _userDocSub?.cancel();
+    _userDocSub = _firestore
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.exists) {
+        final data = snapshot.data();
+        _cachedUserData = data;
+        if (data != null) {
+          _persistProfileCache(user.uid, data);
+        }
+      }
+    });
+  }
+
+  void stopUserDocListener() {
+    _userDocSub?.cancel();
+    _userDocSub = null;
+    _cachedUserData = null;
+  }
+
+  Map<String, dynamic>? get cachedUserData => _cachedUserData;
+
+  Future<Map<String, dynamic>?> loadCachedProfile() async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('profile_cache_${user.uid}');
+    if (raw == null) return null;
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        _cachedUserData = {
+          ..._cachedUserData ?? {},
+          ...decoded,
+        };
+        return decoded;
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  Future<void> _persistProfileCache(String uid, Map<String, dynamic> data) async {
+    final prefs = await SharedPreferences.getInstance();
+    final cache = <String, dynamic>{
+      'displayName': data['displayName'] ?? '',
+      'photoUrl': data['photoUrl'] ?? '',
+      'bio': data['bio'] ?? '',
+      'website': data['website'] ?? '',
+      'location': data['location'] ?? '',
+    };
+    await prefs.setString('profile_cache_$uid', jsonEncode(cache));
   }
 
   /// Initialize E2EE for existing user (call AFTER user document is created)
@@ -213,6 +281,7 @@ class UserService {
   Future<void> signOut() async {
     await setOffline();
     await _crypto.clear();
+    stopUserDocListener();
     await _auth.signOut();
   }
 }

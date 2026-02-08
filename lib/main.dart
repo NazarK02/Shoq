@@ -37,11 +37,7 @@ Future<void> main() async {
   );
 
   /// Initialize notification service
-  await NotificationService().initialize();
-
-  /// Initialize theme service
   final themeService = ThemeService();
-  await themeService.initialize();
 
   runApp(
     ChangeNotifierProvider.value(
@@ -49,6 +45,12 @@ Future<void> main() async {
       child: const MyApp(),
     ),
   );
+
+  // Defer non-critical init to keep startup fast
+  Future.microtask(() async {
+    await themeService.initialize();
+    await NotificationService().initialize();
+  });
 }
 
 class MyApp extends StatelessWidget {
@@ -90,6 +92,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) async {
       if (user != null) {
         await UserService().saveUserToFirestore(user: user);
+        UserService().loadCachedProfile();
+        UserService().startUserDocListener();
         // Initialize E2EE for logged-in users (only once per session)
         if (!_e2eeInitialized) {
           await _initializeE2EEForUser();
@@ -99,6 +103,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         _presenceService.startPresenceTracking();
       } else {
         _presenceService.stopPresenceTracking();
+        UserService().stopUserDocListener();
         _e2eeInitialized = false;
       }
     });

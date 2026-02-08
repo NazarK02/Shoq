@@ -1,9 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../services/presence_service.dart';
 
 class UserProfileViewScreen extends StatefulWidget {
   final String userId;
@@ -22,9 +23,6 @@ class UserProfileViewScreen extends StatefulWidget {
 class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseDatabase _realtimeDb = FirebaseDatabase.instance;
-
-  bool _isLoading = false;
   Map<String, dynamic>? _userData;
   bool _isOnline = false;
   DateTime? _lastSeen;
@@ -32,6 +30,19 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   bool _isBlocked = false;
   bool _friendStatusLoading = true;
   String _friendRequestStatus = 'none'; // none, pending_sent, pending_received
+  StreamSubscription? _friendSub;
+  StreamSubscription? _blockedSub;
+  StreamSubscription? _sentReqSub;
+  StreamSubscription? _receivedReqSub;
+  StreamSubscription? _presenceSub;
+  bool _friendChecked = false;
+  bool _blockedChecked = false;
+  bool _sentChecked = false;
+  bool _receivedChecked = false;
+  bool _friendDocExists = false;
+  bool _blockedDocExists = false;
+  bool _sentReqExists = false;
+  bool _receivedReqExists = false;
 
   @override
   void initState() {
@@ -41,12 +52,10 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
       _loadUserData();
     }
     _listenToOnlineStatus();
-    _checkFriendshipStatus();
+    _listenToFriendshipStatus();
   }
 
   Future<void> _loadUserData() async {
-    setState(() => _isLoading = true);
-
     try {
       final doc = await _firestore.collection('users').doc(widget.userId).get();
       if (doc.exists) {
@@ -56,85 +65,124 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
       }
     } catch (e) {
       print('Error loading user data: $e');
-    } finally {
-      setState(() => _isLoading = false);
     }
   }
-
   void _listenToOnlineStatus() {
-    _realtimeDb.ref('status/${widget.userId}').onValue.listen((event) {
-      if (event.snapshot.value != null) {
-        final data = event.snapshot.value as Map<dynamic, dynamic>;
-        final state = data['state'] as String?;
-        final lastSeenTimestamp = data['lastSeen'] as int?;
-
-        if (mounted) {
-          setState(() {
-            _isOnline = state == 'online';
-            if (lastSeenTimestamp != null) {
-              _lastSeen = DateTime.fromMillisecondsSinceEpoch(lastSeenTimestamp);
-            }
-          });
-        }
-      }
+    _presenceSub?.cancel();
+    _presenceSub = PresenceService()
+        .getUserStatusStream(widget.userId)
+        .listen((data) {
+      if (!mounted || data == null) return;
+      setState(() {
+        _isOnline = PresenceService.isUserOnline(data);
+        final lastSeen = data['lastSeen'] as Timestamp?;
+        _lastSeen = lastSeen?.toDate();
+      });
     });
   }
-
-  Future<void> _checkFriendshipStatus() async {
+  void _listenToFriendshipStatus() {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
 
-    try {
-      // Check if friends
-      final friendDoc = await _firestore
-          .collection('contacts')
-          .doc(currentUser.uid)
-          .collection('friends')
-          .doc(widget.userId)
-          .get();
+    _friendStatusLoading = true;
 
-      // Check if blocked
-      final blockedDoc = await _firestore
-          .collection('contacts')
-          .doc(currentUser.uid)
-          .collection('blocked')
-          .doc(widget.userId)
-          .get();
+    _friendSub?.cancel();
+    _blockedSub?.cancel();
+    _sentReqSub?.cancel();
+    _receivedReqSub?.cancel();
 
-      // Check friend request status
-      final sentRequest = await _firestore
-          .collection('friendRequests')
-          .where('senderId', isEqualTo: currentUser.uid)
-          .where('receiverId', isEqualTo: widget.userId)
-          .where('status', isEqualTo: 'pending')
-          .get();
+    _friendSub = _firestore
+        .collection('contacts')
+        .doc(currentUser.uid)
+        .collection('friends')
+        .doc(widget.userId)
+        .snapshots()
+        .listen((doc) {
+      _friendChecked = true;
+      _friendDocExists = doc.exists;
+      _updateFriendState();
+    });
 
-      final receivedRequest = await _firestore
-          .collection('friendRequests')
-          .where('senderId', isEqualTo: widget.userId)
-          .where('receiverId', isEqualTo: currentUser.uid)
-          .where('status', isEqualTo: 'pending')
-          .get();
+    _blockedSub = _firestore
+        .collection('contacts')
+        .doc(currentUser.uid)
+        .collection('blocked')
+        .doc(widget.userId)
+        .snapshots()
+        .listen((doc) {
+      _blockedChecked = true;
+      _blockedDocExists = doc.exists;
+      _updateFriendState();
+    });
 
-      if (mounted) {
-        setState(() {
-          _isFriend = friendDoc.exists;
-          _isBlocked = blockedDoc.exists;
-          
-          if (sentRequest.docs.isNotEmpty) {
-            _friendRequestStatus = 'pending_sent';
-          } else if (receivedRequest.docs.isNotEmpty) {
-            _friendRequestStatus = 'pending_received';
-          } else {
-            _friendRequestStatus = 'none';
-          }
-          _friendStatusLoading = false;
-        });
-      }
-    } catch (e) {
-      print('Error checking friendship status: $e');
-      if (mounted) setState(() => _friendStatusLoading = false);
+    _sentReqSub = _firestore
+        .collection('friendRequests')
+        .where('senderId', isEqualTo: currentUser.uid)
+        .where('receiverId', isEqualTo: widget.userId)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .listen((query) {
+      _sentChecked = true;
+      _sentReqExists = query.docs.isNotEmpty;
+      _updateFriendState();
+    });
+
+    _receivedReqSub = _firestore
+        .collection('friendRequests')
+        .where('senderId', isEqualTo: widget.userId)
+        .where('receiverId', isEqualTo: currentUser.uid)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .listen((query) {
+      _receivedChecked = true;
+      _receivedReqExists = query.docs.isNotEmpty;
+      _updateFriendState();
+    });
+  }
+
+  void _updateFriendState() {
+    final decisive = _friendDocExists || _blockedDocExists;
+    final baseReady = _friendChecked && _blockedChecked;
+    final requestsReady = _sentChecked && _receivedChecked;
+    final ready = decisive || (baseReady && requestsReady);
+
+    if (!ready) {
+      if (mounted) setState(() => _friendStatusLoading = true);
+      return;
     }
+
+    if (mounted) {
+      setState(() {
+        _isFriend = _friendDocExists;
+        _isBlocked = _blockedDocExists;
+
+        if (_isFriend || _isBlocked) {
+          _friendRequestStatus = 'none';
+        } else if (_sentReqExists) {
+          _friendRequestStatus = 'pending_sent';
+        } else if (_receivedReqExists) {
+          _friendRequestStatus = 'pending_received';
+        } else {
+          _friendRequestStatus = 'none';
+        }
+
+        _friendStatusLoading = false;
+      });
+    }
+  }
+
+
+  String _getBio() {
+    final bio = _userData?['bio'] as String?;
+    if (bio != null && bio.trim().isNotEmpty) return bio.trim();
+    final legacy = _userData?['status'] as String?;
+    if (legacy != null) {
+      final trimmed = legacy.trim();
+      if (trimmed.isNotEmpty && trimmed != 'online' && trimmed != 'offline') {
+        return trimmed;
+      }
+    }
+    return '';
   }
 
   String _getStatusText() {
@@ -302,19 +350,25 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
     }
   }
 
+
+  @override
+  void dispose() {
+    _friendSub?.cancel();
+    _blockedSub?.cancel();
+    _sentReqSub?.cancel();
+    _receivedReqSub?.cancel();
+    _presenceSub?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_isLoading && _userData == null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Profile')),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
     final photoUrl = _userData?['photoUrl'];
     final displayName = _userData?['displayName'] ?? 'User';
     final email = _userData?['email'] ?? '';
-    final status = _userData?['status'] ?? '';
+    final bio = _getBio();
+    final website = _userData?['website'] ?? '';
+    final location = _userData?['location'] ?? '';
     final joinDate = _userData?['createdAt'] as Timestamp?;
 
     return Scaffold(
@@ -387,8 +441,10 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
                   child: CircleAvatar(
                       radius: 70,
                       backgroundColor: Colors.grey[300],
-                      backgroundImage: photoUrl != null ? CachedNetworkImageProvider(photoUrl) : null,
-                      child: photoUrl == null
+                      backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
+                          ? CachedNetworkImageProvider(photoUrl)
+                          : null,
+                      child: (photoUrl == null || photoUrl.isEmpty)
                           ? Icon(
                               Icons.person,
                               size: 70,
@@ -432,10 +488,10 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
           const SizedBox(height: 8),
 
           // Status
-          if (status.isNotEmpty)
+          if (bio.isNotEmpty)
             Center(
               child: Text(
-                status,
+                bio,
                 style: const TextStyle(fontSize: 16),
                 textAlign: TextAlign.center,
               ),
@@ -477,18 +533,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
               ),
             )
           else if (_friendStatusLoading)
-            OutlinedButton.icon(
-              onPressed: null,
-              icon: const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              label: const Text('Checking...'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            )
+            const SizedBox(height: 48)
           else if (_friendRequestStatus == 'pending_sent')
             OutlinedButton.icon(
               onPressed: null,
@@ -530,6 +575,22 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
                   title: const Text('Email'),
                   subtitle: Text(email),
                 ),
+                if (website.isNotEmpty) ...[
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.link),
+                    title: const Text('Website'),
+                    subtitle: Text(website),
+                  ),
+                ],
+                if (location.isNotEmpty) ...[
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.place_outlined),
+                    title: const Text('Location'),
+                    subtitle: Text(location),
+                  ),
+                ],
                 if (joinDate != null) ...[
                   const Divider(height: 1),
                   ListTile(

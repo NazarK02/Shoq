@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../services/user_service_e2ee.dart';
 import '../services/theme_service.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -30,14 +31,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
+    final user = _auth.currentUser;
+    if (user != null) {
+      _userData = {
+        'displayName': user.displayName ?? '',
+        'photoUrl': user.photoURL ?? '',
+      };
+    }
+    final cached = UserService().cachedUserData;
+    if (cached != null) {
+      _userData = {
+        ..._userData ?? {},
+        ...cached,
+      };
+    }
+    UserService().loadCachedProfile().then((cachedProfile) {
+      if (!mounted || cachedProfile == null) return;
+      setState(() {
+        _userData = {
+          ..._userData ?? {},
+          ...cachedProfile,
+        };
+      });
+    });
     _loadUserData();
   }
 
   Future<void> _loadUserData() async {
     final user = _auth.currentUser;
     if (user == null) return;
-
-    setState(() => _isLoading = true);
 
     try {
       final doc = await _firestore.collection('users').doc(user.uid).get();
@@ -49,7 +71,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       print('Error loading user data: $e');
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -179,6 +203,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: false,
+        withData: true,
       );
 
       if (result == null || result.files.isEmpty) return;
@@ -191,12 +216,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final ref = _storage.ref().child('profile_pictures/${user.uid}');
       
       UploadTask uploadTask;
-      if (kIsWeb) {
-        // Web upload using bytes
+      if (file.path != null) {
+        uploadTask = ref.putFile(File(file.path!));
+      } else if (file.bytes != null) {
         uploadTask = ref.putData(file.bytes!);
       } else {
-        // Desktop upload using file path
-        uploadTask = ref.putFile(File(file.path!));
+        throw Exception('Selected file has no data');
       }
       
       final uploadResult = await uploadTask;
@@ -347,20 +372,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  void _editStatus() {
+  void _editBio() {
     final controller = TextEditingController(
-      text: _userData?['status'] ?? '',
+      text: _getBio(),
     );
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Edit Status'),
+        title: const Text('Edit Bio'),
         content: TextField(
           controller: controller,
           decoration: const InputDecoration(
-            labelText: 'Status',
-            hintText: 'What\'s on your mind?',
+            labelText: 'Bio',
+            hintText: 'Tell something about you',
           ),
           maxLength: 100,
           autofocus: true,
@@ -372,9 +397,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           TextButton(
             onPressed: () async {
-              final newStatus = controller.text.trim();
+              final newBio = controller.text.trim();
               Navigator.pop(context);
-              await _updateStatus(newStatus);
+              await _updateBio(newBio);
             },
             child: const Text('Save'),
           ),
@@ -383,20 +408,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Future<void> _updateStatus(String newStatus) async {
+  Future<void> _updateBio(String newBio) async {
     final user = _auth.currentUser;
     if (user == null) return;
 
     try {
       setState(() => _isLoading = true);
 
-      if (newStatus.isEmpty) {
+      if (newBio.isEmpty) {
         await _firestore.collection('users').doc(user.uid).update({
-          'status': FieldValue.delete(),
+          'bio': FieldValue.delete(),
         });
       } else {
         await _firestore.collection('users').doc(user.uid).update({
-          'status': newStatus,
+          'bio': newBio,
         });
       }
 
@@ -405,7 +430,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(newStatus.isEmpty ? 'Status removed' : 'Status updated!'),
+            content: Text(newBio.isEmpty ? 'Bio removed' : 'Bio updated!'),
           ),
         );
       }
@@ -420,22 +445,176 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  void _editWebsite() {
+    final controller = TextEditingController(
+      text: _userData?['website'] ?? '',
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Website'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Website',
+            hintText: 'https://example.com',
+          ),
+          keyboardType: TextInputType.url,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final newWebsite = controller.text.trim();
+              Navigator.pop(context);
+              await _updateWebsite(newWebsite);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _updateWebsite(String newWebsite) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      setState(() => _isLoading = true);
+
+      if (newWebsite.isEmpty) {
+        await _firestore.collection('users').doc(user.uid).update({
+          'website': FieldValue.delete(),
+        });
+      } else {
+        await _firestore.collection('users').doc(user.uid).update({
+          'website': newWebsite,
+        });
+      }
+
+      await _loadUserData();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(newWebsite.isEmpty ? 'Website removed' : 'Website updated!'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: ${e.toString()}')),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _editLocation() {
+    final controller = TextEditingController(
+      text: _userData?['location'] ?? '',
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Location'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Location',
+            hintText: 'City, Country',
+          ),
+          textCapitalization: TextCapitalization.words,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final newLocation = controller.text.trim();
+              Navigator.pop(context);
+              await _updateLocation(newLocation);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _updateLocation(String newLocation) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      setState(() => _isLoading = true);
+
+      if (newLocation.isEmpty) {
+        await _firestore.collection('users').doc(user.uid).update({
+          'location': FieldValue.delete(),
+        });
+      } else {
+        await _firestore.collection('users').doc(user.uid).update({
+          'location': newLocation,
+        });
+      }
+
+      await _loadUserData();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(newLocation.isEmpty ? 'Location removed' : 'Location updated!'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: ${e.toString()}')),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  String _getBio() {
+    final bio = _userData?['bio'] as String?;
+    if (bio != null && bio.trim().isNotEmpty) return bio.trim();
+    final legacy = _userData?['status'] as String?;
+    if (legacy != null) {
+      final trimmed = legacy.trim();
+      if (trimmed.isNotEmpty && trimmed != 'online' && trimmed != 'offline') {
+        return trimmed;
+      }
+    }
+    return '';
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = _auth.currentUser;
     final themeService = Provider.of<ThemeService>(context);
     
-    if (_isLoading && _userData == null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Profile')),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
     final photoUrl = _userData?['photoUrl'];
     final displayName = _userData?['displayName'] ?? user?.displayName ?? 'User';
     final email = user?.email ?? '';
-    final status = _userData?['status'] ?? '';
+    final bio = _getBio();
+    final website = _userData?['website'] ?? '';
+    final location = _userData?['location'] ?? '';
     final emailVerified = user?.emailVerified ?? false;
 
     return Scaffold(
@@ -453,11 +632,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
                 // Profile Picture Section
                 Center(
                   child: Stack(
@@ -473,10 +650,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         child: CircleAvatar(
                           radius: 70,
                           backgroundColor: Colors.grey[300],
-                          backgroundImage: photoUrl != null
+                          backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
                               ? CachedNetworkImageProvider(photoUrl)
                               : null,
-                          child: photoUrl == null
+                          child: (photoUrl == null || photoUrl.isEmpty)
                               ? Icon(
                                   Icons.person,
                                   size: 70,
@@ -537,11 +714,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 // Status
                 Center(
                   child: Text(
-                    status.isEmpty ? 'No status' : status,
+                    bio.isEmpty ? 'No bio' : bio,
                     style: TextStyle(
                       fontSize: 16,
-                      color: status.isEmpty ? Colors.grey : null,
-                      fontStyle: status.isEmpty ? FontStyle.italic : null,
+                      color: bio.isEmpty ? Colors.grey : null,
+                      fontStyle: bio.isEmpty ? FontStyle.italic : null,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -558,7 +735,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         subtitle: Text(displayName),
                         trailing: IconButton(
                           icon: const Icon(Icons.edit),
-                          onPressed: _editDisplayName,
+                          onPressed: _isLoading ? null : _editDisplayName,
                         ),
                       ),
                       const Divider(height: 1),
@@ -573,11 +750,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       const Divider(height: 1),
                       ListTile(
                         leading: const Icon(Icons.info_outline),
-                        title: const Text('Status'),
-                        subtitle: Text(status.isEmpty ? 'No status set' : status),
+                        title: const Text('Bio'),
+                        subtitle: Text(bio.isEmpty ? 'No bio set' : bio),
                         trailing: IconButton(
                           icon: const Icon(Icons.edit),
-                          onPressed: _editStatus,
+                          onPressed: _isLoading ? null : _editBio,
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.link),
+                        title: const Text('Website'),
+                        subtitle: Text(website.isEmpty ? 'Not set' : website),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.edit),
+                          onPressed: _isLoading ? null : _editWebsite,
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.place_outlined),
+                        title: const Text('Location'),
+                        subtitle: Text(location.isEmpty ? 'Not set' : location),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.edit),
+                          onPressed: _isLoading ? null : _editLocation,
                         ),
                       ),
                     ],
@@ -692,8 +889,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     },
                   ),
                 ),
-              ],
-            ),
+        ],
+      ),
     );
   }
 

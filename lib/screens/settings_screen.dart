@@ -14,7 +14,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final NotificationService _notificationService = NotificationService();
   bool _friendRequestsEnabled = true;
   bool _messagesEnabled = true;
-  bool _isLoading = true;
 
   @override
   void initState() {
@@ -28,7 +27,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _friendRequestsEnabled = settings['friendRequests'] ?? true;
         _messagesEnabled = settings['messages'] ?? true;
-        _isLoading = false;
       });
     }
   }
@@ -46,10 +44,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              children: [
+      body: ListView(
+        children: [
                 const Padding(
                   padding: EdgeInsets.all(16.0),
                   child: Text(
@@ -209,8 +205,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                 ),
-              ],
-            ),
+        ],
+      ),
     );
   }
 }
