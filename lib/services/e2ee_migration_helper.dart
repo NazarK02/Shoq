@@ -40,10 +40,10 @@ class E2EEMigrationHelper {
     }
 
     // Update user document with public key
-    await _firestore.collection('users').doc(user.uid).update({
+    await _firestore.collection('users').doc(user.uid).set({
       'publicKey': publicKey,
       'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
-    });
+    }, SetOptions(merge: true));
 
     print('✅ User migrated to E2EE successfully');
   }

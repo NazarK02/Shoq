@@ -12,6 +12,7 @@ class ChatService {
   final CryptoService _crypto = CryptoService();
 
   User? get currentUser => _auth.currentUser;
+  bool get isEncryptionReady => _crypto.isEncryptionEnabled;
 
   /// Initialize encryption before using chat
   Future<void> initializeEncryption() async {
@@ -111,6 +112,11 @@ class ChatService {
         plaintext: messageText,
         recipientUserId: recipientId,
       );
+      // Encrypt a copy for the sender so they can decrypt their own messages
+      final senderCiphertext = await _crypto.encryptMessage(
+        plaintext: messageText,
+        recipientUserId: currentUser.uid,
+      );
 
       // Get first 50 chars of plaintext for preview (will be shown as encrypted in UI)
       final preview = messageText.length > 50 
@@ -125,7 +131,9 @@ class ChatService {
           .add({
         'senderId': currentUser.uid,
         'ciphertext': ciphertext,
+        'senderCiphertext': senderCiphertext,
         'timestamp': FieldValue.serverTimestamp(),
+        'clientTimestamp': Timestamp.now(),
         'read': false,
         'encrypted': true,
       });
@@ -151,7 +159,7 @@ class ChatService {
         .collection('conversations')
         .doc(conversationId)
         .collection('messages')
-        .orderBy('timestamp', descending: false)
+        .orderBy('clientTimestamp', descending: false)
         .snapshots();
   }
 
@@ -160,23 +168,35 @@ class ChatService {
     required Map<String, dynamic> messageData,
   }) async {
     if (!_crypto.isEncryptionEnabled) {
-      return '[Encryption not initialized]';
+      return '';
     }
 
     try {
       // Check if message is encrypted
       if (messageData['encrypted'] != true) {
-        return messageData['text'] ?? '[Empty message]';
-      }
-
-      final ciphertext = messageData['ciphertext'] as String?;
-      if (ciphertext == null) {
-        return '[Missing ciphertext]';
+        return messageData['text'] ?? '';
       }
 
       final senderId = messageData['senderId'] as String?;
       if (senderId == null) {
-        return '[Unknown sender]';
+        return '';
+      }
+
+      final currentUserId = _auth.currentUser?.uid;
+      String? ciphertext;
+      if (currentUserId != null && senderId == currentUserId) {
+        // For my own messages, use the self-encrypted copy if available.
+        ciphertext = messageData['senderCiphertext'] as String?;
+        if (ciphertext == null) {
+          // Legacy messages (before senderCiphertext) can't be decrypted by sender.
+          return '[Sent]';
+        }
+      } else {
+        ciphertext = messageData['ciphertext'] as String?;
+      }
+
+      if (ciphertext == null) {
+        return '';
       }
 
       // Decrypt
@@ -188,7 +208,7 @@ class ChatService {
       return plaintext;
     } catch (e) {
       print('❌ Decryption failed: $e');
-      return '[Failed to decrypt]';
+      return '';
     }
   }
 

@@ -43,6 +43,14 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     
     WidgetsBinding.instance.addObserver(this);
     _notificationService.setActiveChat(widget.recipientId);
+
+    final currentUser = _auth.currentUser;
+    if (currentUser != null) {
+      _conversationId = _chatService.getDirectConversationId(
+        currentUser.uid,
+        widget.recipientId,
+      );
+    }
     
     _initializeQuietly();
   }
@@ -166,10 +174,8 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     if (_scrollController.hasClients) {
       Future.delayed(const Duration(milliseconds: 100), () {
         if (_scrollController.hasClients) {
-          _scrollController.animateTo(
+          _scrollController.jumpTo(
             _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
           );
         }
       });
@@ -227,8 +233,12 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
                 children: [
                   CircleAvatar(
                     radius: 18,
-                    backgroundImage: photoUrl != null ? CachedNetworkImageProvider(photoUrl) : null,
-                    child: photoUrl == null ? const Icon(Icons.person) : null,
+                    backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
+                        ? CachedNetworkImageProvider(photoUrl)
+                        : null,
+                    child: (photoUrl == null || photoUrl.isEmpty)
+                        ? const Icon(Icons.person)
+                        : null,
                   ),
                   StreamBuilder<Map<String, dynamic>?>(
                     stream: PresenceService().getUserStatusStream(widget.recipientId),
@@ -426,9 +436,9 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
-        // Don't show loading spinner - show empty state instead
-        if (!snapshot.hasData) {
-          return _buildEmptyState();
+        // Avoid showing empty-state flicker while loading
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const SizedBox.shrink();
         }
 
         if (snapshot.data!.docs.isEmpty) {
@@ -446,7 +456,8 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
             final message = messageDoc.data() as Map<String, dynamic>;
             final messageId = messageDoc.id;
             final isMe = message['senderId'] == currentUser.uid;
-            final timestamp = message['timestamp'] as Timestamp?;
+            final timestamp = (message['timestamp'] as Timestamp?) ??
+                (message['clientTimestamp'] as Timestamp?);
 
             // Check cache first
             if (_decryptedCache.containsKey(messageId)) {
@@ -458,22 +469,38 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
               );
             }
 
+            final decryptFuture = widget.chatService.isEncryptionReady
+                ? widget.chatService.decryptMessage(messageData: message)
+                : Future.value('');
+
             return FutureBuilder<String>(
-              future: widget.chatService.decryptMessage(messageData: message).then((decrypted) {
-                // Cache the decrypted message
-                _decryptedCache[messageId] = decrypted;
+              future: decryptFuture.then((decrypted) {
+                // Cache only successful decrypts to allow retries after init.
+                if (widget.chatService.isEncryptionReady &&
+                    decrypted.isNotEmpty &&
+                    !decrypted.startsWith('[')) {
+                  _decryptedCache[messageId] = decrypted;
+                }
                 return decrypted;
               }),
               builder: (context, decryptSnapshot) {
                 String displayText;
-                
-                if (decryptSnapshot.connectionState == ConnectionState.waiting) {
+
+                if (!widget.chatService.isEncryptionReady) {
+                  displayText = _decryptedCache[messageId] ?? '';
+                } else if (decryptSnapshot.connectionState == ConnectionState.waiting) {
                   // Use cached version if available during refresh
                   displayText = _decryptedCache[messageId] ?? '';
                 } else if (decryptSnapshot.hasError) {
-                  displayText = '[Failed to decrypt]';
+                  displayText = _decryptedCache[messageId] ?? '';
+                  if (displayText.startsWith('[') && displayText != '[Sent]') {
+                    displayText = '';
+                  }
                 } else {
-                  displayText = decryptSnapshot.data ?? '[Empty]';
+                  displayText = decryptSnapshot.data ?? '';
+                  if (displayText.startsWith('[') && displayText != '[Sent]') {
+                    displayText = '';
+                  }
                 }
 
                 return _buildMessageBubble(

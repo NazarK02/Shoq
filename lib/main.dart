@@ -89,6 +89,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
     _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) async {
       if (user != null) {
+        await UserService().saveUserToFirestore(user: user);
         // Initialize E2EE for logged-in users (only once per session)
         if (!_e2eeInitialized) {
           await _initializeE2EEForUser();

@@ -80,6 +80,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       // Save user to Firestore (basic info only, no E2EE yet)
       if (refreshedUser != null) {
         await UserService().saveUserToFirestore(user: refreshedUser);
+        await UserService().initializeE2EE();
       }
 
       print('✅ User saved to Firestore');
@@ -177,6 +178,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       if (userCredential.user != null) {
         print('🔵 Saving Google user to Firestore...');
         await UserService().saveUserToFirestore(user: userCredential.user!);
+        await UserService().initializeE2EE();
         print('✅ Google user saved to Firestore');
       }
 

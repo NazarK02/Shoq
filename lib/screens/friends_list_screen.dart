@@ -17,7 +17,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
   late TabController _tabController;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  bool _isPreloading = false;
+  final bool _isPreloading = false;
 
   @override
   void initState() {
@@ -289,8 +289,12 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
             return ListTile(
               leading: CircleAvatar(
                 radius: 20,
-                backgroundImage: blocked['photoURL'] != null ? CachedNetworkImageProvider(blocked['photoURL']) : null,
-                child: blocked['photoURL'] == null ? const Icon(Icons.person) : null,
+                backgroundImage: (blocked['photoURL'] != null && blocked['photoURL'].toString().isNotEmpty)
+                    ? CachedNetworkImageProvider(blocked['photoURL'])
+                    : null,
+                child: (blocked['photoURL'] == null || blocked['photoURL'].toString().isEmpty)
+                    ? const Icon(Icons.person)
+                    : null,
               ),
               title: Text(blocked['displayName']),
               subtitle: Text(blocked['email']),
@@ -754,8 +758,12 @@ class _FriendListTile extends StatelessWidget {
     return ListTile(
       leading: CircleAvatar(
         radius: 20,
-        backgroundImage: photoURL != null ? CachedNetworkImageProvider(photoURL) : null,
-        child: photoURL == null ? const Icon(Icons.person) : null,
+        backgroundImage: (photoURL != null && photoURL.isNotEmpty)
+            ? CachedNetworkImageProvider(photoURL)
+            : null,
+        child: (photoURL == null || photoURL.isEmpty)
+            ? const Icon(Icons.person)
+            : null,
       ),
       title: Text(displayName),
       subtitle: Text(email),
@@ -879,8 +887,12 @@ class _FriendRequestTileState extends State<_FriendRequestTile> {
       child: ListTile(
         leading: CircleAvatar(
           radius: 20,
-          backgroundImage: photoURL != null ? CachedNetworkImageProvider(photoURL) : null,
-          child: photoURL == null ? const Icon(Icons.person) : null,
+          backgroundImage: (photoURL != null && photoURL.isNotEmpty)
+              ? CachedNetworkImageProvider(photoURL)
+              : null,
+          child: (photoURL == null || photoURL.isEmpty)
+              ? const Icon(Icons.person)
+              : null,
         ),
         title: Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(email),

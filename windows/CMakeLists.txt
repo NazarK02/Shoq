@@ -59,6 +59,30 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# Workaround: sodium_libs doesn't ship prebuilt binaries for newer MSVC toolsets
+# yet (e.g. v145). If the expected dll is missing, copy the closest available
+# prebuilt binary into the toolset-specific folder so install() can find it.
+set(_sodium_libs_root "${CMAKE_CURRENT_SOURCE_DIR}/flutter/ephemeral/.plugin_symlinks/sodium_libs/windows/lib")
+if(EXISTS "${_sodium_libs_root}" AND CMAKE_VS_PLATFORM_TOOLSET)
+  set(_sodium_build_types "Release;Debug")
+  foreach(_sodium_cfg IN LISTS _sodium_build_types)
+    set(_sodium_expected "${_sodium_libs_root}/${_sodium_cfg}/${CMAKE_VS_PLATFORM_TOOLSET}/libsodium.dll")
+    if(NOT EXISTS "${_sodium_expected}")
+      set(_sodium_fallback_toolsets "v145;v144;v143;v142")
+      list(REMOVE_ITEM _sodium_fallback_toolsets "${CMAKE_VS_PLATFORM_TOOLSET}")
+      foreach(_sodium_fallback IN LISTS _sodium_fallback_toolsets)
+        set(_sodium_fallback_path "${_sodium_libs_root}/${_sodium_cfg}/${_sodium_fallback}/libsodium.dll")
+        if(EXISTS "${_sodium_fallback_path}")
+          file(MAKE_DIRECTORY "${_sodium_libs_root}/${_sodium_cfg}/${CMAKE_VS_PLATFORM_TOOLSET}")
+          file(COPY "${_sodium_fallback_path}"
+            DESTINATION "${_sodium_libs_root}/${_sodium_cfg}/${CMAKE_VS_PLATFORM_TOOLSET}")
+          break()
+        endif()
+      endforeach()
+    endif()
+  endforeach()
+endif()
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can

@@ -45,6 +45,12 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _passwordController.text.trim(),
       );
 
+      final currentUser = _auth.currentUser;
+      if (currentUser != null) {
+        await UserService().saveUserToFirestore(user: currentUser);
+        await UserService().initializeE2EE();
+      }
+
       // IMPORTANT: Re-initialize notifications for new user
       await NotificationService().initialize();
       
@@ -108,6 +114,7 @@ class _LoginScreenState extends State<LoginScreen> {
       // Save/update user in Firestore
       if (userCredential.user != null) {
         await UserService().saveUserToFirestore(user: userCredential.user!);
+        await UserService().initializeE2EE();
         
         // IMPORTANT: Re-initialize notifications for new user
         await NotificationService().initialize();

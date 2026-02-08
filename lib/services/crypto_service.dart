@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:sodium/sodium.dart';
@@ -19,6 +20,11 @@ class CryptoService {
   late Sodium _sodium;
   KeyPair? _keyPair;
   bool _initialized = false;
+  static const _legacyStoragePrivateKey = 'crypto_private_key';
+  static const _legacyStoragePublicKey = 'crypto_public_key';
+
+  String _privateKeyStorageKey(String uid) => 'crypto_private_key_$uid';
+  String _publicKeyStorageKey(String uid) => 'crypto_public_key_$uid';
 
   /// Initialize libsodium + load/generate keys
   Future<void> initialize() async {
@@ -27,7 +33,7 @@ class CryptoService {
     _sodium = await sodium_libs.SodiumInit.init();
 
     await _loadOrCreateKeyPair();
-    _initialized = true;
+    _initialized = _keyPair != null;
   }
 
   /// Load or generate keypair
@@ -35,69 +41,93 @@ class CryptoService {
     final user = _auth.currentUser;
     if (user == null) return;
 
-    final storedPrivateKey =
-        await _secureStorage.read(key: 'crypto_private_key');
+    final privateKeyKey = _privateKeyStorageKey(user.uid);
+    final publicKeyKey = _publicKeyStorageKey(user.uid);
 
-    if (storedPrivateKey != null) {
+    String? storedPrivateKey =
+        await _secureStorage.read(key: privateKeyKey);
+    String? storedPublicKey =
+        await _secureStorage.read(key: publicKeyKey);
+
+    // Migrate legacy keys (non-user-scoped) if present.
+    if (storedPrivateKey == null) {
+      storedPrivateKey =
+          await _secureStorage.read(key: _legacyStoragePrivateKey);
+      if (storedPrivateKey != null) {
+        await _secureStorage.write(key: privateKeyKey, value: storedPrivateKey);
+      }
+    }
+    if (storedPublicKey == null) {
+      storedPublicKey =
+          await _secureStorage.read(key: _legacyStoragePublicKey);
+      if (storedPublicKey != null) {
+        await _secureStorage.write(key: publicKeyKey, value: storedPublicKey);
+      }
+    }
+
+    if (storedPrivateKey != null && storedPublicKey != null) {
+      final secretKeyBytes = base64.decode(storedPrivateKey);
+      final publicKeyBytes = base64.decode(storedPublicKey);
+      final secretKey = SecureKey.fromList(_sodium, secretKeyBytes);
+      _keyPair = KeyPair(
+        publicKey: Uint8List.fromList(publicKeyBytes),
+        secretKey: secretKey,
+      );
+      return;
+    }
+
+    if (storedPrivateKey != null && storedPublicKey == null) {
       final secretKeyBytes = base64.decode(storedPrivateKey);
       final secretKey = SecureKey.fromList(_sodium, secretKeyBytes);
 
       // Try to load the public key from Firestore (should have been
       // written when the keypair was first created). If it's missing,
-      // attempt to derive a keypair from the seed when possible. If all
-      // else fails, generate a fresh keypair and store it.
+      // store it locally. If it's missing, generate a fresh keypair.
       final userDoc = await _firestore.collection('users').doc(user.uid).get();
       final storedPublicKeyBase64 = userDoc.data()?['publicKey'] as String?;
 
       if (storedPublicKeyBase64 != null) {
         final publicKey = Uint8List.fromList(base64.decode(storedPublicKeyBase64));
         _keyPair = KeyPair(publicKey: publicKey, secretKey: secretKey);
+        await _secureStorage.write(
+          key: publicKeyKey,
+          value: storedPublicKeyBase64,
+        );
       } else {
-        try {
-          if (secretKey.length == _sodium.crypto.box.seedBytes) {
-            // Secret was actually a seed - derive the keypair from it.
-            _keyPair = _sodium.crypto.box.seedKeyPair(secretKey);
-          } else {
-            // Fallback: generate a new keypair and replace stored keys.
-            _keyPair = _sodium.crypto.box.keyPair();
+        // Public key missing and cannot be derived from secret key.
+        // Generate a fresh keypair and replace stored keys.
+        _keyPair = _sodium.crypto.box.keyPair();
 
-            await _secureStorage.write(
-              key: 'crypto_private_key',
-              value: base64.encode(_keyPair!.secretKey.extractBytes()),
-            );
+        await _secureStorage.write(
+          key: privateKeyKey,
+          value: base64.encode(_keyPair!.secretKey.extractBytes()),
+        );
+        await _secureStorage.write(
+          key: publicKeyKey,
+          value: base64.encode(_keyPair!.publicKey),
+        );
 
-            await _firestore.collection('users').doc(user.uid).update({
-              'publicKey': base64.encode(_keyPair!.publicKey),
-              'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
-            });
-          }
-        } catch (_) {
-          // If deriving failed for any reason, generate a fresh keypair.
-          _keyPair = _sodium.crypto.box.keyPair();
-
-          await _secureStorage.write(
-            key: 'crypto_private_key',
-            value: base64.encode(_keyPair!.secretKey.extractBytes()),
-          );
-
-          await _firestore.collection('users').doc(user.uid).update({
-            'publicKey': base64.encode(_keyPair!.publicKey),
-            'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
-          });
-        }
+        await _firestore.collection('users').doc(user.uid).set({
+          'publicKey': base64.encode(_keyPair!.publicKey),
+          'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
       }
     } else {
       _keyPair = _sodium.crypto.box.keyPair();
 
       await _secureStorage.write(
-        key: 'crypto_private_key',
+        key: privateKeyKey,
         value: base64.encode(_keyPair!.secretKey.extractBytes()),
       );
+      await _secureStorage.write(
+        key: publicKeyKey,
+        value: base64.encode(_keyPair!.publicKey),
+      );
 
-      await _firestore.collection('users').doc(user.uid).update({
+      await _firestore.collection('users').doc(user.uid).set({
         'publicKey': base64.encode(_keyPair!.publicKey),
         'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
-      });
+      }, SetOptions(merge: true));
     }
   }
 

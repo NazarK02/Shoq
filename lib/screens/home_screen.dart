@@ -147,10 +147,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             currentAccountPicture: CircleAvatar(
               backgroundColor: Colors.white,
-              backgroundImage: user?.photoURL != null
-                  ? CachedNetworkImageProvider(user!.photoURL!)
+              backgroundImage: (user?.photoURL != null && user!.photoURL!.isNotEmpty)
+                  ? CachedNetworkImageProvider(user.photoURL!)
                   : null,
-              child: user?.photoURL == null
+              child: (user?.photoURL == null || user!.photoURL!.isEmpty)
                   ? Icon(
                       Icons.person,
                       size: 40,
@@ -351,8 +351,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       CircleAvatar(
                         radius: 20,
-                        backgroundImage: photoURL != null ? CachedNetworkImageProvider(photoURL) : null,
-                        child: photoURL == null ? const Icon(Icons.person) : null,
+                        backgroundImage: (photoURL != null && photoURL.isNotEmpty)
+                            ? CachedNetworkImageProvider(photoURL)
+                            : null,
+                        child: (photoURL == null || photoURL.isEmpty)
+                            ? const Icon(Icons.person)
+                            : null,
                       ),
                       if (isOnline)
                         Positioned(
