@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../services/presence_service.dart';
 import '../services/user_cache_service.dart';
 
@@ -777,12 +778,17 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
-      child: Image.network(
-        faviconUrl,
+      child: CachedNetworkImage(
+        imageUrl: faviconUrl,
         width: 24,
         height: 24,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Icon(_iconForPlatform(platform)),
+        memCacheWidth: 48,
+        memCacheHeight: 48,
+        placeholder: (_, __) => Icon(_iconForPlatform(platform)),
+        errorWidget: (_, __, ___) => Icon(_iconForPlatform(platform)),
+        fadeInDuration: const Duration(milliseconds: 100),
+        fadeOutDuration: const Duration(milliseconds: 100),
       ),
     );
   }
@@ -874,19 +880,17 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
     final cacheSize = (radius * 2 * dpr).round().clamp(64, 512);
 
     return ClipOval(
-      child: Image.network(
-        photoUrl,
+      child: CachedNetworkImage(
+        imageUrl: photoUrl,
         width: radius * 2,
         height: radius * 2,
         fit: BoxFit.cover,
-        filterQuality: FilterQuality.low,
-        cacheWidth: cacheSize,
-        cacheHeight: cacheSize,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return placeholder;
-        },
-        errorBuilder: (_, __, ___) => placeholder,
+        memCacheWidth: cacheSize,
+        memCacheHeight: cacheSize,
+        placeholder: (_, __) => placeholder,
+        errorWidget: (_, __, ___) => placeholder,
+        fadeInDuration: const Duration(milliseconds: 150),
+        fadeOutDuration: const Duration(milliseconds: 150),
       ),
     );
   }

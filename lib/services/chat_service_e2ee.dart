@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'crypto_service.dart';
 
 /// Chat service with end-to-end encryption
@@ -9,6 +11,7 @@ import 'crypto_service.dart';
 class ChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;
   final CryptoService _crypto = CryptoService();
 
   User? get currentUser => _auth.currentUser;
@@ -136,6 +139,7 @@ class ChatService {
         'clientTimestamp': Timestamp.now(),
         'read': false,
         'encrypted': true,
+        'type': 'text',
       });
 
       // Update conversation metadata with plaintext preview for UI
@@ -151,6 +155,75 @@ class ChatService {
       print('❌ Failed to send encrypted message: $e');
       rethrow;
     }
+  }
+
+  /// Send a file message (non-encrypted file contents).
+  Future<void> sendFileMessage({
+    required String conversationId,
+    required String recipientId,
+    required String filePath,
+    required String fileName,
+    required int fileSize,
+    String? mimeType,
+  }) async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) throw Exception('User not logged in');
+
+    if (filePath.trim().isEmpty) {
+      throw Exception('Invalid file path');
+    }
+
+    final file = File(filePath);
+    if (!file.existsSync()) {
+      throw Exception('File not found');
+    }
+
+    final displayName = fileName.trim().isEmpty ? 'file' : fileName.trim();
+    final safeName = displayName.replaceAll(RegExp(r'[\\\\/]+'), '_');
+    final messageId = _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .doc()
+        .id;
+    final storagePath = 'chat_files/$conversationId/${messageId}_$safeName';
+    final ref = _storage.ref().child(storagePath);
+
+    final contentType = (mimeType == null || mimeType.trim().isEmpty)
+        ? 'application/octet-stream'
+        : mimeType.trim();
+
+    final uploadTask = await ref.putFile(
+      file,
+      SettableMetadata(contentType: contentType),
+    );
+    final downloadUrl = await uploadTask.ref.getDownloadURL();
+
+    await _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .doc(messageId)
+        .set({
+      'senderId': currentUser.uid,
+      'timestamp': FieldValue.serverTimestamp(),
+      'clientTimestamp': Timestamp.now(),
+      'read': false,
+      'encrypted': false,
+      'type': 'file',
+      'fileName': displayName,
+      'fileSize': fileSize,
+      'mimeType': contentType,
+      'fileUrl': downloadUrl,
+      'storagePath': storagePath,
+    });
+
+    await _firestore.collection('conversations').doc(conversationId).update({
+      'lastMessage': 'File: $displayName',
+      'lastMessageTime': FieldValue.serverTimestamp(),
+      'lastSenderId': currentUser.uid,
+      'hasMessages': true,
+    });
   }
 
   /// Get messages stream (returns encrypted messages)

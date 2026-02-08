@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'registration_screen.dart';
 import 'friends_list_screen.dart';
 import 'profile_screen.dart';
@@ -546,19 +547,17 @@ class _HomeScreenState extends State<HomeScreen> {
     final cacheSize = (radius * 2 * dpr).round().clamp(32, 256);
 
     return ClipOval(
-      child: Image.network(
-        photoUrl,
+      child: CachedNetworkImage(
+        imageUrl: photoUrl,
         width: radius * 2,
         height: radius * 2,
         fit: BoxFit.cover,
-        filterQuality: FilterQuality.low,
-        cacheWidth: cacheSize,
-        cacheHeight: cacheSize,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return placeholder;
-        },
-        errorBuilder: (_, __, ___) => placeholder,
+        memCacheWidth: cacheSize,
+        memCacheHeight: cacheSize,
+        placeholder: (_, __) => placeholder,
+        errorWidget: (_, __, ___) => placeholder,
+        fadeInDuration: const Duration(milliseconds: 150),
+        fadeOutDuration: const Duration(milliseconds: 150),
       ),
     );
   }

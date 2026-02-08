@@ -3,6 +3,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:mime/mime.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import '../services/chat_service_e2ee.dart';
@@ -38,6 +41,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
   Map<String, dynamic>? _recipientData;
   bool _hasMessages = false;
   String? _initError;
+  bool _isSendingFile = false;
 
   @override
   void initState() {
@@ -236,15 +240,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
             children: [
               Stack(
                 children: [
-                  CircleAvatar(
-                    radius: 18,
-                    backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
-                        ? CachedNetworkImageProvider(photoUrl)
-                        : null,
-                    child: (photoUrl == null || photoUrl.isEmpty)
-                        ? const Icon(Icons.person)
-                        : null,
-                  ),
+                  _buildAvatar(photoUrl, 18),
                   StreamBuilder<Map<String, dynamic>?>(
                     stream: PresenceService().getUserStatusStream(widget.recipientId),
                     builder: (context, snapshot) {
@@ -324,6 +320,103 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     );
   }
 
+  Future<void> _pickAndSendFile() async {
+    if (_conversationId == null) return;
+    if (_isSendingFile) return;
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: false,
+        withData: false,
+      );
+
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.first;
+      if (file.path == null || file.path!.trim().isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not access selected file')),
+          );
+        }
+        return;
+      }
+
+      setState(() => _isSendingFile = true);
+
+      final detectedMime = lookupMimeType(file.path!);
+
+      await _chatService.sendFileMessage(
+        conversationId: _conversationId!,
+        recipientId: widget.recipientId,
+        filePath: file.path!,
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: detectedMime,
+      );
+
+      try {
+        final currentUser = _auth.currentUser;
+        final senderName = currentUser?.displayName ?? 'Someone';
+        await _notificationService.sendMessageNotification(
+          recipientId: widget.recipientId,
+          senderName: senderName,
+          messageText: 'Sent a file',
+        );
+      } catch (notificationError) {
+        print('Error sending notification: $notificationError');
+      }
+
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send file: ${e.toString()}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSendingFile = false);
+    }
+  }
+
+  Widget _buildAvatar(String? photoUrl, double radius) {
+    final placeholder = CircleAvatar(
+      radius: radius,
+      backgroundColor: Colors.grey[300],
+      child: Icon(
+        Icons.person,
+        size: radius,
+        color: Colors.grey[600],
+      ),
+    );
+
+    if (photoUrl == null || photoUrl.isEmpty) {
+      return placeholder;
+    }
+
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheSize = (radius * 2 * dpr).round().clamp(32, 256);
+
+    return ClipOval(
+      child: Container(
+        width: radius * 2,
+        height: radius * 2,
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: CachedNetworkImage(
+          imageUrl: photoUrl,
+          width: radius * 2,
+          height: radius * 2,
+          fit: BoxFit.cover,
+          memCacheWidth: cacheSize,
+          memCacheHeight: cacheSize,
+          placeholder: (_, __) => placeholder,
+          errorWidget: (_, __, ___) => placeholder,
+          fadeInDuration: const Duration(milliseconds: 150),
+          fadeOutDuration: const Duration(milliseconds: 150),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMessageInput() {
     return Container(
       padding: const EdgeInsets.all(8),
@@ -340,6 +433,17 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
       child: SafeArea(
         child: Row(
           children: [
+            IconButton(
+              icon: _isSendingFile
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.attach_file),
+              onPressed: _isSendingFile ? null : _pickAndSendFile,
+              tooltip: 'Attach file',
+            ),
             Expanded(
               child: TextField(
                 controller: _messageController,
@@ -463,6 +567,16 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
             final isMe = message['senderId'] == currentUser.uid;
             final timestamp = (message['timestamp'] as Timestamp?) ??
                 (message['clientTimestamp'] as Timestamp?);
+            final type = message['type']?.toString() ?? 'text';
+
+            if (type == 'file') {
+              return _buildFileBubble(
+                message,
+                isMe,
+                timestamp,
+                key: ValueKey(messageId),
+              );
+            }
 
             // Check cache first
             if (_decryptedCache.containsKey(messageId)) {
@@ -597,6 +711,127 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
         ),
       ),
     );
+  }
+
+  Widget _buildFileBubble(
+    Map<String, dynamic> message,
+    bool isMe,
+    Timestamp? timestamp, {
+    Key? key,
+  }) {
+    final fileName = message['fileName']?.toString() ?? 'File';
+    final fileSize = message['fileSize'] is int ? message['fileSize'] as int : 0;
+    final fileUrl = message['fileUrl']?.toString() ?? '';
+    final mimeType = message['mimeType']?.toString() ?? '';
+
+    return Align(
+      key: key,
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        decoration: BoxDecoration(
+          color: isMe ? Theme.of(context).primaryColor : Colors.grey[300],
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isMe ? 16 : 4),
+            bottomRight: Radius.circular(isMe ? 4 : 16),
+          ),
+        ),
+        child: InkWell(
+          onTap: fileUrl.isEmpty ? null : () => _openFile(fileUrl),
+          borderRadius: BorderRadius.circular(12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _iconForMime(mimeType),
+                color: isMe ? Colors.white : Colors.black87,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      fileName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: isMe ? Colors.white : Colors.black87,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _formatBytes(fileSize),
+                      style: TextStyle(
+                        color: isMe ? Colors.white70 : Colors.black54,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (timestamp != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        DateFormat('HH:mm').format(timestamp.toDate()),
+                        style: TextStyle(
+                          color: isMe ? Colors.white70 : Colors.black54,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (fileUrl.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.open_in_new,
+                  size: 16,
+                  color: isMe ? Colors.white70 : Colors.black54,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  IconData _iconForMime(String mime) {
+    final m = mime.toLowerCase();
+    if (m.startsWith('image/')) return Icons.image;
+    if (m.startsWith('video/')) return Icons.videocam;
+    if (m.startsWith('audio/')) return Icons.audiotrack;
+    if (m.contains('pdf')) return Icons.picture_as_pdf;
+    if (m.contains('zip') || m.contains('compressed')) return Icons.folder_zip;
+    if (m.contains('spreadsheet') || m.contains('excel')) return Icons.grid_on;
+    if (m.contains('word') || m.contains('document')) return Icons.description;
+    return Icons.insert_drive_file;
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    double size = bytes.toDouble();
+    int unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024;
+      unit++;
+    }
+    final value = size < 10 && unit > 0 ? size.toStringAsFixed(1) : size.toStringAsFixed(0);
+    return '$value ${units[unit]}';
+  }
+
+  Future<void> _openFile(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 }
 

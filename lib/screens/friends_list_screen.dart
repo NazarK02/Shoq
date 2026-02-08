@@ -288,15 +288,18 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           itemBuilder: (context, index) {
             final blocked = snapshot.data!.docs[index].data() as Map<String, dynamic>;
             
+            final blockedPhoto = blocked['photoURL']?.toString() ?? '';
+            final hasBlockedPhoto = blockedPhoto.isNotEmpty;
             return ListTile(
               leading: CircleAvatar(
                 radius: 20,
-                backgroundImage: (blocked['photoURL'] != null && blocked['photoURL'].toString().isNotEmpty)
-                    ? CachedNetworkImageProvider(blocked['photoURL'])
+                backgroundColor: hasBlockedPhoto ? Colors.transparent : Colors.grey[300],
+                backgroundImage: hasBlockedPhoto
+                    ? CachedNetworkImageProvider(blockedPhoto)
                     : null,
-                child: (blocked['photoURL'] == null || blocked['photoURL'].toString().isEmpty)
-                    ? const Icon(Icons.person)
-                    : null,
+                child: hasBlockedPhoto
+                    ? null
+                    : Icon(Icons.person, color: Colors.grey[600]),
               ),
               title: Text(blocked['displayName']),
               subtitle: Text(blocked['email']),
@@ -755,7 +758,8 @@ class _FriendListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final displayName = initialData['displayName'] ?? 'User';
     final email = initialData['email'] ?? '';
-    final photoURL = initialData['photoURL'];
+    final photoURL = initialData['photoURL']?.toString() ?? '';
+    final hasPhoto = photoURL.isNotEmpty;
 
     return ListTile(
       onTap: () {
@@ -775,12 +779,9 @@ class _FriendListTile extends StatelessWidget {
       },
       leading: CircleAvatar(
         radius: 20,
-        backgroundImage: (photoURL != null && photoURL.isNotEmpty)
-            ? CachedNetworkImageProvider(photoURL)
-            : null,
-        child: (photoURL == null || photoURL.isEmpty)
-            ? const Icon(Icons.person)
-            : null,
+        backgroundColor: hasPhoto ? Colors.transparent : Colors.grey[300],
+        backgroundImage: hasPhoto ? CachedNetworkImageProvider(photoURL) : null,
+        child: hasPhoto ? null : Icon(Icons.person, color: Colors.grey[600]),
       ),
       title: Text(displayName),
       subtitle: Text(email),
@@ -906,19 +907,17 @@ class _FriendRequestTileState extends State<_FriendRequestTile> {
 
     final displayName = _userData?['displayName'] ?? 'User';
     final email = _userData?['email'] ?? '';
-    final photoURL = _userData?['photoURL'];
+    final photoURL = _userData?['photoURL']?.toString() ?? '';
+    final hasPhoto = photoURL.isNotEmpty;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: ListTile(
         leading: CircleAvatar(
           radius: 20,
-          backgroundImage: (photoURL != null && photoURL.isNotEmpty)
-              ? CachedNetworkImageProvider(photoURL)
-              : null,
-          child: (photoURL == null || photoURL.isEmpty)
-              ? const Icon(Icons.person)
-              : null,
+          backgroundColor: hasPhoto ? Colors.transparent : Colors.grey[300],
+          backgroundImage: hasPhoto ? CachedNetworkImageProvider(photoURL) : null,
+          child: hasPhoto ? null : Icon(Icons.person, color: Colors.grey[600]),
         ),
         title: Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(email),
