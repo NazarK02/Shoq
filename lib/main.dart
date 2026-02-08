@@ -95,6 +95,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           _e2eeInitialized = true;
         }
         
+        await NotificationService().initialize();
         _presenceService.startPresenceTracking();
       } else {
         _presenceService.stopPresenceTracking();

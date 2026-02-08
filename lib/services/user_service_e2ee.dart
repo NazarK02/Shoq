@@ -116,10 +116,10 @@ class UserService {
       print('✅ E2EE initialized, public key: ${publicKey.substring(0, 20)}...');
 
       // Update user document with public key
-      await _firestore.collection('users').doc(user.uid).update({
+      await _firestore.collection('users').doc(user.uid).set({
         'publicKey': publicKey,
         'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
-      });
+      }, SetOptions(merge: true));
 
       print('✅ Public key saved to Firestore');
 

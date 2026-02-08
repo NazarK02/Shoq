@@ -174,10 +174,10 @@ class NotificationService {
       await _removeTokenFromOtherUsers(token, user.uid);
       
       // Then save it to the current user
-      await _firestore.collection('users').doc(user.uid).update({
+      await _firestore.collection('users').doc(user.uid).set({
         'fcmToken': token,
         'lastTokenUpdate': FieldValue.serverTimestamp(),
-      });
+      }, SetOptions(merge: true));
       
       print('✅ FCM token saved successfully');
     } catch (e) {

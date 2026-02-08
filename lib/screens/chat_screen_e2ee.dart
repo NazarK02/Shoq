@@ -318,6 +318,12 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
               scrollController: _scrollController,
               chatService: _chatService,
               hasMessages: _hasMessages,
+              onMessagesPresenceChanged: (hasMessages) {
+                if (!mounted || _hasMessages == hasMessages) return;
+                setState(() {
+                  _hasMessages = hasMessages;
+                });
+              },
             ),
           ),
           _buildMessageInput(),
@@ -401,6 +407,7 @@ class _MessagesList extends StatefulWidget {
   final ScrollController scrollController;
   final ChatService chatService;
   final bool hasMessages;
+  final ValueChanged<bool> onMessagesPresenceChanged;
 
   const _MessagesList({
     required this.conversationId,
@@ -408,6 +415,7 @@ class _MessagesList extends StatefulWidget {
     required this.scrollController,
     required this.chatService,
     required this.hasMessages,
+    required this.onMessagesPresenceChanged,
   });
 
   @override
@@ -445,14 +453,18 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
 
         // Don't show loading spinner - show empty state instead
         if (!snapshot.hasData) {
-          return _buildEmptyState();
+          return widget.hasMessages ? const SizedBox.shrink() : _buildEmptyState();
         }
 
         if (snapshot.data!.docs.isEmpty) {
-          return _buildEmptyState();
+          if (!widget.hasMessages) {
+            widget.onMessagesPresenceChanged(false);
+          }
+          return widget.hasMessages ? const SizedBox.shrink() : _buildEmptyState();
         }
 
         final messages = snapshot.data!.docs;
+        widget.onMessagesPresenceChanged(true);
 
         return ListView.builder(
           controller: widget.scrollController,

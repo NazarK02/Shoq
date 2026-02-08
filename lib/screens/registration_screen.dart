@@ -4,6 +4,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 import '../services/user_service_e2ee.dart';
 import '../services/theme_service.dart';
+import '../services/notification_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'email_verification_screen.dart';
 
@@ -83,6 +84,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       }
 
       print('✅ User saved to Firestore');
+
+      await NotificationService().initialize();
 
       // Send verification email
       print('📧 Sending verification email...');
@@ -179,6 +182,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         await UserService().saveUserToFirestore(user: userCredential.user!);
         print('✅ Google user saved to Firestore');
       }
+
+      await NotificationService().initialize();
 
       // AuthWrapper will automatically navigate to HomeScreen
       // No need to manually navigate here
