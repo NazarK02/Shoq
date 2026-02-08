@@ -294,23 +294,6 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
       ),
       body: Column(
         children: [
-          // Only show E2EE banner if no messages yet
-          if (!_hasMessages)
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-              color: Colors.green.withOpacity(0.1),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Icon(Icons.lock, size: 14, color: Colors.green),
-                  SizedBox(width: 6),
-                  Text(
-                    'End-to-end encrypted',
-                    style: TextStyle(fontSize: 12, color: Colors.green),
-                  ),
-                ],
-              ),
-            ),
           Expanded(
             child: _MessagesList(
               conversationId: _conversationId,

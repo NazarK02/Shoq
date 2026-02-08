@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -16,6 +17,9 @@ class NotificationService {
   // These will be null on unsupported platforms
   FirebaseMessaging? _fcm;
   FlutterLocalNotificationsPlugin? _localNotifications;
+  StreamSubscription<User?>? _authSubscription;
+  String? _cachedToken;
+  bool _isInitialized = false;
 
   // Track message counts per conversation for notification grouping
   final Map<String, int> _messageCountPerSender = {};
@@ -55,8 +59,21 @@ class NotificationService {
       return;
     }
 
-    _fcm = FirebaseMessaging.instance;
-    _localNotifications = FlutterLocalNotificationsPlugin();
+    _fcm ??= FirebaseMessaging.instance;
+    _localNotifications ??= FlutterLocalNotificationsPlugin();
+
+    _authSubscription ??= _auth.authStateChanges().listen((user) {
+      if (user != null && _cachedToken != null) {
+        _saveTokenToFirestore(_cachedToken!);
+      }
+    });
+
+    if (_isInitialized) {
+      if (_cachedToken != null && _auth.currentUser != null) {
+        await _saveTokenToFirestore(_cachedToken!);
+      }
+      return;
+    }
 
     print('📱 Requesting notification permissions...');
     
@@ -75,6 +92,7 @@ class NotificationService {
       String? token = await _fcm!.getToken();
       if (token != null) {
         print('✅ FCM Token received: ${token.substring(0, 20)}...');
+        _cachedToken = token;
         await _saveTokenToFirestore(token);
       } else {
         print('❌ Failed to get FCM token');
@@ -83,6 +101,7 @@ class NotificationService {
       // Listen for token refresh
       _fcm!.onTokenRefresh.listen((newToken) {
         print('🔄 FCM Token refreshed: ${newToken.substring(0, 20)}...');
+        _cachedToken = newToken;
         _saveTokenToFirestore(newToken);
       });
 
@@ -95,6 +114,7 @@ class NotificationService {
       // Handle background messages
       FirebaseMessaging.onMessageOpenedApp.listen(_handleBackgroundMessage);
       
+      _isInitialized = true;
       print('✅ Notification service fully initialized');
     } else if (settings.authorizationStatus == AuthorizationStatus.denied) {
       print('❌ User denied notification permission');
@@ -174,10 +194,10 @@ class NotificationService {
       await _removeTokenFromOtherUsers(token, user.uid);
       
       // Then save it to the current user
-      await _firestore.collection('users').doc(user.uid).update({
+      await _firestore.collection('users').doc(user.uid).set({
         'fcmToken': token,
         'lastTokenUpdate': FieldValue.serverTimestamp(),
-      });
+      }, SetOptions(merge: true));
       
       print('✅ FCM token saved successfully');
     } catch (e) {
