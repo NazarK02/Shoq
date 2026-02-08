@@ -1,17 +1,22 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:mime/mime.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import '../services/chat_service_e2ee.dart';
 import '../services/user_cache_service.dart';
 import 'user_profile_view_screen.dart';
-import 'dart:async';
 
 /// E2EE-enabled chat screen with smooth loading
 class ChatScreenE2EE extends StatefulWidget {
@@ -41,7 +46,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
   Map<String, dynamic>? _recipientData;
   bool _hasMessages = false;
   String? _initError;
-  bool _isSendingFile = false;
+  final List<_PendingUpload> _pendingUploads = [];
 
   @override
   void initState() {
@@ -110,6 +115,10 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     WidgetsBinding.instance.removeObserver(this);
     _messageController.dispose();
     _scrollController.dispose();
+    for (final upload in _pendingUploads) {
+      upload.sub?.cancel();
+      upload.task?.cancel();
+    }
     super.dispose();
   }
 
@@ -312,6 +321,8 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
               scrollController: _scrollController,
               chatService: _chatService,
               hasMessages: _hasMessages,
+              pendingUploads: _pendingUploads,
+              onCancelUpload: _cancelPendingUpload,
             ),
           ),
           _buildMessageInput(),
@@ -320,14 +331,53 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     );
   }
 
-  Future<void> _pickAndSendFile() async {
-    if (_conversationId == null) return;
-    if (_isSendingFile) return;
+  Future<void> _showAttachmentSheet() async {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.image),
+              title: const Text('Image'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndSendFile(type: FileType.image);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file),
+              title: const Text('File'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndSendFile(type: FileType.any);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.location_on),
+              title: const Text('Location'),
+              onTap: () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Location sharing coming soon')),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
+  Future<void> _pickAndSendFile({required FileType type}) async {
+    if (_conversationId == null) return;
+
+    String? pendingId;
     try {
       final result = await FilePicker.platform.pickFiles(
         allowMultiple: false,
         withData: false,
+        type: type,
       );
 
       if (result == null || result.files.isEmpty) return;
@@ -341,17 +391,54 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
         return;
       }
 
-      setState(() => _isSendingFile = true);
-
-      final detectedMime = lookupMimeType(file.path!);
-
-      await _chatService.sendFileMessage(
+      final detectedMime = lookupMimeType(file.path!) ?? 'application/octet-stream';
+      final upload = _chatService.startFileUpload(
         conversationId: _conversationId!,
-        recipientId: widget.recipientId,
         filePath: file.path!,
+        fileName: file.name,
+        mimeType: detectedMime,
+      );
+      pendingId = upload.messageId;
+
+      final pending = _PendingUpload(
+        id: upload.messageId,
         fileName: file.name,
         fileSize: file.size,
         mimeType: detectedMime,
+        progress: 0,
+      );
+      pending.task = upload.task;
+
+      setState(() {
+        _pendingUploads.add(pending);
+      });
+      _scrollToBottom();
+
+      pending.sub = upload.task.snapshotEvents.listen((snapshot) {
+        final total = snapshot.totalBytes;
+        final transferred = snapshot.bytesTransferred;
+        if (total > 0 && mounted) {
+          setState(() {
+            pending.progress = (transferred / total).clamp(0, 1);
+          });
+        }
+      });
+
+      final snapshot = await upload.task;
+      final downloadUrl = await snapshot.ref.getDownloadURL();
+
+      if (!_pendingUploads.any((u) => u.id == upload.messageId)) {
+        return;
+      }
+
+      await _chatService.commitFileMessage(
+        conversationId: _conversationId!,
+        messageId: upload.messageId,
+        storagePath: upload.storagePath,
+        downloadUrl: downloadUrl,
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: upload.contentType,
       );
 
       try {
@@ -366,15 +453,26 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
         print('Error sending notification: $notificationError');
       }
 
+      _removePendingUpload(upload.messageId);
       _scrollToBottom();
+    } on FirebaseException catch (e) {
+      if (e.code != 'canceled' && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send file: ${e.message ?? e.code}')),
+        );
+      }
+      if (pendingId != null) {
+        _removePendingUpload(pendingId!);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to send file: ${e.toString()}')),
         );
       }
-    } finally {
-      if (mounted) setState(() => _isSendingFile = false);
+      if (pendingId != null) {
+        _removePendingUpload(pendingId!);
+      }
     }
   }
 
@@ -434,15 +532,9 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
         child: Row(
           children: [
             IconButton(
-              icon: _isSendingFile
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.attach_file),
-              onPressed: _isSendingFile ? null : _pickAndSendFile,
-              tooltip: 'Attach file',
+              icon: const Icon(Icons.attach_file),
+              onPressed: _showAttachmentSheet,
+              tooltip: 'Attach',
             ),
             Expanded(
               child: TextField(
@@ -467,6 +559,31 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
         ),
       ),
     );
+  }
+
+  void _removePendingUpload(String id) {
+    final index = _pendingUploads.indexWhere((upload) => upload.id == id);
+    if (index == -1) return;
+    final upload = _pendingUploads[index];
+    upload.sub?.cancel();
+    if (mounted) {
+      setState(() {
+        _pendingUploads.removeAt(index);
+      });
+    }
+  }
+
+  void _cancelPendingUpload(String id) {
+    final index = _pendingUploads.indexWhere((upload) => upload.id == id);
+    if (index == -1) return;
+    final upload = _pendingUploads[index];
+    upload.sub?.cancel();
+    upload.task?.cancel();
+    if (mounted) {
+      setState(() {
+        _pendingUploads.removeAt(index);
+      });
+    }
   }
 
   void _showClearChatDialog() {
@@ -503,6 +620,8 @@ class _MessagesList extends StatefulWidget {
   final ScrollController scrollController;
   final ChatService chatService;
   final bool hasMessages;
+  final List<_PendingUpload> pendingUploads;
+  final void Function(String id) onCancelUpload;
 
   const _MessagesList({
     required this.conversationId,
@@ -510,6 +629,8 @@ class _MessagesList extends StatefulWidget {
     required this.scrollController,
     required this.chatService,
     required this.hasMessages,
+    required this.pendingUploads,
+    required this.onCancelUpload,
   });
 
   @override
@@ -518,7 +639,8 @@ class _MessagesList extends StatefulWidget {
 
 class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveClientMixin {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  
+
+  final Map<String, _DownloadEntry> _downloads = {};
   // Cache decrypted messages to avoid re-decryption
   final Map<String, String> _decryptedCache = {};
 
@@ -546,21 +668,31 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
         }
 
         // Avoid showing empty-state flicker while loading
-        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData &&
+            widget.pendingUploads.isEmpty) {
           return const SizedBox.shrink();
         }
 
-        if (snapshot.data!.docs.isEmpty) {
+        final messages = snapshot.data?.docs ?? [];
+
+        if (messages.isEmpty && widget.pendingUploads.isEmpty) {
           return _buildEmptyState();
         }
-
-        final messages = snapshot.data!.docs;
+        final pending = widget.pendingUploads;
 
         return ListView.builder(
           controller: widget.scrollController,
           padding: const EdgeInsets.all(16),
-          itemCount: messages.length,
+          itemCount: messages.length + pending.length,
           itemBuilder: (context, index) {
+            if (index >= messages.length) {
+              final upload = pending[index - messages.length];
+              return _buildPendingUploadBubble(
+                upload,
+                key: ValueKey('pending_${upload.id}'),
+              );
+            }
             final messageDoc = messages[index];
             final message = messageDoc.data() as Map<String, dynamic>;
             final messageId = messageDoc.id;
@@ -574,6 +706,7 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
                 message,
                 isMe,
                 timestamp,
+                messageId: messageId,
                 key: ValueKey(messageId),
               );
             }
@@ -713,16 +846,109 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     );
   }
 
+  Widget _buildPendingUploadBubble(
+    _PendingUpload upload, {
+    Key? key,
+  }) {
+    return Align(
+      key: key,
+      alignment: Alignment.centerRight,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        decoration: BoxDecoration(
+          color: Theme.of(context).primaryColor,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(16),
+            topRight: Radius.circular(16),
+            bottomLeft: Radius.circular(16),
+            bottomRight: Radius.circular(4),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_upload, color: Colors.white),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    upload.fileName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  LinearProgressIndicator(
+                    value: upload.progress,
+                    backgroundColor: Colors.white24,
+                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                    minHeight: 3,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${(upload.progress * 100).toStringAsFixed(0)}% • ${_formatBytes(upload.fileSize)}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white70, size: 18),
+              onPressed: () => widget.onCancelUpload(upload.id),
+              tooltip: 'Cancel',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildFileBubble(
     Map<String, dynamic> message,
     bool isMe,
     Timestamp? timestamp, {
+    required String messageId,
     Key? key,
   }) {
     final fileName = message['fileName']?.toString() ?? 'File';
     final fileSize = message['fileSize'] is int ? message['fileSize'] as int : 0;
     final fileUrl = message['fileUrl']?.toString() ?? '';
     final mimeType = message['mimeType']?.toString() ?? '';
+    final isImage = mimeType.toLowerCase().startsWith('image/');
+    final download = _downloads[messageId];
+    final isDownloading = download?.status == _DownloadStatus.downloading;
+    final isDownloaded =
+        download?.status == _DownloadStatus.done && (download?.localPath?.isNotEmpty ?? false);
+    final progress = download?.progress ?? 0;
+    final localPath = download?.localPath;
+
+    void handleTap() {
+      if (isDownloaded && localPath != null) {
+        if (isImage) {
+          _openImageViewer(localPath, fileName);
+        } else {
+          _openDownloadedFile(localPath);
+        }
+        return;
+      }
+      if (!isDownloading && fileUrl.isNotEmpty) {
+        _downloadFile(
+          messageId: messageId,
+          url: fileUrl,
+          fileName: fileName,
+        );
+      }
+    }
 
     return Align(
       key: key,
@@ -743,15 +969,36 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
           ),
         ),
         child: InkWell(
-          onTap: fileUrl.isEmpty ? null : () => _openFile(fileUrl),
+          onTap: fileUrl.isEmpty ? null : handleTap,
           borderRadius: BorderRadius.circular(12),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                _iconForMime(mimeType),
-                color: isMe ? Colors.white : Colors.black87,
-              ),
+              if (isImage)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    color: isMe ? Colors.white12 : Colors.white,
+                    child: isDownloaded && localPath != null
+                        ? Image.file(
+                            File(localPath),
+                            fit: BoxFit.cover,
+                            width: 48,
+                            height: 48,
+                          )
+                        : Icon(
+                            Icons.image,
+                            color: isMe ? Colors.white : Colors.black54,
+                          ),
+                  ),
+                )
+              else
+                Icon(
+                  _iconForMime(mimeType),
+                  color: isMe ? Colors.white : Colors.black87,
+                ),
               const SizedBox(width: 8),
               Flexible(
                 child: Column(
@@ -775,7 +1022,26 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
                         fontSize: 12,
                       ),
                     ),
-                    if (timestamp != null) ...[
+                    if (isDownloading) ...[
+                      const SizedBox(height: 6),
+                      LinearProgressIndicator(
+                        value: progress > 0 ? progress : null,
+                        backgroundColor: isMe ? Colors.white24 : Colors.black12,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          isMe ? Colors.white : Colors.black54,
+                        ),
+                        minHeight: 3,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${(progress * 100).toStringAsFixed(0)}%',
+                        style: TextStyle(
+                          color: isMe ? Colors.white70 : Colors.black54,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                    if (timestamp != null && !isDownloading) ...[
                       const SizedBox(height: 4),
                       Text(
                         DateFormat('HH:mm').format(timestamp.toDate()),
@@ -790,10 +1056,26 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
               ),
               if (fileUrl.isNotEmpty) ...[
                 const SizedBox(width: 8),
-                Icon(
-                  Icons.open_in_new,
-                  size: 16,
-                  color: isMe ? Colors.white70 : Colors.black54,
+                IconButton(
+                  icon: isDownloading
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            value: progress > 0 ? progress : null,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              isMe ? Colors.white : Colors.black54,
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          isDownloaded ? Icons.open_in_new : Icons.download,
+                          size: 18,
+                          color: isMe ? Colors.white70 : Colors.black54,
+                        ),
+                  onPressed: isDownloading ? null : handleTap,
+                  tooltip: isDownloaded ? 'Open' : 'Download',
                 ),
               ],
             ],
@@ -801,6 +1083,138 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
         ),
       ),
     );
+  }
+
+  Future<void> _downloadFile({
+    required String messageId,
+    required String url,
+    required String fileName,
+  }) async {
+    final existing = _downloads[messageId];
+    if (existing?.status == _DownloadStatus.downloading) return;
+
+    setState(() {
+      _downloads[messageId] = _DownloadEntry(
+        status: _DownloadStatus.downloading,
+        progress: 0,
+        localPath: null,
+      );
+    });
+
+    final client = HttpClient();
+    try {
+      final targetPath = await _resolveDownloadPath(fileName);
+      final request = await client.getUrl(Uri.parse(url));
+      final response = await request.close();
+
+      if (response.statusCode != 200) {
+        throw Exception('Download failed: ${response.statusCode}');
+      }
+
+      final total = response.contentLength;
+      final file = File(targetPath);
+      final sink = file.openWrite();
+      int received = 0;
+
+      await response.listen((chunk) {
+        received += chunk.length;
+        sink.add(chunk);
+        if (total > 0 && mounted) {
+          final entry = _downloads[messageId];
+          if (entry == null) return;
+          setState(() {
+            entry.progress = (received / total).clamp(0, 1);
+          });
+        }
+      }).asFuture();
+
+      await sink.close();
+
+      if (!mounted) return;
+      setState(() {
+        _downloads[messageId] = _DownloadEntry(
+          status: _DownloadStatus.done,
+          progress: 1,
+          localPath: targetPath,
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _downloads[messageId] = _DownloadEntry(
+          status: _DownloadStatus.failed,
+          progress: 0,
+          localPath: null,
+          error: e.toString(),
+        );
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Download failed: ${e.toString()}')),
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> _openDownloadedFile(String path) async {
+    final result = await OpenFilex.open(path);
+    if (result.type != ResultType.done && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.message)),
+      );
+    }
+  }
+
+  void _openImageViewer(String path, String fileName) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _ImageViewerScreen(
+          filePath: path,
+          fileName: fileName,
+        ),
+      ),
+    );
+  }
+
+  Future<String> _resolveDownloadPath(String fileName) async {
+    final baseDir = await _getDownloadDirectory();
+    final safeName = _sanitizeFileName(fileName);
+    final folder = Directory(p.join(baseDir.path, 'ShoqDownloads'));
+    if (!folder.existsSync()) {
+      await folder.create(recursive: true);
+    }
+
+    final candidate = p.join(folder.path, safeName);
+    if (!File(candidate).existsSync()) {
+      return candidate;
+    }
+
+    final name = p.basenameWithoutExtension(safeName);
+    final ext = p.extension(safeName);
+    int i = 1;
+    while (true) {
+      final next = p.join(folder.path, '${name}_$i$ext');
+      if (!File(next).existsSync()) return next;
+      i++;
+    }
+  }
+
+  Future<Directory> _getDownloadDirectory() async {
+    if (Platform.isWindows) {
+      final dir = await getDownloadsDirectory();
+      if (dir != null) return dir;
+    }
+    if (Platform.isAndroid) {
+      final dir = await getExternalStorageDirectory();
+      if (dir != null) return dir;
+    }
+    return getApplicationDocumentsDirectory();
+  }
+
+  String _sanitizeFileName(String name) {
+    final trimmed = name.trim().isEmpty ? 'file' : name.trim();
+    return trimmed.replaceAll(RegExp(r'[\\\\/]+'), '_');
   }
 
   IconData _iconForMime(String mime) {
@@ -828,11 +1242,6 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     return '$value ${units[unit]}';
   }
 
-  Future<void> _openFile(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
 }
 
 class _LiveStatusWidget extends StatefulWidget {
@@ -882,4 +1291,131 @@ class _LiveStatusWidgetState extends State<_LiveStatusWidget> {
       },
     );
   }
+}
+
+class _ImageViewerScreen extends StatelessWidget {
+  final String filePath;
+  final String fileName;
+
+  const _ImageViewerScreen({
+    required this.filePath,
+    required this.fileName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final file = File(filePath);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(fileName, overflow: TextOverflow.ellipsis),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download),
+            onPressed: () => _saveCopy(context),
+            tooltip: 'Save copy',
+          ),
+        ],
+      ),
+      body: Center(
+        child: file.existsSync()
+            ? InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Image.file(file),
+              )
+            : const Text('Image not found'),
+      ),
+    );
+  }
+
+  Future<void> _saveCopy(BuildContext context) async {
+    try {
+      final targetDir = await _getDownloadDirectory();
+      final folder = Directory(p.join(targetDir.path, 'ShoqDownloads'));
+      if (!folder.existsSync()) {
+        await folder.create(recursive: true);
+      }
+
+      final safeName = fileName.trim().isEmpty ? 'image' : fileName.trim();
+      final sanitized = safeName.replaceAll(RegExp(r'[\\\\/]+'), '_');
+      final base = p.join(folder.path, sanitized);
+      final targetPath = await _uniquePath(base);
+
+      if (filePath != targetPath) {
+        await File(filePath).copy(targetPath);
+      }
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Saved to $targetPath')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Save failed: ${e.toString()}')),
+        );
+      }
+    }
+  }
+
+  Future<Directory> _getDownloadDirectory() async {
+    if (Platform.isWindows) {
+      final dir = await getDownloadsDirectory();
+      if (dir != null) return dir;
+    }
+    if (Platform.isAndroid) {
+      final dir = await getExternalStorageDirectory();
+      if (dir != null) return dir;
+    }
+    return getApplicationDocumentsDirectory();
+  }
+
+  Future<String> _uniquePath(String basePath) async {
+    if (!File(basePath).existsSync()) return basePath;
+    final dir = p.dirname(basePath);
+    final name = p.basenameWithoutExtension(basePath);
+    final ext = p.extension(basePath);
+    int i = 1;
+    while (true) {
+      final next = p.join(dir, '${name}_$i$ext');
+      if (!File(next).existsSync()) return next;
+      i++;
+    }
+  }
+}
+
+class _PendingUpload {
+  final String id;
+  final String fileName;
+  final int fileSize;
+  final String mimeType;
+  double progress;
+  UploadTask? task;
+  StreamSubscription<TaskSnapshot>? sub;
+
+  _PendingUpload({
+    required this.id,
+    required this.fileName,
+    required this.fileSize,
+    required this.mimeType,
+    required this.progress,
+  });
+}
+
+enum _DownloadStatus { downloading, done, failed }
+
+class _DownloadEntry {
+  _DownloadStatus status;
+  double progress;
+  String? localPath;
+  String? error;
+
+  _DownloadEntry({
+    required this.status,
+    required this.progress,
+    required this.localPath,
+    this.error,
+  });
 }

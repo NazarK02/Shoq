@@ -31,10 +31,13 @@ dependencies:
   image_picker: ^1.1.2
   file_picker: ^8.1.4
   cached_network_image: ^3.3.1 
+  mime: ^1.0.6
+  path_provider: ^2.1.4
+  open_filex: ^4.4.0
+  path: ^1.9.0
   sodium: ^3.4.6
   flutter_secure_storage: ^9.2.2
   sodium_libs: ^3.4.6
-  mime: ^1.0.2
 
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1

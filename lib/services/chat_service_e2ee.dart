@@ -4,6 +4,20 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'crypto_service.dart';
 
+class ChatFileUpload {
+  final String messageId;
+  final String storagePath;
+  final UploadTask task;
+  final String contentType;
+
+  ChatFileUpload({
+    required this.messageId,
+    required this.storagePath,
+    required this.task,
+    required this.contentType,
+  });
+}
+
 /// Chat service with end-to-end encryption
 /// 
 /// All messages are encrypted before being sent to Firestore.
@@ -166,9 +180,33 @@ class ChatService {
     required int fileSize,
     String? mimeType,
   }) async {
-    final currentUser = _auth.currentUser;
-    if (currentUser == null) throw Exception('User not logged in');
+    final upload = startFileUpload(
+      conversationId: conversationId,
+      filePath: filePath,
+      fileName: fileName,
+      mimeType: mimeType,
+    );
 
+    final snapshot = await upload.task;
+    final downloadUrl = await snapshot.ref.getDownloadURL();
+
+    await commitFileMessage(
+      conversationId: conversationId,
+      messageId: upload.messageId,
+      storagePath: upload.storagePath,
+      downloadUrl: downloadUrl,
+      fileName: fileName,
+      fileSize: fileSize,
+      mimeType: upload.contentType,
+    );
+  }
+
+  ChatFileUpload startFileUpload({
+    required String conversationId,
+    required String filePath,
+    required String fileName,
+    String? mimeType,
+  }) {
     if (filePath.trim().isEmpty) {
       throw Exception('Invalid file path');
     }
@@ -193,11 +231,35 @@ class ChatService {
         ? 'application/octet-stream'
         : mimeType.trim();
 
-    final uploadTask = await ref.putFile(
+    final task = ref.putFile(
       file,
       SettableMetadata(contentType: contentType),
     );
-    final downloadUrl = await uploadTask.ref.getDownloadURL();
+
+    return ChatFileUpload(
+      messageId: messageId,
+      storagePath: storagePath,
+      task: task,
+      contentType: contentType,
+    );
+  }
+
+  Future<void> commitFileMessage({
+    required String conversationId,
+    required String messageId,
+    required String storagePath,
+    required String downloadUrl,
+    required String fileName,
+    required int fileSize,
+    String? mimeType,
+  }) async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) throw Exception('User not logged in');
+
+    final displayName = fileName.trim().isEmpty ? 'file' : fileName.trim();
+    final contentType = (mimeType == null || mimeType.trim().isEmpty)
+        ? 'application/octet-stream'
+        : mimeType.trim();
 
     await _firestore
         .collection('conversations')
