@@ -83,6 +83,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   final PresenceService _presenceService = PresenceService();
   StreamSubscription<User?>? _authSubscription;
   bool _e2eeInitialized = false;
+  bool _reloadCheckScheduled = false;
 
   @override
   void initState() {
@@ -169,8 +170,29 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             (p) => p.providerId == 'google.com',
           );
 
-          if (user.emailVerified || isGoogleUser) {
-            return const HomeScreen();
+          if (isGoogleUser) return const HomeScreen();
+
+          // Don't block the UI waiting for `reload()` (some platforms
+          // may hang). Instead, show the EmailVerificationScreen immediately
+          // and run a background reload-with-timeout that will navigate to
+          // HomeScreen if verification is confirmed.
+          if (!_reloadCheckScheduled) {
+            _reloadCheckScheduled = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              try {
+                await user.reload().timeout(const Duration(seconds: 5));
+              } catch (_) {
+                // ignore timeout or errors
+              }
+
+              final refreshedUser = FirebaseAuth.instance.currentUser;
+              if (!mounted) return;
+              if (refreshedUser != null && refreshedUser.emailVerified) {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const HomeScreen()),
+                );
+              }
+            });
           }
 
           return const EmailVerificationScreen();
