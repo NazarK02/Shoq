@@ -3,7 +3,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'chat_screen_e2ee.dart';
+import 'user_profile_view_screen.dart';
 import '../services/notification_service.dart';
+import '../services/user_cache_service.dart';
 
 class ImprovedFriendsListScreen extends StatefulWidget {
   const ImprovedFriendsListScreen({super.key});
@@ -756,6 +758,21 @@ class _FriendListTile extends StatelessWidget {
     final photoURL = initialData['photoURL'];
 
     return ListTile(
+      onTap: () {
+        final seedData = Map<String, dynamic>.from(initialData);
+        if (seedData['photoUrl'] == null && seedData['photoURL'] != null) {
+          seedData['photoUrl'] = seedData['photoURL'];
+        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => UserProfileViewScreen(
+              userId: friendId,
+              userData: seedData,
+            ),
+          ),
+        );
+      },
       leading: CircleAvatar(
         radius: 20,
         backgroundImage: (photoURL != null && photoURL.isNotEmpty)
@@ -845,10 +862,16 @@ class _FriendRequestTile extends StatefulWidget {
 class _FriendRequestTileState extends State<_FriendRequestTile> {
   Map<String, dynamic>? _userData;
   bool _isLoading = true;
+  final UserCacheService _userCache = UserCacheService();
 
   @override
   void initState() {
     super.initState();
+    _userData = _userCache.getCachedUser(widget.senderId);
+    if (_userData != null) {
+      _isLoading = false;
+    }
+    _userCache.warmUsers([widget.senderId], listen: false);
     _loadUserData();
   }
 
@@ -861,6 +884,9 @@ class _FriendRequestTileState extends State<_FriendRequestTile> {
           _userData = data;
           _isLoading = false;
         });
+      }
+      if (data != null) {
+        _userCache.mergeUserData(widget.senderId, data);
       }
     } catch (e) {
       if (mounted) {

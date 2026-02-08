@@ -1,13 +1,14 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, mapEquals;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/user_service_e2ee.dart';
 import '../services/theme_service.dart';
 
@@ -26,6 +27,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   bool _isLoading = false;
   bool _isUploading = false;
+  bool _isFetchingProfile = false;
   Map<String, dynamic>? _userData;
 
   @override
@@ -60,19 +62,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _loadUserData() async {
     final user = _auth.currentUser;
     if (user == null) return;
+    if (_isFetchingProfile) return;
+    _isFetchingProfile = true;
 
     try {
-      final doc = await _firestore.collection('users').doc(user.uid).get();
-      if (doc.exists) {
-        setState(() {
-          _userData = doc.data();
-        });
+      final cachedDoc = await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .get(const GetOptions(source: Source.cache));
+      final hasCache = cachedDoc.exists;
+      if (hasCache) {
+        _applyUserData(cachedDoc.data());
+      }
+
+      if (!Platform.isWindows || !hasCache) {
+        final doc = await _firestore.collection('users').doc(user.uid).get();
+        if (doc.exists) {
+          _applyUserData(doc.data());
+        }
       }
     } catch (e) {
       print('Error loading user data: $e');
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
+      }
+      _isFetchingProfile = false;
+    }
+  }
+
+  void _applyUserData(Map<String, dynamic>? data) {
+    if (data == null) return;
+    final merged = {
+      ..._userData ?? {},
+      ...data,
+    };
+
+    if (!mapEquals(_userData, merged)) {
+      if (mounted) {
+        setState(() {
+          _userData = merged;
+        });
+      } else {
+        _userData = merged;
       }
     }
   }
@@ -82,6 +114,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (user == null) return;
 
     try {
+      await user.getIdToken(true);
+      await user.reload();
       final XFile? image = await _picker.pickImage(
         source: source,
         maxWidth: 512,
@@ -95,7 +129,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       // Upload to Firebase Storage
       final ref = _storage.ref().child('profile_pictures/${user.uid}');
-      final uploadTask = await ref.putFile(File(image.path));
+      final uploadTask = await ref.putFile(
+        File(image.path),
+        SettableMetadata(contentType: 'image/jpeg'),
+      );
       final downloadUrl = await uploadTask.ref.getDownloadURL();
 
       // Update Firestore
@@ -116,9 +153,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
     } catch (e) {
+      final message = e is FirebaseException && e.code == 'unauthorized'
+          ? 'Not authorized to upload. Please re-login or verify your email.'
+          : 'Error: ${e.toString()}';
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
+          SnackBar(content: Text(message)),
         );
       }
     } finally {
@@ -200,6 +240,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (user == null) return;
 
     try {
+      await user.getIdToken(true);
+      await user.reload();
       final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: false,
@@ -217,9 +259,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       
       UploadTask uploadTask;
       if (file.path != null) {
-        uploadTask = ref.putFile(File(file.path!));
+        uploadTask = ref.putFile(
+          File(file.path!),
+          SettableMetadata(contentType: 'image/*'),
+        );
       } else if (file.bytes != null) {
-        uploadTask = ref.putData(file.bytes!);
+        uploadTask = ref.putData(
+          file.bytes!,
+          SettableMetadata(contentType: 'image/*'),
+        );
       } else {
         throw Exception('Selected file has no data');
       }
@@ -245,9 +293,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
     } catch (e) {
+      final message = e is FirebaseException && e.code == 'unauthorized'
+          ? 'Not authorized to upload. Please re-login or verify your email.'
+          : 'Error: ${e.toString()}';
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
+          SnackBar(content: Text(message)),
         );
       }
     } finally {
@@ -387,7 +438,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             labelText: 'Bio',
             hintText: 'Tell something about you',
           ),
-          maxLength: 100,
+          maxLength: 200,
           autofocus: true,
         ),
         actions: [
@@ -431,79 +482,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(newBio.isEmpty ? 'Bio removed' : 'Bio updated!'),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
-      }
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  void _editWebsite() {
-    final controller = TextEditingController(
-      text: _userData?['website'] ?? '',
-    );
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit Website'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'Website',
-            hintText: 'https://example.com',
-          ),
-          keyboardType: TextInputType.url,
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () async {
-              final newWebsite = controller.text.trim();
-              Navigator.pop(context);
-              await _updateWebsite(newWebsite);
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _updateWebsite(String newWebsite) async {
-    final user = _auth.currentUser;
-    if (user == null) return;
-
-    try {
-      setState(() => _isLoading = true);
-
-      if (newWebsite.isEmpty) {
-        await _firestore.collection('users').doc(user.uid).update({
-          'website': FieldValue.delete(),
-        });
-      } else {
-        await _firestore.collection('users').doc(user.uid).update({
-          'website': newWebsite,
-        });
-      }
-
-      await _loadUserData();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(newWebsite.isEmpty ? 'Website removed' : 'Website updated!'),
           ),
         );
       }
@@ -591,6 +569,376 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  List<Map<String, String>> _getSocialLinks() {
+    final raw = _userData?['socialLinks'];
+    if (raw is! List) return [];
+
+    final result = <Map<String, String>>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item as Map);
+      final platform = map['platform']?.toString() ?? '';
+      final url = map['url']?.toString() ?? '';
+      if (platform.trim().isEmpty && url.trim().isEmpty) continue;
+      result.add({
+        'platform': platform.trim(),
+        'url': url.trim(),
+      });
+    }
+    if (result.isEmpty) {
+      final legacyWebsite = _userData?['website']?.toString() ?? '';
+      if (legacyWebsite.trim().isNotEmpty) {
+        result.add({
+          'platform': 'Website',
+          'url': legacyWebsite.trim(),
+        });
+      }
+    }
+    return result;
+  }
+
+  void _editSocialLinks() {
+    final links = _getSocialLinks();
+    if (links.isEmpty) {
+      links.add({'platform': '', 'url': ''});
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Other Social Media'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (int i = 0; i < links.length; i++) ...[
+                    TextFormField(
+                      initialValue: links[i]['platform'],
+                      decoration: const InputDecoration(
+                        labelText: 'Platform',
+                        hintText: 'YouTube, Steam, Facebook',
+                      ),
+                      onChanged: (value) {
+                        links[i]['platform'] = value;
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: links[i]['url'],
+                      decoration: const InputDecoration(
+                        labelText: 'Link or handle',
+                        hintText: 'https://... or @username',
+                      ),
+                      keyboardType: TextInputType.url,
+                      onChanged: (value) {
+                        links[i]['url'] = value;
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: IconButton(
+                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                        onPressed: () {
+                          setDialogState(() {
+                            if (links.length > 1) {
+                              links.removeAt(i);
+                            } else {
+                              links[0] = {'platform': '', 'url': ''};
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                    if (i != links.length - 1) const Divider(height: 24),
+                  ],
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: links.length >= 5
+                          ? null
+                          : () {
+                              setDialogState(() {
+                                links.add({'platform': '', 'url': ''});
+                              });
+                            },
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add social link'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                final cleaned = links
+                    .map((e) => {
+                          'platform': (e['platform'] ?? '').trim(),
+                          'url': (e['url'] ?? '').trim(),
+                        })
+                    .where((e) => e['platform']!.isNotEmpty || e['url']!.isNotEmpty)
+                    .toList();
+
+                Navigator.pop(context);
+                await _updateSocialLinks(cleaned);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _updateSocialLinks(List<Map<String, String>> links) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      setState(() => _isLoading = true);
+
+      if (links.isEmpty) {
+        await _firestore.collection('users').doc(user.uid).update({
+          'socialLinks': FieldValue.delete(),
+        });
+      } else {
+        await _firestore.collection('users').doc(user.uid).update({
+          'socialLinks': links,
+        });
+      }
+
+      await _loadUserData();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Social media updated')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: ${e.toString()}')),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  IconData _iconForPlatform(String platform) {
+    final p = platform.toLowerCase();
+    if (p.contains('youtube')) return Icons.play_circle_fill;
+    if (p.contains('steam')) return Icons.sports_esports;
+    if (p.contains('facebook')) return Icons.facebook;
+    if (p.contains('instagram')) return Icons.camera_alt;
+    if (p == 'x' || p.contains('twitter')) return Icons.alternate_email;
+    if (p.contains('tiktok')) return Icons.music_note;
+    if (p.contains('github')) return Icons.code;
+    if (p.contains('twitch')) return Icons.videogame_asset;
+    if (p.contains('discord')) return Icons.forum;
+    if (p.contains('linkedin')) return Icons.business;
+    return Icons.link;
+  }
+
+  String? _resolveSocialUrl(String platform, String input) {
+    final raw = input.trim();
+    if (raw.isEmpty) return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+
+    final handle = raw.startsWith('@') ? raw.substring(1) : raw;
+    final p = platform.toLowerCase();
+
+    if (p.contains('youtube')) return 'https://www.youtube.com/@$handle';
+    if (p.contains('steam')) return 'https://steamcommunity.com/id/$handle';
+    if (p.contains('facebook')) return 'https://www.facebook.com/$handle';
+    if (p.contains('instagram')) return 'https://www.instagram.com/$handle';
+    if (p.contains('tiktok')) return 'https://www.tiktok.com/@$handle';
+    if (p == 'x' || p.contains('twitter')) return 'https://x.com/$handle';
+    if (p.contains('twitch')) return 'https://www.twitch.tv/$handle';
+    if (p.contains('github')) return 'https://github.com/$handle';
+    if (p.contains('linkedin')) return 'https://www.linkedin.com/in/$handle';
+
+    if (raw.contains('.')) return 'https://$raw';
+    return null;
+  }
+
+  String? _faviconUrlForLink(String platform, String input) {
+    final resolved = _resolveSocialUrl(platform, input) ?? input;
+    final uri = Uri.tryParse(resolved);
+    var host = uri?.host ?? '';
+
+    if (host.isEmpty) {
+      final p = platform.toLowerCase();
+      if (p.contains('youtube')) host = 'www.youtube.com';
+      if (p.contains('steam')) host = 'steamcommunity.com';
+      if (p.contains('facebook')) host = 'www.facebook.com';
+      if (p.contains('instagram')) host = 'www.instagram.com';
+      if (p.contains('tiktok')) host = 'www.tiktok.com';
+      if (p == 'x' || p.contains('twitter')) host = 'x.com';
+      if (p.contains('twitch')) host = 'www.twitch.tv';
+      if (p.contains('github')) host = 'github.com';
+      if (p.contains('linkedin')) host = 'www.linkedin.com';
+    }
+
+    if (host.isEmpty) return null;
+    return 'https://www.google.com/s2/favicons?domain=$host&sz=64';
+  }
+
+  Widget _buildSocialIcon(Map<String, String> link) {
+    final platform = link['platform']?.trim() ?? '';
+    final url = link['url']?.trim() ?? '';
+    final faviconUrl = _faviconUrlForLink(platform, url);
+
+    if (faviconUrl == null) {
+      return Icon(_iconForPlatform(platform));
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Image.network(
+        faviconUrl,
+        width: 24,
+        height: 24,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Icon(_iconForPlatform(platform)),
+      ),
+    );
+  }
+
+  Future<void> _openSocialLink(Map<String, String> link) async {
+    final platform = link['platform'] ?? '';
+    final url = link['url'] ?? '';
+    final resolved = _resolveSocialUrl(platform, url) ?? url;
+    if (resolved.trim().isEmpty) return;
+
+    final uri = Uri.tryParse(resolved);
+    if (uri == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid link')),
+        );
+      }
+      return;
+    }
+
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open link')),
+      );
+    }
+  }
+
+  Widget _buildSocialLinkTile(Map<String, String> link) {
+    final platform = link['platform']?.trim() ?? '';
+    final url = link['url']?.trim() ?? '';
+    final title = platform.isEmpty ? 'Link' : platform;
+
+    return ListTile(
+      leading: _buildSocialIcon(link),
+      title: Text(title),
+      subtitle: Text(url.isEmpty ? 'No link' : url),
+      trailing: url.isEmpty ? null : const Icon(Icons.open_in_new, size: 16),
+      onTap: url.isEmpty ? null : () => _openSocialLink(link),
+    );
+  }
+
+  List<Widget> _buildSocialLinksSection(List<Map<String, String>> links) {
+    final tiles = <Widget>[
+      ListTile(
+        leading: const Icon(Icons.link),
+        title: const Text('Other Social Media'),
+        subtitle: Text(
+          links.isEmpty ? 'Not set' : 'Tap a link to open',
+        ),
+        trailing: IconButton(
+          icon: const Icon(Icons.edit),
+          onPressed: _isLoading ? null : _editSocialLinks,
+        ),
+      ),
+    ];
+
+    for (final link in links) {
+      tiles.add(const Divider(height: 1));
+      tiles.add(_buildSocialLinkTile(link));
+    }
+
+    return tiles;
+  }
+
+  Widget _buildAvatar(String? photoUrl, double radius) {
+    final placeholder = Container(
+      width: radius * 2,
+      height: radius * 2,
+      color: Colors.grey[300],
+      child: Icon(
+        Icons.person,
+        size: radius,
+        color: Colors.grey[600],
+      ),
+    );
+
+    if (photoUrl == null || photoUrl.isEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: Colors.grey[300],
+        child: Icon(
+          Icons.person,
+          size: radius,
+          color: Colors.grey[600],
+        ),
+      );
+    }
+
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheSize = (radius * 2 * dpr).round().clamp(64, 512);
+
+    return ClipOval(
+      child: Image.network(
+        photoUrl,
+        width: radius * 2,
+        height: radius * 2,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.low,
+        cacheWidth: cacheSize,
+        cacheHeight: cacheSize,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return placeholder;
+        },
+        errorBuilder: (_, __, ___) => placeholder,
+      ),
+    );
+  }
+
+  String? _pickPhotoUrl() {
+    final candidates = [
+      _userData?['photoUrl'],
+      _userData?['photoURL'],
+      _auth.currentUser?.photoURL,
+    ];
+
+    for (final value in candidates) {
+      final text = value?.toString().trim() ?? '';
+      if (text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
   String _getBio() {
     final bio = _userData?['bio'] as String?;
     if (bio != null && bio.trim().isNotEmpty) return bio.trim();
@@ -609,13 +957,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final user = _auth.currentUser;
     final themeService = Provider.of<ThemeService>(context);
     
-    final photoUrl = _userData?['photoUrl'];
+    final photoUrl = _pickPhotoUrl();
     final displayName = _userData?['displayName'] ?? user?.displayName ?? 'User';
     final email = user?.email ?? '';
     final bio = _getBio();
-    final website = _userData?['website'] ?? '';
     final location = _userData?['location'] ?? '';
     final emailVerified = user?.emailVerified ?? false;
+    final socialLinks = _getSocialLinks();
 
     return Scaffold(
       appBar: AppBar(
@@ -647,20 +995,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             width: 3,
                           ),
                         ),
-                        child: CircleAvatar(
-                          radius: 70,
-                          backgroundColor: Colors.grey[300],
-                          backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
-                              ? CachedNetworkImageProvider(photoUrl)
-                              : null,
-                          child: (photoUrl == null || photoUrl.isEmpty)
-                              ? Icon(
-                                  Icons.person,
-                                  size: 70,
-                                  color: Colors.grey[600],
-                                )
-                              : null,
-                        ),
+                        child: _buildAvatar(photoUrl, 70),
                       ),
                       if (_isUploading)
                         Positioned.fill(
@@ -758,15 +1093,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                       const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.link),
-                        title: const Text('Website'),
-                        subtitle: Text(website.isEmpty ? 'Not set' : website),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.edit),
-                          onPressed: _isLoading ? null : _editWebsite,
-                        ),
-                      ),
+                      ..._buildSocialLinksSection(socialLinks),
                       const Divider(height: 1),
                       ListTile(
                         leading: const Icon(Icons.place_outlined),

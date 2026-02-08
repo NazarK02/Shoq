@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/presence_service.dart';
+import '../services/user_cache_service.dart';
 
 class UserProfileViewScreen extends StatefulWidget {
   final String userId;
@@ -23,6 +24,7 @@ class UserProfileViewScreen extends StatefulWidget {
 class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final UserCacheService _userCache = UserCacheService();
   Map<String, dynamic>? _userData;
   bool _isOnline = false;
   DateTime? _lastSeen;
@@ -47,7 +49,8 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   @override
   void initState() {
     super.initState();
-    _userData = widget.userData;
+    _userData = widget.userData ?? _userCache.getCachedUser(widget.userId);
+    _userCache.warmUsers([widget.userId], listen: false);
     if (_userData == null) {
       _loadUserData();
     }
@@ -62,6 +65,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         setState(() {
           _userData = doc.data();
         });
+        _userCache.mergeUserData(widget.userId, doc.data()!);
       }
     } catch (e) {
       print('Error loading user data: $e');
@@ -363,13 +367,13 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final photoUrl = _userData?['photoUrl'];
-    final displayName = _userData?['displayName'] ?? 'User';
-    final email = _userData?['email'] ?? '';
-    final bio = _getBio();
-    final website = _userData?['website'] ?? '';
-    final location = _userData?['location'] ?? '';
-    final joinDate = _userData?['createdAt'] as Timestamp?;
+    final photoUrl = _pickPhotoUrl();
+  final displayName = _userData?['displayName'] ?? 'User';
+  final email = _userData?['email'] ?? '';
+  final bio = _getBio();
+  final location = _userData?['location'] ?? '';
+  final joinDate = _userData?['createdAt'] as Timestamp?;
+  final socialLinks = _getSocialLinks();
 
     return Scaffold(
       appBar: AppBar(
@@ -438,20 +442,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
                       width: 3,
                     ),
                   ),
-                  child: CircleAvatar(
-                      radius: 70,
-                      backgroundColor: Colors.grey[300],
-                      backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
-                          ? CachedNetworkImageProvider(photoUrl)
-                          : null,
-                      child: (photoUrl == null || photoUrl.isEmpty)
-                          ? Icon(
-                              Icons.person,
-                              size: 70,
-                              color: Colors.grey[600],
-                            )
-                          : null,
-                    ),
+                  child: _buildAvatar(photoUrl, 70),
                 ),
                 if (_isOnline)
                   Positioned(
@@ -575,14 +566,6 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
                   title: const Text('Email'),
                   subtitle: Text(email),
                 ),
-                if (website.isNotEmpty) ...[
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.link),
-                    title: const Text('Website'),
-                    subtitle: Text(website),
-                  ),
-                ],
                 if (location.isNotEmpty) ...[
                   const Divider(height: 1),
                   ListTile(
@@ -590,6 +573,10 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
                     title: const Text('Location'),
                     subtitle: Text(location),
                   ),
+                ],
+                if (socialLinks.isNotEmpty) ...[
+                  const Divider(height: 1),
+                  ..._buildSocialLinksSection(socialLinks),
                 ],
                 if (joinDate != null) ...[
                   const Divider(height: 1),
@@ -687,5 +674,233 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         ],
       ),
     );
+  }
+
+  List<Map<String, String>> _getSocialLinks() {
+    final raw = _userData?['socialLinks'];
+    final result = <Map<String, String>>[];
+
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item as Map);
+        final platform = map['platform']?.toString() ?? '';
+        final url = map['url']?.toString() ?? '';
+        if (platform.trim().isEmpty && url.trim().isEmpty) continue;
+        result.add({
+          'platform': platform.trim(),
+          'url': url.trim(),
+        });
+      }
+    }
+
+    if (result.isEmpty) {
+      final legacyWebsite = _userData?['website']?.toString() ?? '';
+      if (legacyWebsite.trim().isNotEmpty) {
+        result.add({
+          'platform': 'Website',
+          'url': legacyWebsite.trim(),
+        });
+      }
+    }
+
+    return result;
+  }
+
+  IconData _iconForPlatform(String platform) {
+    final p = platform.toLowerCase();
+    if (p.contains('youtube')) return Icons.play_circle_fill;
+    if (p.contains('steam')) return Icons.sports_esports;
+    if (p.contains('facebook')) return Icons.facebook;
+    if (p.contains('instagram')) return Icons.camera_alt;
+    if (p == 'x' || p.contains('twitter')) return Icons.alternate_email;
+    if (p.contains('tiktok')) return Icons.music_note;
+    if (p.contains('github')) return Icons.code;
+    if (p.contains('twitch')) return Icons.videogame_asset;
+    if (p.contains('discord')) return Icons.forum;
+    if (p.contains('linkedin')) return Icons.business;
+    return Icons.link;
+  }
+
+  String? _faviconUrlForLink(String platform, String input) {
+    final resolved = _resolveSocialUrl(platform, input) ?? input;
+    final uri = Uri.tryParse(resolved);
+    var host = uri?.host ?? '';
+
+    if (host.isEmpty) {
+      final p = platform.toLowerCase();
+      if (p.contains('youtube')) host = 'www.youtube.com';
+      if (p.contains('steam')) host = 'steamcommunity.com';
+      if (p.contains('facebook')) host = 'www.facebook.com';
+      if (p.contains('instagram')) host = 'www.instagram.com';
+      if (p.contains('tiktok')) host = 'www.tiktok.com';
+      if (p == 'x' || p.contains('twitter')) host = 'x.com';
+      if (p.contains('twitch')) host = 'www.twitch.tv';
+      if (p.contains('github')) host = 'github.com';
+      if (p.contains('linkedin')) host = 'www.linkedin.com';
+    }
+
+    if (host.isEmpty) return null;
+    return 'https://www.google.com/s2/favicons?domain=$host&sz=64';
+  }
+
+  String? _resolveSocialUrl(String platform, String input) {
+    final raw = input.trim();
+    if (raw.isEmpty) return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+
+    final handle = raw.startsWith('@') ? raw.substring(1) : raw;
+    final p = platform.toLowerCase();
+
+    if (p.contains('youtube')) return 'https://www.youtube.com/@$handle';
+    if (p.contains('steam')) return 'https://steamcommunity.com/id/$handle';
+    if (p.contains('facebook')) return 'https://www.facebook.com/$handle';
+    if (p.contains('instagram')) return 'https://www.instagram.com/$handle';
+    if (p.contains('tiktok')) return 'https://www.tiktok.com/@$handle';
+    if (p == 'x' || p.contains('twitter')) return 'https://x.com/$handle';
+    if (p.contains('twitch')) return 'https://www.twitch.tv/$handle';
+    if (p.contains('github')) return 'https://github.com/$handle';
+    if (p.contains('linkedin')) return 'https://www.linkedin.com/in/$handle';
+
+    if (raw.contains('.')) return 'https://$raw';
+    return null;
+  }
+
+  Widget _buildSocialIcon(Map<String, String> link) {
+    final platform = link['platform']?.trim() ?? '';
+    final url = link['url']?.trim() ?? '';
+    final faviconUrl = _faviconUrlForLink(platform, url);
+
+    if (faviconUrl == null) {
+      return Icon(_iconForPlatform(platform));
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Image.network(
+        faviconUrl,
+        width: 24,
+        height: 24,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Icon(_iconForPlatform(platform)),
+      ),
+    );
+  }
+
+  Future<void> _openSocialLink(Map<String, String> link) async {
+    final platform = link['platform'] ?? '';
+    final url = link['url'] ?? '';
+    final resolved = _resolveSocialUrl(platform, url) ?? url;
+    if (resolved.trim().isEmpty) return;
+
+    final uri = Uri.tryParse(resolved);
+    if (uri == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid link')),
+        );
+      }
+      return;
+    }
+
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open link')),
+      );
+    }
+  }
+
+  Widget _buildSocialLinkTile(Map<String, String> link) {
+    final platform = link['platform']?.trim() ?? '';
+    final url = link['url']?.trim() ?? '';
+    final title = platform.isEmpty ? 'Link' : platform;
+
+    return ListTile(
+      leading: _buildSocialIcon(link),
+      title: Text(title),
+      subtitle: Text(url.isEmpty ? 'No link' : url),
+      trailing: url.isEmpty ? null : const Icon(Icons.open_in_new, size: 16),
+      onTap: url.isEmpty ? null : () => _openSocialLink(link),
+    );
+  }
+
+  List<Widget> _buildSocialLinksSection(List<Map<String, String>> links) {
+    final tiles = <Widget>[
+      const ListTile(
+        leading: Icon(Icons.link),
+        title: Text('Other Social Media'),
+        subtitle: Text('Tap a link to open'),
+      ),
+    ];
+
+    for (final link in links) {
+      tiles.add(const Divider(height: 1));
+      tiles.add(_buildSocialLinkTile(link));
+    }
+
+    return tiles;
+  }
+
+  Widget _buildAvatar(String? photoUrl, double radius) {
+    final placeholder = Container(
+      width: radius * 2,
+      height: radius * 2,
+      color: Colors.grey[300],
+      child: Icon(
+        Icons.person,
+        size: radius,
+        color: Colors.grey[600],
+      ),
+    );
+
+    if (photoUrl == null || photoUrl.isEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: Colors.grey[300],
+        child: Icon(
+          Icons.person,
+          size: radius,
+          color: Colors.grey[600],
+        ),
+      );
+    }
+
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheSize = (radius * 2 * dpr).round().clamp(64, 512);
+
+    return ClipOval(
+      child: Image.network(
+        photoUrl,
+        width: radius * 2,
+        height: radius * 2,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.low,
+        cacheWidth: cacheSize,
+        cacheHeight: cacheSize,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return placeholder;
+        },
+        errorBuilder: (_, __, ___) => placeholder,
+      ),
+    );
+  }
+
+  String? _pickPhotoUrl() {
+    final candidates = [
+      _userData?['photoUrl'],
+      _userData?['photoURL'],
+    ];
+
+    for (final value in candidates) {
+      final text = value?.toString().trim() ?? '';
+      if (text.isNotEmpty) return text;
+    }
+    return null;
   }
 }

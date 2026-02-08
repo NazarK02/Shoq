@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import '../services/chat_service_e2ee.dart';
+import '../services/user_cache_service.dart';
 import 'user_profile_view_screen.dart';
 import 'dart:async';
 
@@ -29,6 +30,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final ChatService _chatService = ChatService();
   final NotificationService _notificationService = NotificationService();
+  final UserCacheService _userCache = UserCacheService();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   
@@ -43,6 +45,8 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     
     WidgetsBinding.instance.addObserver(this);
     _notificationService.setActiveChat(widget.recipientId);
+    _recipientData = _userCache.getCachedUser(widget.recipientId);
+    _userCache.warmUsers([widget.recipientId], listen: false);
 
     final currentUser = _auth.currentUser;
     if (currentUser != null) {
@@ -127,6 +131,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
         setState(() {
           _recipientData = snapshot.data()!;
         });
+        _userCache.mergeUserData(widget.recipientId, snapshot.data()!);
       }
     });
   }

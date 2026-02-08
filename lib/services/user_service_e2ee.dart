@@ -15,6 +15,7 @@ class UserService {
   final CryptoService _crypto = CryptoService();
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
   Map<String, dynamic>? _cachedUserData;
+  String? _lastProfileCacheJson;
 
   /// Automatically detect deviceId + deviceType
   Future<Map<String, String>> _getDeviceInfo() async {
@@ -161,8 +162,12 @@ class UserService {
       'bio': data['bio'] ?? '',
       'website': data['website'] ?? '',
       'location': data['location'] ?? '',
+      'socialLinks': data['socialLinks'] ?? [],
     };
-    await prefs.setString('profile_cache_$uid', jsonEncode(cache));
+    final jsonCache = jsonEncode(cache);
+    if (jsonCache == _lastProfileCacheJson) return;
+    _lastProfileCacheJson = jsonCache;
+    await prefs.setString('profile_cache_$uid', jsonCache);
   }
 
   /// Initialize E2EE for existing user (call AFTER user document is created)

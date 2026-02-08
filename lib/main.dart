@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
@@ -12,6 +13,9 @@ import 'services/notification_service.dart';
 import 'services/theme_service.dart';
 import 'services/presence_service.dart';
 import 'services/user_service_e2ee.dart';
+import 'services/app_prefetch_service.dart';
+import 'services/user_cache_service.dart';
+import 'services/conversation_cache_service.dart';
 
 /// Background notification handler
 @pragma('vm:entry-point')
@@ -29,6 +33,12 @@ Future<void> main() async {
   /// Firebase init
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  // Enable local persistence for faster startup and offline cache.
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: true,
+    cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
   
   /// FCM background messages
@@ -95,6 +105,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         await UserService().saveUserToFirestore(user: user);
         UserService().loadCachedProfile();
         UserService().startUserDocListener();
+        AppPrefetchService().warmUpForUser(user.uid);
         // Initialize E2EE for logged-in users (only once per session)
         if (!_e2eeInitialized) {
           await _initializeE2EEForUser();
@@ -105,6 +116,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       } else {
         _presenceService.stopPresenceTracking();
         UserService().stopUserDocListener();
+        UserCacheService().clear();
+        ConversationCacheService().clearAll();
         _e2eeInitialized = false;
       }
     });
@@ -171,6 +184,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           );
 
           if (isGoogleUser) return const HomeScreen();
+
+          if (user.emailVerified) return const HomeScreen();
 
           // Don't block the UI waiting for `reload()` (some platforms
           // may hang). Instead, show the EmailVerificationScreen immediately

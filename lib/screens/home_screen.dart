@@ -8,7 +8,8 @@ import 'profile_screen.dart';
 import 'settings_screen.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import '../services/user_cache_service.dart';
+import '../services/conversation_cache_service.dart';
 import 'chat_screen_e2ee.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -21,13 +22,20 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final UserCacheService _userCache = UserCacheService();
+  final ConversationCacheService _conversationCache = ConversationCacheService();
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   Timer? _rebuildTimer;
+  Timer? _cacheDebounce;
+  final Set<String> _warmedUserIds = {};
+  List<Map<String, dynamic>> _cachedConversations = [];
 
   @override
   void initState() {
     super.initState();
+    _userCache.addListener(_onUserCacheUpdated);
+    _loadCachedConversations();
     _rebuildTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
@@ -36,8 +44,26 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _rebuildTimer?.cancel();
+    _cacheDebounce?.cancel();
     _searchController.dispose();
+    _userCache.removeListener(_onUserCacheUpdated);
     super.dispose();
+  }
+
+  void _onUserCacheUpdated() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadCachedConversations() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    final cached = await _conversationCache.loadConversations(user.uid);
+    if (!mounted) return;
+    setState(() {
+      _cachedConversations = cached;
+    });
+    _warmUsersFromConversations(cached, user.uid);
   }
 
   @override
@@ -145,18 +171,10 @@ class _HomeScreenState extends State<HomeScreen> {
             decoration: BoxDecoration(
               color: Theme.of(context).primaryColor,
             ),
-            currentAccountPicture: CircleAvatar(
-              backgroundColor: Colors.white,
-              backgroundImage: (user?.photoURL != null && user!.photoURL!.isNotEmpty)
-                  ? CachedNetworkImageProvider(user.photoURL!)
-                  : null,
-              child: (user?.photoURL == null || user!.photoURL!.isEmpty)
-                  ? Icon(
-                      Icons.person,
-                      size: 40,
-                      color: Theme.of(context).primaryColor,
-                    )
-                  : null,
+            currentAccountPicture: _buildAvatar(
+              _normalizePhotoUrl(user?.photoURL),
+              40,
+              Theme.of(context).primaryColor,
             ),
             accountName: Text(
               user?.displayName ?? 'User',
@@ -240,7 +258,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return const Center(child: Text('Not logged in'));
     }
 
-    return StreamBuilder<QuerySnapshot>(
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _firestore
           .collection('conversations')
           .where('participants', arrayContains: user.uid)
@@ -250,8 +268,23 @@ class _HomeScreenState extends State<HomeScreen> {
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
-        // Don't show spinner - show empty state immediately
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+        final hasSnapshot = snapshot.hasData;
+        final hasLiveData = snapshot.hasData && snapshot.data!.docs.isNotEmpty;
+        final canUseCache = (!hasSnapshot ||
+                snapshot.connectionState == ConnectionState.waiting) &&
+            _cachedConversations.isNotEmpty;
+
+        if (hasLiveData) {
+          _scheduleConversationCacheWrite(
+            user.uid,
+            snapshot.data!.docs,
+          );
+        } else if (hasSnapshot && snapshot.data!.docs.isEmpty) {
+          _scheduleConversationCacheClear(user.uid);
+        }
+
+        if (!hasLiveData && !canUseCache) {
+          // Don't show spinner - show empty state immediately
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -293,14 +326,15 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
 
-        final allDocs = snapshot.data!.docs;
+        final items = hasLiveData
+            ? _conversationCache
+                .buildCacheItemsFromDocs(snapshot.data!.docs)
+            : _cachedConversations;
         
-        final sortedDocs = allDocs.toList()
+        final sortedDocs = items.toList()
           ..sort((a, b) {
-            final aData = a.data() as Map<String, dynamic>;
-            final bData = b.data() as Map<String, dynamic>;
-            final aTime = aData['lastMessageTime'] as Timestamp?;
-            final bTime = bData['lastMessageTime'] as Timestamp?;
+            final aTime = a['lastMessageTime'] as Timestamp?;
+            final bTime = b['lastMessageTime'] as Timestamp?;
             
             if (aTime == null && bTime == null) return 0;
             if (aTime == null) return 1;
@@ -309,104 +343,96 @@ class _HomeScreenState extends State<HomeScreen> {
             return bTime.compareTo(aTime);
           });
 
+        _warmUsersFromConversations(sortedDocs, user.uid);
+
         return ListView.builder(
           itemCount: sortedDocs.length,
           itemBuilder: (context, index) {
-            final chat = sortedDocs[index];
-            final chatData = chat.data() as Map<String, dynamic>;
+            final chatData = sortedDocs[index];
             final participants = List<String>.from(chatData['participants']);
             final otherUserId = participants.firstWhere(
               (id) => id != user.uid,
               orElse: () => '',
             );
+            if (otherUserId.isEmpty) {
+              return const SizedBox.shrink();
+            }
 
-            return StreamBuilder<DocumentSnapshot>(
-              stream: _firestore.collection('users').doc(otherUserId).snapshots(),
-              builder: (context, userSnapshot) {
-                if (!userSnapshot.hasData) {
-                  return const SizedBox.shrink(); // Don't show loading tile
-                }
+            final userData = _userCache.getCachedUser(otherUserId);
+            final displayName = userData?['displayName'] ?? 'User';
+            final photoURL = _normalizePhotoUrl(
+              userData?['photoUrl'] ?? userData?['photoURL'],
+            );
 
-                final userData = userSnapshot.data!.data() as Map<String, dynamic>?;
-                final displayName = userData?['displayName'] ?? 'User';
-                final photoURL = userData?['photoUrl'];
+            if (_searchQuery.isNotEmpty &&
+                !displayName.toLowerCase().contains(_searchQuery)) {
+              return const SizedBox.shrink();
+            }
 
-                if (_searchQuery.isNotEmpty &&
-                    !displayName.toLowerCase().contains(_searchQuery)) {
-                  return const SizedBox.shrink();
-                }
+            final isOnline = userData != null
+                ? PresenceService.isUserOnline(userData)
+                : false;
 
-                final isOnline = PresenceService.isUserOnline(userData ?? {});
-                
-                // Get last message - now shows actual preview instead of "encrypted"
-                String lastMessageText = 'Start chatting';
-                if (chatData['lastMessage'] != null && chatData['lastMessage'].toString().isNotEmpty) {
-                  lastMessageText = chatData['lastMessage'];
-                } else if (chatData['lastMessageTime'] != null) {
-                  lastMessageText = 'Sent a message';
-                }
+            // Get last message - now shows actual preview instead of "encrypted"
+            String lastMessageText = 'Start chatting';
+            if (chatData['lastMessage'] != null &&
+                chatData['lastMessage'].toString().isNotEmpty) {
+              lastMessageText = chatData['lastMessage'];
+            } else if (chatData['lastMessageTime'] != null) {
+              lastMessageText = 'Sent a message';
+            }
 
-                return ListTile(
-                  leading: Stack(
-                    children: [
-                      CircleAvatar(
-                        radius: 20,
-                        backgroundImage: (photoURL != null && photoURL.isNotEmpty)
-                            ? CachedNetworkImageProvider(photoURL)
-                            : null,
-                        child: (photoURL == null || photoURL.isEmpty)
-                            ? const Icon(Icons.person)
-                            : null,
-                      ),
-                      if (isOnline)
-                        Positioned(
-                          right: 0,
-                          bottom: 0,
-                          child: Container(
-                            width: 14,
-                            height: 14,
-                            decoration: BoxDecoration(
-                              color: Colors.green,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: Theme.of(context).scaffoldBackgroundColor,
-                                width: 2,
-                              ),
-                            ),
+            return ListTile(
+              leading: Stack(
+                children: [
+                  _buildAvatar(photoURL, 20, null),
+                  if (isOnline)
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Theme.of(context).scaffoldBackgroundColor,
+                            width: 2,
                           ),
                         ),
-                    ],
-                  ),
-                  title: Text(
-                    displayName,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Text(
-                    lastMessageText,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.grey),
-                  ),
-                  trailing: chatData['lastMessageTime'] != null
-                      ? Text(
-                          _formatTime(chatData['lastMessageTime'] as Timestamp),
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 12,
-                          ),
-                        )
-                      : null,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ChatScreenE2EE(
-                          recipientId: otherUserId,
-                          recipientName: displayName,
-                        ),
                       ),
-                    );
-                  },
+                    ),
+                ],
+              ),
+              title: Text(
+                displayName,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: Text(
+                lastMessageText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.grey),
+              ),
+              trailing: chatData['lastMessageTime'] != null
+                  ? Text(
+                      _formatTime(chatData['lastMessageTime'] as Timestamp),
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                        fontSize: 12,
+                      ),
+                    )
+                  : null,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ChatScreenE2EE(
+                      recipientId: otherUserId,
+                      recipientName: displayName,
+                    ),
+                  ),
                 );
               },
             );
@@ -414,6 +440,58 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     );
+  }
+
+  void _scheduleConversationCacheWrite(
+    String uid,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    final cacheItems = _conversationCache.buildCacheItemsFromDocs(docs);
+    if (cacheItems.isEmpty) return;
+
+    _cacheDebounce?.cancel();
+    _cacheDebounce = Timer(const Duration(milliseconds: 350), () async {
+      await _conversationCache.saveConversations(uid, cacheItems);
+      if (!mounted) return;
+      setState(() {
+        _cachedConversations = cacheItems;
+      });
+    });
+  }
+
+  void _scheduleConversationCacheClear(String uid) {
+    _cacheDebounce?.cancel();
+    _cacheDebounce = Timer(const Duration(milliseconds: 350), () async {
+      await _conversationCache.clearForUser(uid);
+      if (!mounted) return;
+      setState(() {
+        _cachedConversations = [];
+      });
+    });
+  }
+
+  void _warmUsersFromConversations(
+    List<Map<String, dynamic>> conversations,
+    String currentUserId,
+  ) {
+    if (conversations.isEmpty) return;
+
+    final otherUserIds = <String>{};
+    for (final data in conversations) {
+      final participants = data['participants'];
+      if (participants is! List) continue;
+      for (final p in participants) {
+        if (p is String && p.isNotEmpty && p != currentUserId) {
+          otherUserIds.add(p);
+        }
+      }
+    }
+
+    final newIds = otherUserIds.difference(_warmedUserIds);
+    if (newIds.isNotEmpty) {
+      _warmedUserIds.addAll(newIds);
+      _userCache.warmUsers(newIds, listen: false);
+    }
   }
 
   String _formatTime(Timestamp timestamp) {
@@ -430,5 +508,58 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       return '${date.day}/${date.month}/${date.year}';
     }
+  }
+
+  String? _normalizePhotoUrl(dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty || text.toLowerCase() == 'null') return null;
+    final uri = Uri.tryParse(text);
+    if (uri == null || !uri.hasScheme) return null;
+    return text;
+  }
+
+  Widget _buildAvatar(String? photoUrl, double radius, Color? iconColor) {
+    final placeholder = Container(
+      width: radius * 2,
+      height: radius * 2,
+      color: Colors.grey[300],
+      child: Icon(
+        Icons.person,
+        size: radius,
+        color: iconColor ?? Colors.grey[600],
+      ),
+    );
+
+    if (photoUrl == null || photoUrl.isEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: Colors.grey[300],
+        child: Icon(
+          Icons.person,
+          size: radius,
+          color: iconColor ?? Colors.grey[600],
+        ),
+      );
+    }
+
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheSize = (radius * 2 * dpr).round().clamp(32, 256);
+
+    return ClipOval(
+      child: Image.network(
+        photoUrl,
+        width: radius * 2,
+        height: radius * 2,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.low,
+        cacheWidth: cacheSize,
+        cacheHeight: cacheSize,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return placeholder;
+        },
+        errorBuilder: (_, __, ___) => placeholder,
+      ),
+    );
   }
 }
