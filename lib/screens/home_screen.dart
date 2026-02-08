@@ -28,8 +28,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Rebuild every 30s so isUserOnline() (which checks current time vs
-    // lastHeartbeat) is re-evaluated even when no new Firestore snapshot fires.
     _rebuildTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
@@ -75,7 +73,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         elevation: 1,
         actions: [
-          // Friend requests notification badge
           _buildFriendRequestsBadge(),
         ],
       ),
@@ -84,7 +81,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Friend requests badge in app bar
   Widget _buildFriendRequestsBadge() {
     final user = _auth.currentUser;
     if (user == null) return const SizedBox.shrink();
@@ -250,15 +246,11 @@ class _HomeScreenState extends State<HomeScreen> {
           .where('participants', arrayContains: user.uid)
           .snapshots(),
       builder: (context, snapshot) {
-        // Only show spinner during very first connection
-        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
+        // Don't show spinner - show empty state immediately
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return Center(
             child: Column(
@@ -332,10 +324,7 @@ class _HomeScreenState extends State<HomeScreen> {
               stream: _firestore.collection('users').doc(otherUserId).snapshots(),
               builder: (context, userSnapshot) {
                 if (!userSnapshot.hasData) {
-                  return const ListTile(
-                    leading: CircleAvatar(child: Icon(Icons.person)),
-                    title: Text('Loading...'),
-                  );
+                  return const SizedBox.shrink(); // Don't show loading tile
                 }
 
                 final userData = userSnapshot.data!.data() as Map<String, dynamic>?;
@@ -348,6 +337,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 }
 
                 final isOnline = PresenceService.isUserOnline(userData ?? {});
+                
+                // Get last message - now shows actual preview instead of "encrypted"
+                String lastMessageText = 'Start chatting';
+                if (chatData['lastMessage'] != null && chatData['lastMessage'].toString().isNotEmpty) {
+                  lastMessageText = chatData['lastMessage'];
+                } else if (chatData['lastMessageTime'] != null) {
+                  lastMessageText = 'Sent a message';
+                }
 
                 return ListTile(
                   leading: Stack(
@@ -355,7 +352,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       CircleAvatar(
                         radius: 20,
                         backgroundImage: photoURL != null ? CachedNetworkImageProvider(photoURL) : null,
-                        child: photoURL == null ? Icon(Icons.person) : null,
+                        child: photoURL == null ? const Icon(Icons.person) : null,
                       ),
                       if (isOnline)
                         Positioned(
@@ -381,9 +378,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                   subtitle: Text(
-                    chatData['lastMessage'] ?? 'Start chatting',
+                    lastMessageText,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.grey),
                   ),
                   trailing: chatData['lastMessageTime'] != null
                       ? Text(

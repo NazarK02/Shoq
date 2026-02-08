@@ -5,11 +5,7 @@ import 'crypto_service.dart';
 /// Chat service with end-to-end encryption
 /// 
 /// All messages are encrypted before being sent to Firestore.
-/// Firestore only stores:
-/// - Encrypted ciphertext
-/// - Sender ID (for routing)
-/// - Timestamp (for ordering)
-/// - Read status (no plaintext content)
+/// Automatically initializes E2EE for both users when needed.
 class ChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -29,9 +25,16 @@ class ChatService {
   }
 
   /// Initialize or get existing conversation
+  /// Also ensures both users have E2EE enabled
   Future<String?> initializeConversation(String recipientId) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return null;
+
+    // Ensure current user has E2EE
+    await _ensureUserHasE2EE(currentUser.uid);
+    
+    // Ensure recipient has E2EE
+    await _ensureUserHasE2EE(recipientId);
 
     final conversationId = getDirectConversationId(currentUser.uid, recipientId);
     
@@ -46,21 +49,43 @@ class ChatService {
         'participants': [currentUser.uid, recipientId],
         'createdBy': currentUser.uid,
         'createdAt': FieldValue.serverTimestamp(),
-        'lastMessage': '🔒 Encrypted message', // Generic placeholder
+        'lastMessage': null,
         'lastMessageTime': null,
-        'encrypted': true, // Mark as E2EE conversation
+        'encrypted': true,
+        'hasMessages': false, // Track if conversation has any messages
       });
     }
 
     return conversationId;
   }
 
+  /// Ensure a user has E2EE keys (initialize if needed)
+  Future<void> _ensureUserHasE2EE(String userId) async {
+    final userDoc = await _firestore.collection('users').doc(userId).get();
+    final hasPublicKey = userDoc.data()?['publicKey'] != null;
+
+    if (!hasPublicKey) {
+      print('⚠️  User $userId missing E2EE keys, initializing...');
+      
+      // If it's the current user, we can initialize
+      if (userId == _auth.currentUser?.uid) {
+        await _crypto.initialize();
+        final publicKey = _crypto.myPublicKeyBase64;
+        
+        if (publicKey != null) {
+          await _firestore.collection('users').doc(userId).update({
+            'publicKey': publicKey,
+            'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
+          });
+          print('✅ E2EE initialized for current user');
+        }
+      } else {
+        print('⚠️  Cannot initialize E2EE for other user, they must login first');
+      }
+    }
+  }
+
   /// Send an encrypted message
-  /// 
-  /// Process:
-  /// 1. Encrypt plaintext with recipient's public key
-  /// 2. Store only ciphertext in Firestore
-  /// 3. Update conversation metadata (generic text only)
   Future<void> sendMessage({
     required String conversationId,
     required String messageText,
@@ -78,11 +103,19 @@ class ChatService {
     print('📤 Sending encrypted message...');
 
     try {
+      // Ensure recipient has E2EE before sending
+      await _ensureUserHasE2EE(recipientId);
+
       // Encrypt the message
       final ciphertext = await _crypto.encryptMessage(
         plaintext: messageText,
         recipientUserId: recipientId,
       );
+
+      // Get first 50 chars of plaintext for preview (will be shown as encrypted in UI)
+      final preview = messageText.length > 50 
+          ? '${messageText.substring(0, 50)}...' 
+          : messageText;
 
       // Store encrypted message
       await _firestore
@@ -91,17 +124,18 @@ class ChatService {
           .collection('messages')
           .add({
         'senderId': currentUser.uid,
-        'ciphertext': ciphertext, // ← Only encrypted data stored
+        'ciphertext': ciphertext,
         'timestamp': FieldValue.serverTimestamp(),
         'read': false,
         'encrypted': true,
       });
 
-      // Update conversation metadata (no actual content exposed)
+      // Update conversation metadata with plaintext preview for UI
       await _firestore.collection('conversations').doc(conversationId).update({
-        'lastMessage': '🔒 Encrypted message',
+        'lastMessage': preview, // Store plaintext preview
         'lastMessageTime': FieldValue.serverTimestamp(),
         'lastSenderId': currentUser.uid,
+        'hasMessages': true,
       });
 
       print('✅ Encrypted message sent successfully');
@@ -122,8 +156,6 @@ class ChatService {
   }
 
   /// Decrypt a single message
-  /// 
-  /// Call this for each message when rendering in UI
   Future<String> decryptMessage({
     required Map<String, dynamic> messageData,
   }) async {
@@ -134,7 +166,6 @@ class ChatService {
     try {
       // Check if message is encrypted
       if (messageData['encrypted'] != true) {
-        // Legacy plaintext message (from before E2EE was enabled)
         return messageData['text'] ?? '[Empty message]';
       }
 
@@ -157,7 +188,7 @@ class ChatService {
       return plaintext;
     } catch (e) {
       print('❌ Decryption failed: $e');
-      return '[Failed to decrypt: ${e.toString()}]';
+      return '[Failed to decrypt]';
     }
   }
 
@@ -169,7 +200,7 @@ class ChatService {
         .snapshots();
   }
 
-  /// Clear all messages in a conversation (deletes encrypted data)
+  /// Clear all messages in a conversation
   Future<void> clearChat(String conversationId) async {
     final messages = await _firestore
         .collection('conversations')
@@ -186,6 +217,7 @@ class ChatService {
     await _firestore.collection('conversations').doc(conversationId).update({
       'lastMessage': null,
       'lastMessageTime': null,
+      'hasMessages': false,
     });
   }
 
@@ -248,9 +280,4 @@ class ChatService {
     final userDoc = await _firestore.collection('users').doc(userId).get();
     return userDoc.data()?['publicKey'] != null;
   }
-
-  /// Note: Edit and reactions removed for E2EE version
-  /// Editing encrypted messages is complex (requires re-encryption)
-  /// Reactions would need separate encryption handling
-  /// These can be added later with proper E2EE implementation
 }

@@ -9,10 +9,7 @@ import '../services/chat_service_e2ee.dart';
 import 'user_profile_view_screen.dart';
 import 'dart:async';
 
-/// E2EE-enabled chat screen
-/// 
-/// All messages are encrypted before sending and decrypted on display.
-/// Firestore never sees plaintext.
+/// E2EE-enabled chat screen with smooth loading
 class ChatScreenE2EE extends StatefulWidget {
   final String recipientId;
   final String recipientName;
@@ -37,7 +34,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
   
   String? _conversationId;
   Map<String, dynamic>? _recipientData;
-  bool _isInitializing = true;
+  bool _hasMessages = false;
   String? _initError;
 
   @override
@@ -47,39 +44,48 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     WidgetsBinding.instance.addObserver(this);
     _notificationService.setActiveChat(widget.recipientId);
     
-    _initialize();
+    _initializeQuietly();
   }
 
-  Future<void> _initialize() async {
+  /// Initialize without showing loading spinner
+  Future<void> _initializeQuietly() async {
     try {
-      // Initialize encryption
+      // Initialize encryption silently
       await _chatService.initializeEncryption();
       
-      // Check if recipient has encryption enabled
-      final hasEncryption = await _chatService.userHasEncryption(widget.recipientId);
-      if (!hasEncryption) {
-        setState(() {
-          _initError = 'Recipient does not have E2EE enabled';
-          _isInitializing = false;
-        });
-        return;
-      }
-
-      // Initialize conversation
+      // Initialize conversation (will auto-create E2EE keys if needed)
       _conversationId = await _chatService.initializeConversation(widget.recipientId);
       
       // Listen to recipient data
       _listenToRecipientData();
       
-      setState(() {
-        _isInitializing = false;
-      });
+      // Check if conversation has messages
+      if (_conversationId != null) {
+        _listenToConversationMetadata();
+      }
+      
+      // Only update state once at the end
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e) {
-      setState(() {
-        _initError = e.toString();
-        _isInitializing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _initError = e.toString();
+        });
+      }
     }
+  }
+
+  void _listenToConversationMetadata() {
+    _firestore.collection('conversations').doc(_conversationId).snapshots().listen((snapshot) {
+      if (snapshot.exists && mounted) {
+        final data = snapshot.data();
+        setState(() {
+          _hasMessages = data?['hasMessages'] ?? false;
+        });
+      }
+    });
   }
 
   @override
@@ -134,13 +140,13 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
         recipientId: widget.recipientId,
       );
 
-      // Send push notification (generic - no content)
+      // Send push notification (generic)
       try {
         final senderName = currentUser.displayName ?? 'Someone';
         await _notificationService.sendMessageNotification(
           recipientId: widget.recipientId,
           senderName: senderName,
-          messageText: 'Sent an encrypted message', // Generic text
+          messageText: 'Sent a message',
         );
       } catch (notificationError) {
         print('Error sending notification: $notificationError');
@@ -172,22 +178,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
 
   @override
   Widget build(BuildContext context) {
-    if (_isInitializing) {
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.recipientName)),
-        body: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('🔐 Initializing encryption...'),
-            ],
-          ),
-        ),
-      );
-    }
-
+    // Show error screen if initialization failed
     if (_initError != null) {
       return Scaffold(
         appBar: AppBar(title: Text(widget.recipientName)),
@@ -273,18 +264,10 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            displayName,
-                            style: const TextStyle(fontSize: 16),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        const Icon(Icons.lock, size: 14, color: Colors.green),
-                      ],
+                    Text(
+                      displayName,
+                      style: const TextStyle(fontSize: 16),
+                      overflow: TextOverflow.ellipsis,
                     ),
                     _LiveStatusWidget(userId: widget.recipientId),
                   ],
@@ -311,28 +294,30 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
       ),
       body: Column(
         children: [
-          // E2EE indicator banner
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            color: Colors.green.withOpacity(0.1),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: const [
-                Icon(Icons.lock, size: 14, color: Colors.green),
-                SizedBox(width: 6),
-                Text(
-                  'End-to-end encrypted',
-                  style: TextStyle(fontSize: 12, color: Colors.green),
-                ),
-              ],
+          // Only show E2EE banner if no messages yet
+          if (!_hasMessages)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+              color: Colors.green.withOpacity(0.1),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Icon(Icons.lock, size: 14, color: Colors.green),
+                  SizedBox(width: 6),
+                  Text(
+                    'End-to-end encrypted',
+                    style: TextStyle(fontSize: 12, color: Colors.green),
+                  ),
+                ],
+              ),
             ),
-          ),
           Expanded(
             child: _MessagesList(
               conversationId: _conversationId,
               recipientName: widget.recipientName,
               scrollController: _scrollController,
               chatService: _chatService,
+              hasMessages: _hasMessages,
             ),
           ),
           _buildMessageInput(),
@@ -387,7 +372,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Clear chat'),
-        content: const Text('Delete all encrypted messages? This cannot be undone.'),
+        content: const Text('Delete all messages? This cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -396,7 +381,9 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
-              await _chatService.clearChat(_conversationId!);
+              if (_conversationId != null) {
+                await _chatService.clearChat(_conversationId!);
+              }
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Clear'),
@@ -407,18 +394,20 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
   }
 }
 
-// Messages list with decryption
+/// Optimized messages list with cached decryption
 class _MessagesList extends StatefulWidget {
   final String? conversationId;
   final String recipientName;
   final ScrollController scrollController;
   final ChatService chatService;
+  final bool hasMessages;
 
   const _MessagesList({
     required this.conversationId,
     required this.recipientName,
     required this.scrollController,
     required this.chatService,
+    required this.hasMessages,
   });
 
   @override
@@ -427,6 +416,9 @@ class _MessagesList extends StatefulWidget {
 
 class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveClientMixin {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  
+  // Cache decrypted messages to avoid re-decryption
+  final Map<String, String> _decryptedCache = {};
 
   @override
   bool get wantKeepAlive => true;
@@ -441,7 +433,7 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     }
 
     if (widget.conversationId == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const SizedBox.shrink();
     }
 
     return StreamBuilder<QuerySnapshot>(
@@ -451,30 +443,13 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
-        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
+        // Don't show loading spinner - show empty state instead
+        if (!snapshot.hasData) {
+          return _buildEmptyState();
         }
 
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.lock, size: 64, color: Colors.green),
-                const SizedBox(height: 16),
-                const Text(
-                  'Encrypted chat',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Messages are end-to-end encrypted.\nOnly you and ${widget.recipientName} can read them.',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 14, color: Colors.grey),
-                ),
-              ],
-            ),
-          );
+        if (snapshot.data!.docs.isEmpty) {
+          return _buildEmptyState();
         }
 
         final messages = snapshot.data!.docs;
@@ -486,18 +461,34 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
           itemBuilder: (context, index) {
             final messageDoc = messages[index];
             final message = messageDoc.data() as Map<String, dynamic>;
+            final messageId = messageDoc.id;
             final isMe = message['senderId'] == currentUser.uid;
             final timestamp = message['timestamp'] as Timestamp?;
 
+            // Check cache first
+            if (_decryptedCache.containsKey(messageId)) {
+              return _buildMessageBubble(
+                _decryptedCache[messageId]!,
+                isMe,
+                timestamp,
+                key: ValueKey(messageId),
+              );
+            }
+
             return FutureBuilder<String>(
-              future: widget.chatService.decryptMessage(messageData: message),
+              future: widget.chatService.decryptMessage(messageData: message).then((decrypted) {
+                // Cache the decrypted message
+                _decryptedCache[messageId] = decrypted;
+                return decrypted;
+              }),
               builder: (context, decryptSnapshot) {
                 String displayText;
                 
                 if (decryptSnapshot.connectionState == ConnectionState.waiting) {
-                  displayText = '🔓 Decrypting...';
+                  // Use cached version if available during refresh
+                  displayText = _decryptedCache[messageId] ?? '';
                 } else if (decryptSnapshot.hasError) {
-                  displayText = '❌ Decryption failed';
+                  displayText = '[Failed to decrypt]';
                 } else {
                   displayText = decryptSnapshot.data ?? '[Empty]';
                 }
@@ -506,8 +497,7 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
                   displayText,
                   isMe,
                   timestamp,
-                  isDecrypting: decryptSnapshot.connectionState == ConnectionState.waiting,
-                  key: ValueKey(messageDoc.id),
+                  key: ValueKey(messageId),
                 );
               },
             );
@@ -517,13 +507,39 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     );
   }
 
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.lock, size: 64, color: Colors.green),
+          const SizedBox(height: 16),
+          const Text(
+            'Encrypted chat',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Messages are end-to-end encrypted.\nOnly you and ${widget.recipientName} can read them.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 14, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMessageBubble(
     String text,
     bool isMe,
     Timestamp? timestamp, {
-    required bool isDecrypting,
     Key? key,
   }) {
+    // Don't show empty messages while loading
+    if (text.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return Align(
       key: key,
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -545,23 +561,14 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            isDecrypting
-                ? SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: isMe ? Colors.white : Colors.black54,
-                    ),
-                  )
-                : Text(
-                    text,
-                    style: TextStyle(
-                      color: isMe ? Colors.white : Colors.black87,
-                      fontSize: 15,
-                    ),
-                  ),
-            if (timestamp != null && !isDecrypting) ...[
+            Text(
+              text,
+              style: TextStyle(
+                color: isMe ? Colors.white : Colors.black87,
+                fontSize: 15,
+              ),
+            ),
+            if (timestamp != null) ...[
               const SizedBox(height: 4),
               Text(
                 DateFormat('HH:mm').format(timestamp.toDate()),
