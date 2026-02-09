@@ -187,14 +187,12 @@ class ChatService {
       mimeType: mimeType,
     );
 
-    final snapshot = await upload.task;
-    final downloadUrl = await snapshot.ref.getDownloadURL();
+    await upload.task;
 
     await commitFileMessage(
       conversationId: conversationId,
       messageId: upload.messageId,
       storagePath: upload.storagePath,
-      downloadUrl: downloadUrl,
       fileName: fileName,
       fileSize: fileSize,
       mimeType: upload.contentType,
@@ -248,7 +246,7 @@ class ChatService {
     required String conversationId,
     required String messageId,
     required String storagePath,
-    required String downloadUrl,
+    String? downloadUrl,
     required String fileName,
     required int fileSize,
     String? mimeType,
@@ -261,12 +259,7 @@ class ChatService {
         ? 'application/octet-stream'
         : mimeType.trim();
 
-    await _firestore
-        .collection('conversations')
-        .doc(conversationId)
-        .collection('messages')
-        .doc(messageId)
-        .set({
+    final payload = <String, dynamic>{
       'senderId': currentUser.uid,
       'timestamp': FieldValue.serverTimestamp(),
       'clientTimestamp': Timestamp.now(),
@@ -276,9 +269,19 @@ class ChatService {
       'fileName': displayName,
       'fileSize': fileSize,
       'mimeType': contentType,
-      'fileUrl': downloadUrl,
       'storagePath': storagePath,
-    });
+    };
+
+    if (downloadUrl != null && downloadUrl.trim().isNotEmpty) {
+      payload['fileUrl'] = downloadUrl.trim();
+    }
+
+    await _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .doc(messageId)
+        .set(payload);
 
     await _firestore.collection('conversations').doc(conversationId).update({
       'lastMessage': 'File: $displayName',
