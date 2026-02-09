@@ -915,164 +915,209 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(8),
+        padding: isImage ? EdgeInsets.zero : const EdgeInsets.all(8),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
         decoration: BoxDecoration(
-          color: isMe ? Theme.of(context).primaryColor : Colors.grey[300],
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isMe ? 16 : 4),
-            bottomRight: Radius.circular(isMe ? 4 : 16),
+          color: isImage ? Colors.transparent : (isMe ? Theme.of(context).primaryColor : Colors.grey[300]),
+          borderRadius: BorderRadius.circular(isImage ? 12 : 16),
+        ),
+        child: isImage ? _buildImagePreview(
+          fileUrl: fileUrl,
+          fileName: fileName,
+          fileSize: fileSize,
+          localPath: localPath,
+          timestamp: timestamp,
+          isMe: isMe,
+        ) : _buildFileInfo(
+          fileName: fileName,
+          fileSize: fileSize,
+          mimeType: mimeType,
+          isDownloading: isDownloading,
+          isDownloaded: isDownloaded,
+          progress: progress,
+          timestamp: timestamp,
+          isMe: isMe,
+          onAction: () => _handleFileAction(
+            messageId: messageId,
+            url: fileUrl,
+            fileName: fileName,
+            mimeType: mimeType,
+            fileSize: fileSize,
+            isDownloaded: isDownloaded,
+            localPath: localPath,
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (isImage) ...[
-              // Image preview with click to view
-              GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ImageViewerScreen(
-                        imageUrl: fileUrl,
-                        localPath: localPath,
-                        fileName: fileName,
-                        fileSize: fileSize,
-                      ),
-                    ),
-                  );
-                },
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    constraints: const BoxConstraints(
-                      maxWidth: 250,
-                      maxHeight: 250,
-                    ),
-                    child: CachedNetworkImage(
-                      imageUrl: fileUrl,
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) => Container(
-                        height: 150,
-                        color: Colors.grey[800],
-                        child: const Center(
-                          child: CircularProgressIndicator(),
-                        ),
-                      ),
-                      errorWidget: (_, __, ___) => Container(
-                        height: 150,
-                        color: Colors.grey[800],
-                        child: const Center(
-                          child: Icon(Icons.broken_image, size: 48),
-                        ),
-                      ),
-                    ),
+      ),
+    );
+  }
+
+  Widget _buildImagePreview({
+    required String fileUrl,
+    required String fileName,
+    required int fileSize,
+    required String? localPath,
+    required Timestamp? timestamp,
+    required bool isMe,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ImageViewerScreen(
+              imageUrl: fileUrl,
+              localPath: localPath,
+              fileName: fileName,
+              fileSize: fileSize,
+            ),
+          ),
+        );
+      },
+      child: Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.75,
+                maxHeight: 400,
+              ),
+              child: CachedNetworkImage(
+                imageUrl: fileUrl,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => Container(
+                  height: 200,
+                  color: Colors.grey[800],
+                  child: const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                ),
+                errorWidget: (_, __, ___) => Container(
+                  height: 200,
+                  color: Colors.grey[800],
+                  child: const Center(
+                    child: Icon(Icons.broken_image, size: 48, color: Colors.white54),
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-            ],
-            
-            // File info row
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (!isImage)
-                  Icon(
-                    _iconForMime(mimeType),
-                    color: isMe ? Colors.white : Colors.black87,
-                  ),
-                if (!isImage) const SizedBox(width: 8),
-                Flexible(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        fileName,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: isMe ? Colors.white : Colors.black87,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _formatBytes(fileSize),
-                        style: TextStyle(
-                          color: isMe ? Colors.white70 : Colors.black54,
-                          fontSize: 12,
-                        ),
-                      ),
-                      if (isDownloading) ...[
-                        const SizedBox(height: 6),
-                        LinearProgressIndicator(
-                          value: progress,
-                          backgroundColor: isMe ? Colors.white24 : Colors.black12,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            isMe ? Colors.white : Colors.black54,
-                          ),
-                          minHeight: 3,
-                        ),
-                      ],
-                      if (timestamp != null && !isDownloading) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          DateFormat('HH:mm').format(timestamp.toDate()),
-                          style: TextStyle(
-                            color: isMe ? Colors.white70 : Colors.black54,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ],
+            ),
+          ),
+          // Timestamp overlay
+          if (timestamp != null)
+            Positioned(
+              bottom: 8,
+              right: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  DateFormat('HH:mm').format(timestamp.toDate()),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                if (!isImage && fileUrl.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: isDownloading
-                        ? SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              value: progress,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                isMe ? Colors.white : Colors.black54,
-                              ),
-                            ),
-                          )
-                        : Icon(
-                            isDownloaded ? Icons.open_in_new : Icons.download,
-                            size: 18,
-                            color: isMe ? Colors.white70 : Colors.black54,
-                          ),
-                    onPressed: isDownloading
-                        ? null
-                        : () => _handleFileAction(
-                              messageId: messageId,
-                              url: fileUrl,
-                              fileName: fileName,
-                              mimeType: mimeType,
-                              fileSize: fileSize,
-                              isDownloaded: isDownloaded,
-                              localPath: localPath,
-                            ),
-                    tooltip: isDownloaded ? 'Open' : 'Download',
-                  ),
-                ],
-              ],
+              ),
             ),
-          ],
-        ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildFileInfo({
+    required String fileName,
+    required int fileSize,
+    required String mimeType,
+    required bool isDownloading,
+    required bool isDownloaded,
+    required double progress,
+    required Timestamp? timestamp,
+    required bool isMe,
+    required VoidCallback onAction,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          _iconForMime(mimeType),
+          color: isMe ? Colors.white : Colors.black87,
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                fileName,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isMe ? Colors.white : Colors.black87,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _formatBytes(fileSize),
+                style: TextStyle(
+                  color: isMe ? Colors.white70 : Colors.black54,
+                  fontSize: 12,
+                ),
+              ),
+              if (isDownloading) ...[
+                const SizedBox(height: 6),
+                LinearProgressIndicator(
+                  value: progress,
+                  backgroundColor: isMe ? Colors.white24 : Colors.black12,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    isMe ? Colors.white : Colors.black54,
+                  ),
+                  minHeight: 3,
+                ),
+              ],
+              if (timestamp != null && !isDownloading) ...[
+                const SizedBox(height: 4),
+                Text(
+                  DateFormat('HH:mm').format(timestamp.toDate()),
+                  style: TextStyle(
+                    color: isMe ? Colors.white70 : Colors.black54,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          icon: isDownloading
+              ? SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    value: progress,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      isMe ? Colors.white : Colors.black54,
+                    ),
+                  ),
+                )
+              : Icon(
+                  isDownloaded ? Icons.open_in_new : Icons.download,
+                  size: 18,
+                  color: isMe ? Colors.white70 : Colors.black54,
+                ),
+          onPressed: isDownloading ? null : onAction,
+          tooltip: isDownloaded ? 'Open' : 'Download',
+        ),
+      ],
     );
   }
 

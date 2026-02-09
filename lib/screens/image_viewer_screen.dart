@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -6,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 
 /// Advanced image viewer with download, share, edit capabilities
+/// Features: Blurred background, full-area pinch-to-zoom
 class ImageViewerScreen extends StatefulWidget {
   final String imageUrl;
   final String? localPath;
@@ -284,181 +286,218 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
+      extendBodyBehindAppBar: true,
       body: Stack(
         children: [
-          // Image viewer with pinch-to-zoom
-          GestureDetector(
-            onTap: _toggleControls,
-            child: Center(
+          // Blurred background image
+          Positioned.fill(
+            child: _buildBlurredBackground(),
+          ),
+
+          // Interactive image viewer with full-area zoom
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: _toggleControls,
               child: InteractiveViewer(
                 transformationController: _transformationController,
                 minScale: 0.5,
                 maxScale: 4.0,
-                child: _buildImage(),
+                child: Center(
+                  child: _buildImage(),
+                ),
               ),
             ),
           ),
 
-          // Top app bar
+          // Top app bar (overlays on top)
           if (_showControls)
             Positioned(
               top: 0,
               left: 0,
               right: 0,
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black.withOpacity(0.7),
-                      Colors.transparent,
-                    ],
-                  ),
-                ),
-                child: SafeArea(
-                  bottom: false,
-                  child: AppBar(
-                    backgroundColor: Colors.transparent,
-                    elevation: 0,
-                    title: Text(
-                      widget.fileName,
-                      style: const TextStyle(color: Colors.white),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    iconTheme: const IconThemeData(color: Colors.white),
-                    actions: [
-                      if (_currentLocalPath != null)
-                        PopupMenuButton<String>(
-                          icon: const Icon(Icons.more_vert, color: Colors.white),
-                          onSelected: (value) {
-                            switch (value) {
-                              case 'copy_path':
-                                _copyImagePath();
-                                break;
-                              case 'open_external':
-                                _openInExternalApp(_currentLocalPath!);
-                                break;
-                              case 'delete':
-                                _deleteLocalImage();
-                                break;
-                            }
-                          },
-                          itemBuilder: (context) => [
-                            const PopupMenuItem(
-                              value: 'copy_path',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.copy, size: 20),
-                                  SizedBox(width: 12),
-                                  Text('Copy path'),
-                                ],
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'open_external',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.open_in_new, size: 20),
-                                  SizedBox(width: 12),
-                                  Text('Open with...'),
-                                ],
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'delete',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.delete, size: 20, color: Colors.red),
-                                  SizedBox(width: 12),
-                                  Text('Delete from device', style: TextStyle(color: Colors.red)),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-              ),
+              child: _buildTopBar(),
             ),
 
-          // Bottom controls
+          // Bottom controls (overlays on top)
           if (_showControls)
             Positioned(
               bottom: 0,
               left: 0,
               right: 0,
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [
-                      Colors.black.withOpacity(0.7),
-                      Colors.transparent,
-                    ],
-                  ),
-                ),
-                child: SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
+              child: _buildBottomControls(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBlurredBackground() {
+    return ClipRect(
+      child: ImageFiltered(
+        imageFilter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+        child: Container(
+          decoration: BoxDecoration(
+            image: DecorationImage(
+              image: _currentLocalPath != null
+                  ? FileImage(File(_currentLocalPath!))
+                  : NetworkImage(widget.imageUrl) as ImageProvider,
+              fit: BoxFit.cover,
+            ),
+          ),
+          child: Container(
+            color: Colors.black.withOpacity(0.3),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withOpacity(0.7),
+            Colors.transparent,
+          ],
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          title: Text(
+            widget.fileName,
+            style: const TextStyle(color: Colors.white),
+            overflow: TextOverflow.ellipsis,
+          ),
+          iconTheme: const IconThemeData(color: Colors.white),
+          actions: [
+            if (_currentLocalPath != null)
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: Colors.white),
+                onSelected: (value) {
+                  switch (value) {
+                    case 'copy_path':
+                      _copyImagePath();
+                      break;
+                    case 'open_external':
+                      _openInExternalApp(_currentLocalPath!);
+                      break;
+                    case 'delete':
+                      _deleteLocalImage();
+                      break;
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'copy_path',
+                    child: Row(
                       children: [
-                        if (_isDownloading)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 16),
-                            child: Column(
-                              children: [
-                                LinearProgressIndicator(
-                                  value: _downloadProgress,
-                                  backgroundColor: Colors.white24,
-                                  valueColor: const AlwaysStoppedAnimation(Colors.white),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Downloading... ${(_downloadProgress * 100).toStringAsFixed(0)}%',
-                                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                                ),
-                              ],
-                            ),
-                          ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            _buildActionButton(
-                              icon: Icons.download,
-                              label: _currentLocalPath != null ? 'Downloaded' : 'Download',
-                              onPressed: _currentLocalPath != null || _isDownloading 
-                                  ? null 
-                                  : _downloadImage,
-                            ),
-                            _buildActionButton(
-                              icon: Icons.edit,
-                              label: 'Edit',
-                              onPressed: _currentLocalPath != null ? _editImage : null,
-                            ),
-                            _buildActionButton(
-                              icon: Icons.share,
-                              label: 'Share',
-                              onPressed: _currentLocalPath != null ? _shareImage : null,
-                            ),
-                            _buildActionButton(
-                              icon: Icons.zoom_out_map,
-                              label: 'Reset',
-                              onPressed: _resetZoom,
-                            ),
-                          ],
-                        ),
+                        Icon(Icons.copy, size: 20),
+                        SizedBox(width: 12),
+                        Text('Copy path'),
                       ],
                     ),
                   ),
-                ),
+                  const PopupMenuItem(
+                    value: 'open_external',
+                    child: Row(
+                      children: [
+                        Icon(Icons.open_in_new, size: 20),
+                        SizedBox(width: 12),
+                        Text('Open with...'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete, size: 20, color: Colors.red),
+                        SizedBox(width: 12),
+                        Text('Delete from device', style: TextStyle(color: Colors.red)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomControls() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            Colors.black.withOpacity(0.7),
+            Colors.transparent,
+          ],
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_isDownloading)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Column(
+                    children: [
+                      LinearProgressIndicator(
+                        value: _downloadProgress,
+                        backgroundColor: Colors.white24,
+                        valueColor: const AlwaysStoppedAnimation(Colors.white),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Downloading... ${(_downloadProgress * 100).toStringAsFixed(0)}%',
+                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildActionButton(
+                    icon: Icons.download,
+                    label: _currentLocalPath != null ? 'Downloaded' : 'Download',
+                    onPressed: _currentLocalPath != null || _isDownloading 
+                        ? null 
+                        : _downloadImage,
+                  ),
+                  _buildActionButton(
+                    icon: Icons.edit,
+                    label: 'Edit',
+                    onPressed: _currentLocalPath != null ? _editImage : null,
+                  ),
+                  _buildActionButton(
+                    icon: Icons.share,
+                    label: 'Share',
+                    onPressed: _currentLocalPath != null ? _shareImage : null,
+                  ),
+                  _buildActionButton(
+                    icon: Icons.zoom_out_map,
+                    label: 'Reset',
+                    onPressed: _resetZoom,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

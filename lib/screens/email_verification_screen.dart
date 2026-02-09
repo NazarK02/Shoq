@@ -98,9 +98,8 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   @override
   Widget build(BuildContext context) {
     final user = _auth.currentUser;
-
     return Scaffold(
-    backgroundColor: Colors.white,
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
     body: SafeArea(
       child: Center(
         child: SingleChildScrollView(
@@ -108,8 +107,11 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.mark_email_unread_outlined,
-                  size: 80, color: Theme.of(context).primaryColor),
+              Icon(
+                Icons.mark_email_unread_outlined,
+                size: 80,
+                color: Theme.of(context).colorScheme.primary,
+              ),
               const SizedBox(height: 32),
               Text(
                 'Verify Your Email',
@@ -122,14 +124,22 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
               Text(
                 'We sent a verification email to:',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontSize: 16,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onBackground
+                          .withOpacity(0.65),
+                    ),
               ),
               const SizedBox(height: 8),
               Text(
                 user?.email ?? '',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.bold),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 32),
 
@@ -139,10 +149,13 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                     ? null
                     : _resendEmail,
                 icon: _isResending
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 16,
                         height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Theme.of(context).colorScheme.onPrimary,
+                        ),
                       )
                     : const Icon(Icons.refresh),
                 label: Text(_resendCountdown > 0
