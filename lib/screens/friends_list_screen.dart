@@ -794,7 +794,7 @@ class _FriendListTile extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => ChatScreenE2EE(
+                  builder: (_) => ImprovedChatScreen(
                     recipientId: friendId,
                     recipientName: displayName,
                   ),

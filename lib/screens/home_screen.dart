@@ -429,7 +429,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => ChatScreenE2EE(
+                    builder: (_) => ImprovedChatScreen(
                       recipientId: otherUserId,
                       recipientName: displayName,
                     ),

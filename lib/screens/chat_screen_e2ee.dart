@@ -3,42 +3,42 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:mime/mime.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import '../services/chat_service_e2ee.dart';
 import '../services/user_cache_service.dart';
+import '../services/file_download_service.dart';
 import 'user_profile_view_screen.dart';
+import 'image_viewer_screen.dart';
 
-/// E2EE-enabled chat screen with smooth loading
-class ChatScreenE2EE extends StatefulWidget {
+/// Improved E2EE chat with torrent-like file handling
+class ImprovedChatScreen extends StatefulWidget {
   final String recipientId;
   final String recipientName;
 
-  const ChatScreenE2EE({
+  const ImprovedChatScreen({
     super.key,
     required this.recipientId,
     required this.recipientName,
   });
 
   @override
-  State<ChatScreenE2EE> createState() => _ChatScreenE2EEState();
+  State<ImprovedChatScreen> createState() => _ImprovedChatScreenState();
 }
 
-class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObserver {
+class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBindingObserver {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final ChatService _chatService = ChatService();
   final NotificationService _notificationService = NotificationService();
   final UserCacheService _userCache = UserCacheService();
+  final FileDownloadService _downloadService = FileDownloadService();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   
@@ -56,6 +56,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     _notificationService.setActiveChat(widget.recipientId);
     _recipientData = _userCache.getCachedUser(widget.recipientId);
     _userCache.warmUsers([widget.recipientId], listen: false);
+    _downloadService.addListener(_onDownloadProgressUpdate);
 
     final currentUser = _auth.currentUser;
     if (currentUser != null) {
@@ -68,24 +69,16 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     _initializeQuietly();
   }
 
-  /// Initialize without showing loading spinner
   Future<void> _initializeQuietly() async {
     try {
-      // Initialize encryption silently
       await _chatService.initializeEncryption();
-      
-      // Initialize conversation (will auto-create E2EE keys if needed)
       _conversationId = await _chatService.initializeConversation(widget.recipientId);
-      
-      // Listen to recipient data
       _listenToRecipientData();
       
-      // Check if conversation has messages
       if (_conversationId != null) {
         _listenToConversationMetadata();
       }
       
-      // Only update state once at the end
       if (mounted) {
         setState(() {});
       }
@@ -96,6 +89,10 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
         });
       }
     }
+  }
+
+  void _onDownloadProgressUpdate() {
+    if (mounted) setState(() {});
   }
 
   void _listenToConversationMetadata() {
@@ -112,6 +109,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
   @override
   void dispose() {
     _notificationService.setActiveChat(null);
+    _downloadService.removeListener(_onDownloadProgressUpdate);
     WidgetsBinding.instance.removeObserver(this);
     _messageController.dispose();
     _scrollController.dispose();
@@ -159,14 +157,12 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     try {
       _messageController.clear();
 
-      // Send encrypted message
       await _chatService.sendMessage(
         conversationId: _conversationId!,
         messageText: messageText,
         recipientId: widget.recipientId,
       );
 
-      // Send push notification (generic)
       try {
         final senderName = currentUser.displayName ?? 'Someone';
         await _notificationService.sendMessageNotification(
@@ -202,7 +198,6 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
 
   @override
   Widget build(BuildContext context) {
-    // Show error screen if initialization failed
     if (_initError != null) {
       return Scaffold(
         appBar: AppBar(title: Text(widget.recipientName)),
@@ -232,86 +227,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
     final photoUrl = _recipientData?['photoUrl'];
 
     return Scaffold(
-      appBar: AppBar(
-        title: InkWell(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => UserProfileViewScreen(
-                  userId: widget.recipientId,
-                  userData: _recipientData,
-                ),
-              ),
-            );
-          },
-          child: Row(
-            children: [
-              Stack(
-                children: [
-                  _buildAvatar(photoUrl, 18),
-                  StreamBuilder<Map<String, dynamic>?>(
-                    stream: PresenceService().getUserStatusStream(widget.recipientId),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) return const SizedBox.shrink();
-                      final isOnline = PresenceService.isUserOnline(snapshot.data ?? {});
-                      
-                      if (!isOnline) return const SizedBox.shrink();
-                      
-                      return Positioned(
-                        right: 0,
-                        bottom: 0,
-                        child: Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: Colors.green,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Theme.of(context).scaffoldBackgroundColor,
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      displayName,
-                      style: const TextStyle(fontSize: 16),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    _LiveStatusWidget(userId: widget.recipientId),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              if (value == 'clear') {
-                _showClearChatDialog();
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'clear',
-                child: Text('Clear chat'),
-              ),
-            ],
-          ),
-        ],
-      ),
+      appBar: _buildAppBar(displayName, photoUrl),
       body: Column(
         children: [
           Expanded(
@@ -320,6 +236,7 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
               recipientName: widget.recipientName,
               scrollController: _scrollController,
               chatService: _chatService,
+              downloadService: _downloadService,
               hasMessages: _hasMessages,
               pendingUploads: _pendingUploads,
               onCancelUpload: _cancelPendingUpload,
@@ -327,6 +244,174 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
           ),
           _buildMessageInput(),
         ],
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar(String displayName, String? photoUrl) {
+    return AppBar(
+      title: InkWell(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => UserProfileViewScreen(
+                userId: widget.recipientId,
+                userData: _recipientData,
+              ),
+            ),
+          );
+        },
+        child: Row(
+          children: [
+            Stack(
+              children: [
+                _buildAvatar(photoUrl, 18),
+                StreamBuilder<Map<String, dynamic>?>(
+                  stream: PresenceService().getUserStatusStream(widget.recipientId),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) return const SizedBox.shrink();
+                    final isOnline = PresenceService.isUserOnline(snapshot.data ?? {});
+                    
+                    if (!isOnline) return const SizedBox.shrink();
+                    
+                    return Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Theme.of(context).scaffoldBackgroundColor,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    displayName,
+                    style: const TextStyle(fontSize: 16),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  _LiveStatusWidget(userId: widget.recipientId),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        PopupMenuButton<String>(
+          onSelected: (value) {
+            if (value == 'clear') {
+              _showClearChatDialog();
+            }
+          },
+          itemBuilder: (context) => [
+            const PopupMenuItem(
+              value: 'clear',
+              child: Text('Clear chat'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAvatar(String? photoUrl, double radius) {
+    final placeholder = CircleAvatar(
+      radius: radius,
+      backgroundColor: Colors.grey[300],
+      child: Icon(
+        Icons.person,
+        size: radius,
+        color: Colors.grey[600],
+      ),
+    );
+
+    if (photoUrl == null || photoUrl.isEmpty) {
+      return placeholder;
+    }
+
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheSize = (radius * 2 * dpr).round().clamp(32, 256);
+
+    return ClipOval(
+      child: Container(
+        width: radius * 2,
+        height: radius * 2,
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: CachedNetworkImage(
+          imageUrl: photoUrl,
+          width: radius * 2,
+          height: radius * 2,
+          fit: BoxFit.cover,
+          memCacheWidth: cacheSize,
+          memCacheHeight: cacheSize,
+          placeholder: (_, __) => placeholder,
+          errorWidget: (_, __, ___) => placeholder,
+          fadeInDuration: const Duration(milliseconds: 150),
+          fadeOutDuration: const Duration(milliseconds: 150),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessageInput() {
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.attach_file),
+              onPressed: _showAttachmentSheet,
+              tooltip: 'Attach',
+            ),
+            Expanded(
+              child: TextField(
+                controller: _messageController,
+                decoration: const InputDecoration(
+                  hintText: 'Type a message...',
+                ),
+                maxLines: null,
+                textCapitalization: TextCapitalization.sentences,
+                onSubmitted: (_) => _sendMessage(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            CircleAvatar(
+              backgroundColor: Theme.of(context).primaryColor,
+              child: IconButton(
+                icon: const Icon(Icons.send, color: Colors.white),
+                onPressed: _sendMessage,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -351,16 +436,6 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
               onTap: () {
                 Navigator.pop(context);
                 _pickAndSendFile(type: FileType.any);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.location_on),
-              title: const Text('Location'),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Location sharing coming soon')),
-                );
               },
             ),
           ],
@@ -455,15 +530,6 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
 
       _removePendingUpload(upload.messageId);
       _scrollToBottom();
-    } on FirebaseException catch (e) {
-      if (e.code != 'canceled' && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to send file: ${e.message ?? e.code}')),
-        );
-      }
-      if (pendingId != null) {
-        _removePendingUpload(pendingId!);
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -471,94 +537,9 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
         );
       }
       if (pendingId != null) {
-        _removePendingUpload(pendingId!);
+        _removePendingUpload(pendingId);
       }
     }
-  }
-
-  Widget _buildAvatar(String? photoUrl, double radius) {
-    final placeholder = CircleAvatar(
-      radius: radius,
-      backgroundColor: Colors.grey[300],
-      child: Icon(
-        Icons.person,
-        size: radius,
-        color: Colors.grey[600],
-      ),
-    );
-
-    if (photoUrl == null || photoUrl.isEmpty) {
-      return placeholder;
-    }
-
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    final cacheSize = (radius * 2 * dpr).round().clamp(32, 256);
-
-    return ClipOval(
-      child: Container(
-        width: radius * 2,
-        height: radius * 2,
-        color: Theme.of(context).scaffoldBackgroundColor,
-        child: CachedNetworkImage(
-          imageUrl: photoUrl,
-          width: radius * 2,
-          height: radius * 2,
-          fit: BoxFit.cover,
-          memCacheWidth: cacheSize,
-          memCacheHeight: cacheSize,
-          placeholder: (_, __) => placeholder,
-          errorWidget: (_, __, ___) => placeholder,
-          fadeInDuration: const Duration(milliseconds: 150),
-          fadeOutDuration: const Duration(milliseconds: 150),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMessageInput() {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 4,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Row(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.attach_file),
-              onPressed: _showAttachmentSheet,
-              tooltip: 'Attach',
-            ),
-            Expanded(
-              child: TextField(
-                controller: _messageController,
-                decoration: const InputDecoration(
-                  hintText: 'Type a message...',
-                ),
-                maxLines: null,
-                textCapitalization: TextCapitalization.sentences,
-                onSubmitted: (_) => _sendMessage(),
-              ),
-            ),
-            const SizedBox(width: 8),
-            CircleAvatar(
-              backgroundColor: Theme.of(context).primaryColor,
-              child: IconButton(
-                icon: const Icon(Icons.send, color: Colors.white),
-                onPressed: _sendMessage,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   void _removePendingUpload(String id) {
@@ -613,12 +594,13 @@ class _ChatScreenE2EEState extends State<ChatScreenE2EE> with WidgetsBindingObse
   }
 }
 
-/// Optimized messages list with cached decryption
+/// Messages list with image preview and on-demand downloads
 class _MessagesList extends StatefulWidget {
   final String? conversationId;
   final String recipientName;
   final ScrollController scrollController;
   final ChatService chatService;
+  final FileDownloadService downloadService;
   final bool hasMessages;
   final List<_PendingUpload> pendingUploads;
   final void Function(String id) onCancelUpload;
@@ -628,6 +610,7 @@ class _MessagesList extends StatefulWidget {
     required this.recipientName,
     required this.scrollController,
     required this.chatService,
+    required this.downloadService,
     required this.hasMessages,
     required this.pendingUploads,
     required this.onCancelUpload,
@@ -639,9 +622,6 @@ class _MessagesList extends StatefulWidget {
 
 class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveClientMixin {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-
-  final Map<String, _DownloadEntry> _downloads = {};
-  // Cache decrypted messages to avoid re-decryption
   final Map<String, String> _decryptedCache = {};
 
   @override
@@ -667,7 +647,6 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
-        // Avoid showing empty-state flicker while loading
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData &&
             widget.pendingUploads.isEmpty) {
@@ -679,6 +658,7 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
         if (messages.isEmpty && widget.pendingUploads.isEmpty) {
           return _buildEmptyState();
         }
+
         final pending = widget.pendingUploads;
 
         return ListView.builder(
@@ -693,6 +673,7 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
                 key: ValueKey('pending_${upload.id}'),
               );
             }
+
             final messageDoc = messages[index];
             final message = messageDoc.data() as Map<String, dynamic>;
             final messageId = messageDoc.id;
@@ -711,7 +692,6 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
               );
             }
 
-            // Check cache first
             if (_decryptedCache.containsKey(messageId)) {
               return _buildMessageBubble(
                 _decryptedCache[messageId]!,
@@ -727,7 +707,6 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
 
             return FutureBuilder<String>(
               future: decryptFuture.then((decrypted) {
-                // Cache only successful decrypts to allow retries after init.
                 if (widget.chatService.isEncryptionReady &&
                     decrypted.isNotEmpty &&
                     !decrypted.startsWith('[')) {
@@ -741,7 +720,6 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
                 if (!widget.chatService.isEncryptionReady) {
                   displayText = _decryptedCache[messageId] ?? '';
                 } else if (decryptSnapshot.connectionState == ConnectionState.waiting) {
-                  // Use cached version if available during refresh
                   displayText = _decryptedCache[messageId] ?? '';
                 } else if (decryptSnapshot.hasError) {
                   displayText = _decryptedCache[messageId] ?? '';
@@ -797,7 +775,6 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     Timestamp? timestamp, {
     Key? key,
   }) {
-    // Don't show empty messages while loading
     if (text.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -925,37 +902,20 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     final fileUrl = message['fileUrl']?.toString() ?? '';
     final mimeType = message['mimeType']?.toString() ?? '';
     final isImage = mimeType.toLowerCase().startsWith('image/');
-    final download = _downloads[messageId];
-    final isDownloading = download?.status == _DownloadStatus.downloading;
-    final isDownloaded =
-        download?.status == _DownloadStatus.done && (download?.localPath?.isNotEmpty ?? false);
-    final progress = download?.progress ?? 0;
-    final localPath = download?.localPath;
 
-    void handleTap() {
-      if (isDownloaded && localPath != null) {
-        if (isImage) {
-          _openImageViewer(localPath, fileName);
-        } else {
-          _openDownloadedFile(localPath);
-        }
-        return;
-      }
-      if (!isDownloading && fileUrl.isNotEmpty) {
-        _downloadFile(
-          messageId: messageId,
-          url: fileUrl,
-          fileName: fileName,
-        );
-      }
-    }
+    // Check download status
+    final downloadProgress = widget.downloadService.getProgress(messageId);
+    final isDownloading = downloadProgress?.status == DownloadStatus.downloading;
+    final isDownloaded = downloadProgress?.status == DownloadStatus.completed;
+    final localPath = downloadProgress?.localPath;
+    final progress = downloadProgress?.progress ?? 0;
 
     return Align(
       key: key,
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.all(8),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
@@ -968,253 +928,187 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
             bottomRight: Radius.circular(isMe ? 4 : 16),
           ),
         ),
-        child: InkWell(
-          onTap: fileUrl.isEmpty ? null : handleTap,
-          borderRadius: BorderRadius.circular(12),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (isImage)
-                ClipRRect(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (isImage) ...[
+              // Image preview with click to view
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ImageViewerScreen(
+                        imageUrl: fileUrl,
+                        localPath: localPath,
+                        fileName: fileName,
+                        fileSize: fileSize,
+                      ),
+                    ),
+                  );
+                },
+                child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
-                    width: 48,
-                    height: 48,
-                    color: isMe ? Colors.white12 : Colors.white,
-                    child: isDownloaded && localPath != null
-                        ? Image.file(
-                            File(localPath),
-                            fit: BoxFit.cover,
-                            width: 48,
-                            height: 48,
-                          )
-                        : Icon(
-                            Icons.image,
-                            color: isMe ? Colors.white : Colors.black54,
-                          ),
+                    constraints: const BoxConstraints(
+                      maxWidth: 250,
+                      maxHeight: 250,
+                    ),
+                    child: CachedNetworkImage(
+                      imageUrl: fileUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => Container(
+                        height: 150,
+                        color: Colors.grey[800],
+                        child: const Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                      ),
+                      errorWidget: (_, __, ___) => Container(
+                        height: 150,
+                        color: Colors.grey[800],
+                        child: const Center(
+                          child: Icon(Icons.broken_image, size: 48),
+                        ),
+                      ),
+                    ),
                   ),
-                )
-              else
-                Icon(
-                  _iconForMime(mimeType),
-                  color: isMe ? Colors.white : Colors.black87,
-                ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      fileName,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: isMe ? Colors.white : Colors.black87,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _formatBytes(fileSize),
-                      style: TextStyle(
-                        color: isMe ? Colors.white70 : Colors.black54,
-                        fontSize: 12,
-                      ),
-                    ),
-                    if (isDownloading) ...[
-                      const SizedBox(height: 6),
-                      LinearProgressIndicator(
-                        value: progress > 0 ? progress : null,
-                        backgroundColor: isMe ? Colors.white24 : Colors.black12,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          isMe ? Colors.white : Colors.black54,
-                        ),
-                        minHeight: 3,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${(progress * 100).toStringAsFixed(0)}%',
-                        style: TextStyle(
-                          color: isMe ? Colors.white70 : Colors.black54,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                    if (timestamp != null && !isDownloading) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        DateFormat('HH:mm').format(timestamp.toDate()),
-                        style: TextStyle(
-                          color: isMe ? Colors.white70 : Colors.black54,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ],
                 ),
               ),
-              if (fileUrl.isNotEmpty) ...[
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: isDownloading
-                      ? SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            value: progress > 0 ? progress : null,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              isMe ? Colors.white : Colors.black54,
-                            ),
-                          ),
-                        )
-                      : Icon(
-                          isDownloaded ? Icons.open_in_new : Icons.download,
-                          size: 18,
-                          color: isMe ? Colors.white70 : Colors.black54,
-                        ),
-                  onPressed: isDownloading ? null : handleTap,
-                  tooltip: isDownloaded ? 'Open' : 'Download',
-                ),
-              ],
+              const SizedBox(height: 8),
             ],
-          ),
+            
+            // File info row
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!isImage)
+                  Icon(
+                    _iconForMime(mimeType),
+                    color: isMe ? Colors.white : Colors.black87,
+                  ),
+                if (!isImage) const SizedBox(width: 8),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        fileName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isMe ? Colors.white : Colors.black87,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatBytes(fileSize),
+                        style: TextStyle(
+                          color: isMe ? Colors.white70 : Colors.black54,
+                          fontSize: 12,
+                        ),
+                      ),
+                      if (isDownloading) ...[
+                        const SizedBox(height: 6),
+                        LinearProgressIndicator(
+                          value: progress,
+                          backgroundColor: isMe ? Colors.white24 : Colors.black12,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            isMe ? Colors.white : Colors.black54,
+                          ),
+                          minHeight: 3,
+                        ),
+                      ],
+                      if (timestamp != null && !isDownloading) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          DateFormat('HH:mm').format(timestamp.toDate()),
+                          style: TextStyle(
+                            color: isMe ? Colors.white70 : Colors.black54,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (!isImage && fileUrl.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: isDownloading
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              value: progress,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                isMe ? Colors.white : Colors.black54,
+                              ),
+                            ),
+                          )
+                        : Icon(
+                            isDownloaded ? Icons.open_in_new : Icons.download,
+                            size: 18,
+                            color: isMe ? Colors.white70 : Colors.black54,
+                          ),
+                    onPressed: isDownloading
+                        ? null
+                        : () => _handleFileAction(
+                              messageId: messageId,
+                              url: fileUrl,
+                              fileName: fileName,
+                              mimeType: mimeType,
+                              fileSize: fileSize,
+                              isDownloaded: isDownloaded,
+                              localPath: localPath,
+                            ),
+                    tooltip: isDownloaded ? 'Open' : 'Download',
+                  ),
+                ],
+              ],
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Future<void> _downloadFile({
+  Future<void> _handleFileAction({
     required String messageId,
     required String url,
     required String fileName,
+    required String mimeType,
+    required int fileSize,
+    required bool isDownloaded,
+    required String? localPath,
   }) async {
-    final existing = _downloads[messageId];
-    if (existing?.status == _DownloadStatus.downloading) return;
-
-    setState(() {
-      _downloads[messageId] = _DownloadEntry(
-        status: _DownloadStatus.downloading,
-        progress: 0,
-        localPath: null,
-      );
-    });
-
-    final client = HttpClient();
-    try {
-      final targetPath = await _resolveDownloadPath(fileName);
-      final request = await client.getUrl(Uri.parse(url));
-      final response = await request.close();
-
-      if (response.statusCode != 200) {
-        throw Exception('Download failed: ${response.statusCode}');
+    if (isDownloaded && localPath != null) {
+      final result = await OpenFilex.open(localPath);
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.message)),
+        );
       }
-
-      final total = response.contentLength;
-      final file = File(targetPath);
-      final sink = file.openWrite();
-      int received = 0;
-
-      await response.listen((chunk) {
-        received += chunk.length;
-        sink.add(chunk);
-        if (total > 0 && mounted) {
-          final entry = _downloads[messageId];
-          if (entry == null) return;
-          setState(() {
-            entry.progress = (received / total).clamp(0, 1);
-          });
-        }
-      }).asFuture();
-
-      await sink.close();
-
-      if (!mounted) return;
-      setState(() {
-        _downloads[messageId] = _DownloadEntry(
-          status: _DownloadStatus.done,
-          progress: 1,
-          localPath: targetPath,
-        );
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _downloads[messageId] = _DownloadEntry(
-          status: _DownloadStatus.failed,
-          progress: 0,
-          localPath: null,
-          error: e.toString(),
-        );
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Download failed: ${e.toString()}')),
-      );
-    } finally {
-      client.close(force: true);
-    }
-  }
-
-  Future<void> _openDownloadedFile(String path) async {
-    final result = await OpenFilex.open(path);
-    if (result.type != ResultType.done && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.message)),
-      );
-    }
-  }
-
-  void _openImageViewer(String path, String fileName) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => _ImageViewerScreen(
-          filePath: path,
+    } else {
+      try {
+        await widget.downloadService.downloadFile(
+          messageId: messageId,
+          url: url,
           fileName: fileName,
-        ),
-      ),
-    );
-  }
-
-  Future<String> _resolveDownloadPath(String fileName) async {
-    final baseDir = await _getDownloadDirectory();
-    final safeName = _sanitizeFileName(fileName);
-    final folder = Directory(p.join(baseDir.path, 'ShoqDownloads'));
-    if (!folder.existsSync()) {
-      await folder.create(recursive: true);
+          mimeType: mimeType,
+          fileSize: fileSize,
+        );
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Download failed: ${e.toString()}')),
+          );
+        }
+      }
     }
-
-    final candidate = p.join(folder.path, safeName);
-    if (!File(candidate).existsSync()) {
-      return candidate;
-    }
-
-    final name = p.basenameWithoutExtension(safeName);
-    final ext = p.extension(safeName);
-    int i = 1;
-    while (true) {
-      final next = p.join(folder.path, '${name}_$i$ext');
-      if (!File(next).existsSync()) return next;
-      i++;
-    }
-  }
-
-  Future<Directory> _getDownloadDirectory() async {
-    if (Platform.isWindows) {
-      final dir = await getDownloadsDirectory();
-      if (dir != null) return dir;
-    }
-    if (Platform.isAndroid) {
-      final dir = await getExternalStorageDirectory();
-      if (dir != null) return dir;
-    }
-    return getApplicationDocumentsDirectory();
-  }
-
-  String _sanitizeFileName(String name) {
-    final trimmed = name.trim().isEmpty ? 'file' : name.trim();
-    return trimmed.replaceAll(RegExp(r'[\\\\/]+'), '_');
   }
 
   IconData _iconForMime(String mime) {
@@ -1241,7 +1135,6 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     final value = size < 10 && unit > 0 ? size.toStringAsFixed(1) : size.toStringAsFixed(0);
     return '$value ${units[unit]}';
   }
-
 }
 
 class _LiveStatusWidget extends StatefulWidget {
@@ -1293,99 +1186,6 @@ class _LiveStatusWidgetState extends State<_LiveStatusWidget> {
   }
 }
 
-class _ImageViewerScreen extends StatelessWidget {
-  final String filePath;
-  final String fileName;
-
-  const _ImageViewerScreen({
-    required this.filePath,
-    required this.fileName,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final file = File(filePath);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(fileName, overflow: TextOverflow.ellipsis),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.download),
-            onPressed: () => _saveCopy(context),
-            tooltip: 'Save copy',
-          ),
-        ],
-      ),
-      body: Center(
-        child: file.existsSync()
-            ? InteractiveViewer(
-                minScale: 0.5,
-                maxScale: 4.0,
-                child: Image.file(file),
-              )
-            : const Text('Image not found'),
-      ),
-    );
-  }
-
-  Future<void> _saveCopy(BuildContext context) async {
-    try {
-      final targetDir = await _getDownloadDirectory();
-      final folder = Directory(p.join(targetDir.path, 'ShoqDownloads'));
-      if (!folder.existsSync()) {
-        await folder.create(recursive: true);
-      }
-
-      final safeName = fileName.trim().isEmpty ? 'image' : fileName.trim();
-      final sanitized = safeName.replaceAll(RegExp(r'[\\\\/]+'), '_');
-      final base = p.join(folder.path, sanitized);
-      final targetPath = await _uniquePath(base);
-
-      if (filePath != targetPath) {
-        await File(filePath).copy(targetPath);
-      }
-
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Saved to $targetPath')),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Save failed: ${e.toString()}')),
-        );
-      }
-    }
-  }
-
-  Future<Directory> _getDownloadDirectory() async {
-    if (Platform.isWindows) {
-      final dir = await getDownloadsDirectory();
-      if (dir != null) return dir;
-    }
-    if (Platform.isAndroid) {
-      final dir = await getExternalStorageDirectory();
-      if (dir != null) return dir;
-    }
-    return getApplicationDocumentsDirectory();
-  }
-
-  Future<String> _uniquePath(String basePath) async {
-    if (!File(basePath).existsSync()) return basePath;
-    final dir = p.dirname(basePath);
-    final name = p.basenameWithoutExtension(basePath);
-    final ext = p.extension(basePath);
-    int i = 1;
-    while (true) {
-      final next = p.join(dir, '${name}_$i$ext');
-      if (!File(next).existsSync()) return next;
-      i++;
-    }
-  }
-}
-
 class _PendingUpload {
   final String id;
   final String fileName;
@@ -1401,21 +1201,5 @@ class _PendingUpload {
     required this.fileSize,
     required this.mimeType,
     required this.progress,
-  });
-}
-
-enum _DownloadStatus { downloading, done, failed }
-
-class _DownloadEntry {
-  _DownloadStatus status;
-  double progress;
-  String? localPath;
-  String? error;
-
-  _DownloadEntry({
-    required this.status,
-    required this.progress,
-    required this.localPath,
-    this.error,
   });
 }
