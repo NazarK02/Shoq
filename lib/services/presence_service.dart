@@ -110,6 +110,23 @@ class PresenceService {
     });
   }
 
+  /// One-off fetch of a user's status (safe for Windows polling)
+  Future<Map<String, dynamic>?> getUserStatusOnce(String userId) async {
+    try {
+      final snapshot = await _firestore.collection('users').doc(userId).get();
+      if (!snapshot.exists) return null;
+      final data = snapshot.data()!;
+      return {
+        'status': data['status'] ?? 'offline',
+        'lastSeen': data['lastSeen'],
+        'lastHeartbeat': data['lastHeartbeat'],
+      };
+    } catch (e) {
+      print('❌ Error fetching user status once: $e');
+      return null;
+    }
+  }
+
   /// Returns true when status == online AND lastHeartbeat is fresh (< 2 min).
   static bool isUserOnline(Map<String, dynamic> userData) {
     final status = userData['status'] as String?;

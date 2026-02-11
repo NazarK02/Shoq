@@ -109,6 +109,24 @@ class UserService {
     if (user == null) return;
 
     _userDocSub?.cancel();
+
+    // On Windows, avoid a continuous Firestore snapshot listener which
+    // may trigger platform-channel threading issues in the native plugin.
+    if (Platform.isWindows) {
+      // Start a lightweight poll to refresh cached profile periodically.
+      Timer.periodic(const Duration(seconds: 4), (timer) async {
+        final snapshot = await _firestore.collection('users').doc(user.uid).get();
+        if (snapshot.exists) {
+          final data = snapshot.data();
+          _cachedUserData = data;
+          if (data != null) {
+            _persistProfileCache(user.uid, data);
+          }
+        }
+      });
+      return;
+    }
+
     _userDocSub = _firestore
         .collection('users')
         .doc(user.uid)

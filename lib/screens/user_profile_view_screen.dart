@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../utils/safe_image_loader.dart';
 import '../services/presence_service.dart';
 import '../services/user_cache_service.dart';
 
@@ -38,6 +40,8 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   StreamSubscription? _sentReqSub;
   StreamSubscription? _receivedReqSub;
   StreamSubscription? _presenceSub;
+  Timer? _presencePollTimer;
+  Timer? _friendPollTimer;
   bool _friendChecked = false;
   bool _blockedChecked = false;
   bool _sentChecked = false;
@@ -74,6 +78,23 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   }
   void _listenToOnlineStatus() {
     _presenceSub?.cancel();
+    _presencePollTimer?.cancel();
+
+    if (Platform.isWindows) {
+      // Poll the user status periodically on Windows to avoid
+      // platform-channel threading issues in the native plugin.
+      _presencePollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+        final data = await PresenceService().getUserStatusOnce(widget.userId);
+        if (!mounted || data == null) return;
+        setState(() {
+          _isOnline = PresenceService.isUserOnline(data);
+          final lastSeen = data['lastSeen'] as Timestamp?;
+          _lastSeen = lastSeen?.toDate();
+        });
+      });
+      return;
+    }
+
     _presenceSub = PresenceService()
         .getUserStatusStream(widget.userId)
         .listen((data) {
@@ -88,13 +109,67 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   void _listenToFriendshipStatus() {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
-
     _friendStatusLoading = true;
 
     _friendSub?.cancel();
     _blockedSub?.cancel();
     _sentReqSub?.cancel();
     _receivedReqSub?.cancel();
+    _friendPollTimer?.cancel();
+
+    if (Platform.isWindows) {
+      // Poll Firestore periodically on Windows to avoid plugin threading
+      // issues that can send messages from non-platform threads.
+      _friendPollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
+        try {
+          final friendDoc = await _firestore
+              .collection('contacts')
+              .doc(currentUser.uid)
+              .collection('friends')
+              .doc(widget.userId)
+              .get();
+
+          final blockedDoc = await _firestore
+              .collection('contacts')
+              .doc(currentUser.uid)
+              .collection('blocked')
+              .doc(widget.userId)
+              .get();
+
+          final sentQuery = await _firestore
+              .collection('friendRequests')
+              .where('senderId', isEqualTo: currentUser.uid)
+              .where('receiverId', isEqualTo: widget.userId)
+              .where('status', isEqualTo: 'pending')
+              .get();
+
+          final receivedQuery = await _firestore
+              .collection('friendRequests')
+              .where('senderId', isEqualTo: widget.userId)
+              .where('receiverId', isEqualTo: currentUser.uid)
+              .where('status', isEqualTo: 'pending')
+              .get();
+
+          _friendChecked = true;
+          _friendDocExists = friendDoc.exists;
+
+          _blockedChecked = true;
+          _blockedDocExists = blockedDoc.exists;
+
+          _sentChecked = true;
+          _sentReqExists = sentQuery.docs.isNotEmpty;
+
+          _receivedChecked = true;
+          _receivedReqExists = receivedQuery.docs.isNotEmpty;
+
+          _updateFriendState();
+        } catch (e) {
+          // ignore transient errors
+        }
+      });
+
+      return;
+    }
 
     _friendSub = _firestore
         .collection('contacts')
@@ -363,6 +438,8 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
     _sentReqSub?.cancel();
     _receivedReqSub?.cancel();
     _presenceSub?.cancel();
+    _presencePollTimer?.cancel();
+    _friendPollTimer?.cancel();
     super.dispose();
   }
 
@@ -853,45 +930,15 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   }
 
   Widget _buildAvatar(String? photoUrl, double radius) {
-    final placeholder = Container(
-      width: radius * 2,
-      height: radius * 2,
-      color: Colors.grey[300],
-      child: Icon(
-        Icons.person,
-        size: radius,
-        color: Colors.grey[600],
-      ),
-    );
-
-    if (photoUrl == null || photoUrl.isEmpty) {
-      return CircleAvatar(
-        radius: radius,
-        backgroundColor: Colors.grey[300],
-        child: Icon(
-          Icons.person,
-          size: radius,
-          color: Colors.grey[600],
-        ),
-      );
-    }
-
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    final cacheSize = (radius * 2 * dpr).round().clamp(64, 512);
-
-    return ClipOval(
-      child: CachedNetworkImage(
-        imageUrl: photoUrl,
-        width: radius * 2,
-        height: radius * 2,
-        fit: BoxFit.cover,
-        memCacheWidth: cacheSize,
-        memCacheHeight: cacheSize,
-        placeholder: (_, __) => placeholder,
-        errorWidget: (_, __, ___) => placeholder,
-        fadeInDuration: const Duration(milliseconds: 150),
-        fadeOutDuration: const Duration(milliseconds: 150),
-      ),
+    // Delegate to SafeImageLoader which contains Windows-specific
+    // timeouts, failed-URL tracking and safer error handling.
+    return SafeImageLoader().buildAvatar(
+      photoUrl: photoUrl,
+      radius: radius,
+      context: context,
+      backgroundColor: Colors.grey[300],
+      iconColor: Colors.grey[600],
+      icon: Icons.person,
     );
   }
 

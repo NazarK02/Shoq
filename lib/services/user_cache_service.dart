@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -97,6 +98,12 @@ class UserCacheService extends ChangeNotifier {
 
   void _ensureListener(String uid) {
     if (_subs.containsKey(uid)) return;
+
+    // Avoid live Firestore listeners on Windows due to platform-channel
+    // threading issues observed in the Flutter Windows shell. Instead,
+    // rely on one-off fetches which are already performed elsewhere.
+    if (Platform.isWindows) return;
+
     _subs[uid] = _firestore
         .collection('users')
         .doc(uid)

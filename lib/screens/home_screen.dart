@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../utils/safe_image_loader.dart';
 import 'registration_screen.dart';
 import 'friends_list_screen.dart';
 import 'profile_screen.dart';
@@ -29,6 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _searchQuery = '';
   Timer? _rebuildTimer;
   Timer? _cacheDebounce;
+  Timer? _conversationsPollTimer;
   final Set<String> _warmedUserIds = {};
   List<Map<String, dynamic>> _cachedConversations = [];
 
@@ -40,12 +43,36 @@ class _HomeScreenState extends State<HomeScreen> {
     _rebuildTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
+
+    if (Platform.isWindows) {
+      // Poll conversations periodically on Windows instead of using
+      // a continuous Firestore stream which can trigger plugin threading issues.
+      _conversationsPollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
+        final user = _auth.currentUser;
+        if (user == null) return;
+        try {
+          final snapshot = await _firestore
+              .collection('conversations')
+              .where('participants', arrayContains: user.uid)
+              .get();
+
+          final items = _conversationCache.buildCacheItemsFromDocs(snapshot.docs);
+          if (!mounted) return;
+          setState(() {
+            _cachedConversations = items;
+          });
+        } catch (e) {
+          // ignore transient errors
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
     _rebuildTimer?.cancel();
     _cacheDebounce?.cancel();
+    _conversationsPollTimer?.cancel();
     _searchController.dispose();
     _userCache.removeListener(_onUserCacheUpdated);
     super.dispose();
@@ -520,45 +547,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildAvatar(String? photoUrl, double radius, Color? iconColor) {
-    final placeholder = Container(
-      width: radius * 2,
-      height: radius * 2,
-      color: Colors.grey[300],
-      child: Icon(
-        Icons.person,
-        size: radius,
-        color: iconColor ?? Colors.grey[600],
-      ),
-    );
-
-    if (photoUrl == null || photoUrl.isEmpty) {
-      return CircleAvatar(
-        radius: radius,
-        backgroundColor: Colors.grey[300],
-        child: Icon(
-          Icons.person,
-          size: radius,
-          color: iconColor ?? Colors.grey[600],
-        ),
-      );
-    }
-
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    final cacheSize = (radius * 2 * dpr).round().clamp(32, 256);
-
-    return ClipOval(
-      child: CachedNetworkImage(
-        imageUrl: photoUrl,
-        width: radius * 2,
-        height: radius * 2,
-        fit: BoxFit.cover,
-        memCacheWidth: cacheSize,
-        memCacheHeight: cacheSize,
-        placeholder: (_, __) => placeholder,
-        errorWidget: (_, __, ___) => placeholder,
-        fadeInDuration: const Duration(milliseconds: 150),
-        fadeOutDuration: const Duration(milliseconds: 150),
-      ),
+    // Use SafeImageLoader to apply Windows-specific timeouts and
+    // failed-URL tracking without changing UI.
+    return SafeImageLoader().buildAvatar(
+      photoUrl: photoUrl,
+      radius: radius,
+      context: context,
+      backgroundColor: Colors.grey[300],
+      iconColor: iconColor ?? Colors.grey[600],
+      icon: Icons.person,
     );
   }
 }
