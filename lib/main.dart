@@ -16,6 +16,7 @@ import 'services/user_service_e2ee.dart';
 import 'services/app_prefetch_service.dart';
 import 'services/user_cache_service.dart';
 import 'services/conversation_cache_service.dart';
+import 'screens/call_screen.dart';
 
 /// Background notification handler
 @pragma('vm:entry-point')
@@ -92,6 +93,9 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   final PresenceService _presenceService = PresenceService();
   StreamSubscription<User?>? _authSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _incomingCallSub;
+  String? _activeIncomingCallId;
+  bool _callRouteOpen = false;
   bool _e2eeInitialized = false;
   bool _reloadCheckScheduled = false;
 
@@ -106,6 +110,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         UserService().loadCachedProfile();
         UserService().startUserDocListener();
         AppPrefetchService().warmUpForUser(user.uid);
+        _startIncomingCallListener(user.uid);
         // Initialize E2EE for logged-in users (only once per session)
         if (!_e2eeInitialized) {
           await _initializeE2EEForUser();
@@ -118,9 +123,45 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         UserService().stopUserDocListener();
         UserCacheService().clear();
         ConversationCacheService().clearAll();
+        _stopIncomingCallListener();
         _e2eeInitialized = false;
       }
     });
+  }
+
+  void _startIncomingCallListener(String uid) {
+    _incomingCallSub?.cancel();
+    _incomingCallSub = FirebaseFirestore.instance
+        .collection('calls')
+        .where('calleeId', isEqualTo: uid)
+        .where('status', isEqualTo: 'ringing')
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted || snapshot.docs.isEmpty) return;
+      final doc = snapshot.docs.first;
+
+      if (_callRouteOpen || _activeIncomingCallId == doc.id) return;
+      _activeIncomingCallId = doc.id;
+      _callRouteOpen = true;
+
+      Navigator.of(context)
+          .push(
+            MaterialPageRoute(
+              builder: (_) => CallScreen.incoming(callId: doc.id),
+            ),
+          )
+          .whenComplete(() {
+        _callRouteOpen = false;
+        _activeIncomingCallId = null;
+      });
+    });
+  }
+
+  void _stopIncomingCallListener() {
+    _incomingCallSub?.cancel();
+    _incomingCallSub = null;
+    _activeIncomingCallId = null;
+    _callRouteOpen = false;
   }
 
   Future<void> _initializeE2EEForUser() async {
@@ -139,6 +180,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.cancel();
+    _stopIncomingCallListener();
     _presenceService.stopPresenceTracking();
     _presenceService.dispose();
     super.dispose();

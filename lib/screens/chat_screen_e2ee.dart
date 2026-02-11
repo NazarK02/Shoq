@@ -16,6 +16,7 @@ import '../services/user_cache_service.dart';
 import '../services/file_download_service.dart';
 import 'user_profile_view_screen.dart';
 import 'image_viewer_screen.dart';
+import 'call_screen.dart';
 
 /// Improved E2EE chat with torrent-like file handling
 class ImprovedChatScreen extends StatefulWidget {
@@ -314,6 +315,40 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
         ),
       ),
       actions: [
+        IconButton(
+          icon: const Icon(Icons.call),
+          tooltip: 'Audio call',
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => CallScreen.outgoing(
+                  peerId: widget.recipientId,
+                  peerName: displayName,
+                  peerPhotoUrl: photoUrl,
+                  isVideo: false,
+                ),
+              ),
+            );
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.videocam),
+          tooltip: 'Video call',
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => CallScreen.outgoing(
+                  peerId: widget.recipientId,
+                  peerName: displayName,
+                  peerPhotoUrl: photoUrl,
+                  isVideo: true,
+                ),
+              ),
+            );
+          },
+        ),
         PopupMenuButton<String>(
           onSelected: (value) {
             if (value == 'clear') {

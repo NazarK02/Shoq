@@ -9,6 +9,8 @@ list(APPEND FLUTTER_PLUGIN_LIST
   firebase_core
   firebase_storage
   flutter_secure_storage_windows
+  flutter_webrtc
+  permission_handler_windows
   sodium_libs
   url_launcher_windows
 )
