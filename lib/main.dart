@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -17,6 +18,7 @@ import 'services/app_prefetch_service.dart';
 import 'services/user_cache_service.dart';
 import 'services/conversation_cache_service.dart';
 import 'screens/call_screen.dart';
+import 'services/signaling_service.dart';
 
 /// Background notification handler
 @pragma('vm:entry-point')
@@ -93,9 +95,10 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   final PresenceService _presenceService = PresenceService();
   StreamSubscription<User?>? _authSubscription;
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _incomingCallSub;
+  StreamSubscription<Map<String, dynamic>>? _incomingCallSub;
   String? _activeIncomingCallId;
   bool _callRouteOpen = false;
+  AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
   bool _e2eeInitialized = false;
   bool _reloadCheckScheduled = false;
 
@@ -131,23 +134,47 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   void _startIncomingCallListener(String uid) {
     _incomingCallSub?.cancel();
-    _incomingCallSub = FirebaseFirestore.instance
-        .collection('calls')
-        .where('calleeId', isEqualTo: uid)
-        .where('status', isEqualTo: 'ringing')
-        .snapshots()
-        .listen((snapshot) {
-      if (!mounted || snapshot.docs.isEmpty) return;
-      final doc = snapshot.docs.first;
+    SignalingService().ensureConnected(userId: uid);
 
-      if (_callRouteOpen || _activeIncomingCallId == doc.id) return;
-      _activeIncomingCallId = doc.id;
+    _incomingCallSub = SignalingService().messages.listen((message) {
+      if (!mounted) return;
+      if (message['type'] != 'call_offer') return;
+      if (message['to'] != uid) return;
+
+      final callId = message['callId']?.toString() ?? '';
+      if (callId.isEmpty) return;
+      if (_callRouteOpen || _activeIncomingCallId == callId) return;
+
+      _activeIncomingCallId = callId;
       _callRouteOpen = true;
+
+      final callerName = message['callerName']?.toString() ?? 'User';
+      final isVideo = message['isVideo'] == true;
+
+      if (_appLifecycleState != AppLifecycleState.resumed || Platform.isWindows) {
+        NotificationService().showIncomingCallNotification(
+          callId: callId,
+          callerName: callerName,
+          isVideo: isVideo,
+        );
+      }
+
+      final invite = CallInvite(
+        callId: callId,
+        fromId: message['from']?.toString() ?? '',
+        callerName: callerName,
+        callerPhotoUrl: message['callerPhotoUrl']?.toString(),
+        isVideo: isVideo,
+        offer: {
+          'sdp': message['sdp'],
+          'type': message['sdpType'],
+        },
+      );
 
       Navigator.of(context)
           .push(
             MaterialPageRoute(
-              builder: (_) => CallScreen.incoming(callId: doc.id),
+              builder: (_) => CallScreen.incoming(incomingInvite: invite),
             ),
           )
           .whenComplete(() {
@@ -160,6 +187,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   void _stopIncomingCallListener() {
     _incomingCallSub?.cancel();
     _incomingCallSub = null;
+    SignalingService().disconnect();
     _activeIncomingCallId = null;
     _callRouteOpen = false;
   }
@@ -188,6 +216,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appLifecycleState = state;
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
@@ -195,6 +224,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
     switch (state) {
       case AppLifecycleState.resumed:
+        SignalingService().ensureConnected(userId: user.uid);
         _presenceService.setOnline();
         break;
       case AppLifecycleState.paused:

@@ -1,36 +1,58 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../services/call_config.dart';
+import '../services/notification_service.dart';
+import '../services/signaling_service.dart';
+
+class CallInvite {
+  final String callId;
+  final String fromId;
+  final String callerName;
+  final String? callerPhotoUrl;
+  final bool isVideo;
+  final Map<String, dynamic> offer;
+
+  const CallInvite({
+    required this.callId,
+    required this.fromId,
+    required this.callerName,
+    required this.callerPhotoUrl,
+    required this.isVideo,
+    required this.offer,
+  });
+}
+
 class CallScreen extends StatefulWidget {
-  final String? callId;
+  final CallInvite? invite;
   final String? peerId;
   final String? peerName;
   final String? peerPhotoUrl;
   final bool isVideo;
   final bool isIncoming;
 
-  const CallScreen.outgoing({
+  CallScreen.outgoing({
     super.key,
     required this.peerId,
     required this.peerName,
     this.peerPhotoUrl,
     this.isVideo = false,
-  })  : callId = null,
+  })  : invite = null,
         isIncoming = false;
 
-  const CallScreen.incoming({
+  CallScreen.incoming({
     super.key,
-    required this.callId,
-  })  : peerId = null,
-        peerName = null,
-        peerPhotoUrl = null,
-        isVideo = false,
+    required CallInvite incomingInvite,
+  })  : invite = incomingInvite,
+        peerId = incomingInvite.fromId,
+        peerName = incomingInvite.callerName,
+        peerPhotoUrl = incomingInvite.callerPhotoUrl,
+        isVideo = incomingInvite.isVideo,
         isIncoming = true;
 
   @override
@@ -41,15 +63,14 @@ enum _CallPhase { ringing, connecting, inCall, ended }
 
 class _CallScreenState extends State<CallScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final SignalingService _signaling = SignalingService();
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   MediaStream? _remoteStream;
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _callDocSub;
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _remoteCandidatesSub;
+  StreamSubscription<Map<String, dynamic>>? _signalSub;
   Timer? _ringTimeout;
 
   final List<RTCIceCandidate> _pendingRemoteCandidates = [];
@@ -60,8 +81,11 @@ class _CallScreenState extends State<CallScreen> {
   bool _isVideo = false;
 
   String? _callId;
+  String? _selfId;
+  String? _peerId;
   String _peerDisplayName = 'User';
   String? _peerPhotoUrl;
+  Map<String, dynamic>? _remoteOffer;
   _CallPhase _phase = _CallPhase.ringing;
 
   @override
@@ -69,6 +93,13 @@ class _CallScreenState extends State<CallScreen> {
     super.initState();
     _localRenderer.initialize();
     _remoteRenderer.initialize();
+
+    _isVideo = widget.isVideo;
+    _peerId = widget.peerId;
+    _peerDisplayName = widget.peerName ?? 'User';
+    _peerPhotoUrl = widget.peerPhotoUrl;
+    _remoteOffer = widget.invite?.offer;
+    _callId = widget.invite?.callId;
 
     if (widget.isIncoming) {
       _initIncomingCall();
@@ -80,8 +111,7 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void dispose() {
     _ringTimeout?.cancel();
-    _callDocSub?.cancel();
-    _remoteCandidatesSub?.cancel();
+    _signalSub?.cancel();
     _cleanupRtc();
     _localRenderer.dispose();
     _remoteRenderer.dispose();
@@ -89,81 +119,118 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _initOutgoingCall() async {
-    _isVideo = widget.isVideo;
-    _peerDisplayName = widget.peerName ?? 'User';
-    _peerPhotoUrl = widget.peerPhotoUrl;
-
     final allowed = await _ensurePermissions();
     if (!allowed) {
       if (mounted) Navigator.pop(context);
       return;
     }
 
-    await _createPeerConnection();
-    await _startLocalStream();
+    final currentUser = _auth.currentUser;
+    if (currentUser == null || _peerId == null) return;
+    _selfId = currentUser.uid;
+    await _signaling.ensureConnected(userId: currentUser.uid);
+
+    try {
+      await _createPeerConnection();
+      await _startLocalStream();
+    } catch (_) {
+      _endCallLocal();
+      return;
+    }
 
     setState(() => _phase = _CallPhase.ringing);
 
-    final currentUser = _auth.currentUser;
-    if (currentUser == null || widget.peerId == null) return;
+    _callId = '${currentUser.uid}_${DateTime.now().microsecondsSinceEpoch}';
 
-    final callDoc = _firestore.collection('calls').doc();
-    _callId = callDoc.id;
-
-    final offer = await _peerConnection!.createOffer();
+    final offer = await _peerConnection!.createOffer(_rtcOfferConstraints());
     await _peerConnection!.setLocalDescription(offer);
 
-    await callDoc.set({
-      'callerId': currentUser.uid,
-      'calleeId': widget.peerId,
+    await _signaling.send({
+      'type': 'call_offer',
+      'callId': _callId,
+      'from': currentUser.uid,
+      'to': _peerId,
+      'sdp': offer.sdp,
+      'sdpType': offer.type,
+      'isVideo': _isVideo,
       'callerName': currentUser.displayName ?? 'User',
       'callerPhotoUrl': currentUser.photoURL ?? '',
-      'isVideo': _isVideo,
-      'status': 'ringing',
-      'createdAt': FieldValue.serverTimestamp(),
-      'offer': {
-        'type': offer.type,
-        'sdp': offer.sdp,
-      },
     });
 
-    _listenForRemoteCandidates('calleeCandidates');
-    _listenToCallDoc();
+    _listenToSignaling();
 
     _ringTimeout = Timer(const Duration(seconds: 35), () async {
       if (_phase != _CallPhase.ringing || _callId == null) return;
-      await _updateCallStatus('missed');
+      await _sendSignal('call_missed');
       _endCallLocal();
     });
   }
 
   Future<void> _initIncomingCall() async {
-    _callId = widget.callId;
-    if (_callId == null) return;
-
-    final doc = await _firestore.collection('calls').doc(_callId).get();
-    if (!doc.exists || doc.data() == null) {
-      _endCallLocal();
-      return;
-    }
-
-    final data = doc.data()!;
-    final status = data['status']?.toString() ?? '';
-    if (status != 'ringing') {
-      _endCallLocal();
-      return;
-    }
-
-    _isVideo = data['isVideo'] == true;
-    final callerName = data['callerName']?.toString();
-    _peerDisplayName = callerName != null && callerName.trim().isNotEmpty
-        ? callerName.trim()
-        : 'User';
-    final photo = data['callerPhotoUrl']?.toString();
-    _peerPhotoUrl = photo != null && photo.trim().isNotEmpty ? photo : null;
-
-    _listenToCallDoc();
+    final currentUser = _auth.currentUser;
+    if (currentUser == null || _callId == null) return;
+    _selfId = currentUser.uid;
+    await _signaling.ensureConnected(userId: currentUser.uid);
+    _listenToSignaling();
+    await NotificationService().clearCallNotification(_callId!);
     if (mounted) setState(() {});
+  }
+
+  Future<void> _listenToSignaling() async {
+    _signalSub?.cancel();
+    _signalSub = _signaling.messages.listen((message) async {
+      if (message['callId']?.toString() != _callId) return;
+      final type = message['type']?.toString();
+
+      if (type == 'call_answer') {
+        final answer = {
+          'sdp': message['sdp'],
+          'type': message['sdpType'],
+        };
+        if (!_remoteDescriptionSet) {
+          await _setRemoteDescription(answer);
+          _ringTimeout?.cancel();
+          if (mounted) setState(() => _phase = _CallPhase.inCall);
+        }
+        return;
+      }
+
+      if (type == 'call_ice') {
+        final candidate = RTCIceCandidate(
+          message['candidate'],
+          message['sdpMid'],
+          message['sdpMLineIndex'],
+        );
+        if (_peerConnection == null) return;
+        if (_remoteDescriptionSet) {
+          await _peerConnection!.addCandidate(candidate);
+        } else {
+          _pendingRemoteCandidates.add(candidate);
+        }
+        return;
+      }
+
+      if (type == 'call_end' ||
+          type == 'call_decline' ||
+          type == 'call_missed') {
+        if (_callId != null) {
+          await NotificationService().clearCallNotification(_callId!);
+        }
+        _endCallLocal();
+        return;
+      }
+    });
+  }
+
+  Future<void> _sendSignal(String type, {Map<String, dynamic>? data}) async {
+    if (_callId == null || _selfId == null || _peerId == null) return;
+    await _signaling.send({
+      'type': type,
+      'callId': _callId,
+      'from': _selfId,
+      'to': _peerId,
+      ...?data,
+    });
   }
 
   Future<bool> _ensurePermissions() async {
@@ -186,14 +253,7 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _createPeerConnection() async {
     final config = {
-      'iceServers': [
-        {
-          'urls': [
-            'stun:stun.l.google.com:19302',
-            'stun:stun1.l.google.com:19302',
-          ],
-        }
-      ],
+      'iceServers': CallConfig.iceServers,
       'sdpSemantics': 'unified-plan',
     };
 
@@ -207,25 +267,30 @@ class _CallScreenState extends State<CallScreen> {
     _peerConnection = await createPeerConnection(config, constraints);
 
     _peerConnection!.onIceCandidate = (candidate) {
-      if (candidate.candidate == null || _callId == null) return;
-      final collection = widget.isIncoming
-          ? 'calleeCandidates'
-          : 'callerCandidates';
-      _firestore
-          .collection('calls')
-          .doc(_callId)
-          .collection(collection)
-          .add({
+      if (candidate.candidate == null) return;
+      _sendSignal('call_ice', data: {
         'candidate': candidate.candidate,
         'sdpMid': candidate.sdpMid,
         'sdpMLineIndex': candidate.sdpMLineIndex,
-        'createdAt': FieldValue.serverTimestamp(),
       });
     };
 
-    _peerConnection!.onTrack = (event) {
-      if (event.streams.isEmpty) return;
-      _remoteStream = event.streams.first;
+    _peerConnection!.onTrack = (event) async {
+      MediaStream? stream;
+      if (event.streams.isNotEmpty) {
+        stream = event.streams.first;
+      } else {
+        stream = _remoteStream ?? await createLocalMediaStream('remote');
+        stream.addTrack(event.track);
+      }
+
+      _remoteStream = stream;
+      _remoteRenderer.srcObject = _remoteStream;
+      if (mounted) setState(() {});
+    };
+
+    _peerConnection!.onAddStream = (stream) {
+      _remoteStream = stream;
       _remoteRenderer.srcObject = _remoteStream;
       if (mounted) setState(() {});
     };
@@ -245,7 +310,11 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _startLocalStream() async {
     final mediaConstraints = {
-      'audio': true,
+      'audio': {
+        'echoCancellation': true,
+        'noiseSuppression': true,
+        'autoGainControl': true,
+      },
       'video': _isVideo
           ? {
               'facingMode': 'user',
@@ -255,71 +324,26 @@ class _CallScreenState extends State<CallScreen> {
           : false,
     };
 
-    _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    try {
+      _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to access media devices: $e')),
+        );
+      }
+      rethrow;
+    }
+
     _localRenderer.srcObject = _localStream;
 
     for (final track in _localStream!.getTracks()) {
       await _peerConnection!.addTrack(track, _localStream!);
     }
-  }
 
-  void _listenToCallDoc() {
-    if (_callId == null) return;
-    _callDocSub?.cancel();
-    _callDocSub = _firestore.collection('calls').doc(_callId).snapshots().listen(
-      (snapshot) async {
-        if (!snapshot.exists || snapshot.data() == null) {
-          _endCallLocal();
-          return;
-        }
-
-        final data = snapshot.data()!;
-        final status = data['status']?.toString() ?? '';
-
-        if (status == 'ended' ||
-            status == 'declined' ||
-            status == 'missed') {
-          _endCallLocal();
-          return;
-        }
-
-        if (!widget.isIncoming && data['answer'] != null) {
-          final answer = data['answer'] as Map<String, dynamic>;
-          if (!_remoteDescriptionSet) {
-            await _setRemoteDescription(answer);
-            if (mounted) setState(() => _phase = _CallPhase.inCall);
-          }
-        }
-      },
-    );
-  }
-
-  void _listenForRemoteCandidates(String collection) {
-    if (_callId == null) return;
-    _remoteCandidatesSub?.cancel();
-    _remoteCandidatesSub = _firestore
-        .collection('calls')
-        .doc(_callId)
-        .collection(collection)
-        .snapshots()
-        .listen((snapshot) async {
-      for (final doc in snapshot.docChanges) {
-        if (doc.type != DocumentChangeType.added) continue;
-        final data = doc.doc.data();
-        if (data == null) continue;
-        final candidate = RTCIceCandidate(
-          data['candidate'],
-          data['sdpMid'],
-          data['sdpMLineIndex'],
-        );
-        if (_peerConnection == null) return;
-        if (_remoteDescriptionSet) {
-          await _peerConnection!.addCandidate(candidate);
-        } else {
-          _pendingRemoteCandidates.add(candidate);
-        }
-      }
-    });
+    if (Platform.isAndroid) {
+      await Helper.setSpeakerphoneOn(_isVideo);
+    }
   }
 
   Future<void> _setRemoteDescription(Map<String, dynamic> data) async {
@@ -337,6 +361,16 @@ class _CallScreenState extends State<CallScreen> {
     _pendingRemoteCandidates.clear();
   }
 
+  Map<String, dynamic> _rtcOfferConstraints() {
+    return {
+      'mandatory': {
+        'OfferToReceiveAudio': true,
+        'OfferToReceiveVideo': _isVideo,
+      },
+      'optional': [],
+    };
+  }
+
   Future<void> _answerCall() async {
     final allowed = await _ensurePermissions();
     if (!allowed) {
@@ -344,58 +378,47 @@ class _CallScreenState extends State<CallScreen> {
       return;
     }
 
-    if (_callId == null) return;
-
-    await _createPeerConnection();
-    await _startLocalStream();
-
-    final callDoc = _firestore.collection('calls').doc(_callId);
-    final snapshot = await callDoc.get();
-    if (!snapshot.exists || snapshot.data() == null) {
+    if (_remoteOffer == null) {
       _endCallLocal();
       return;
     }
 
-    final data = snapshot.data()!;
-    final offer = data['offer'] as Map<String, dynamic>?;
-    if (offer == null) {
+    try {
+      await _createPeerConnection();
+      await _startLocalStream();
+    } catch (_) {
       _endCallLocal();
       return;
     }
 
-    await _setRemoteDescription(offer);
+    await _setRemoteDescription(_remoteOffer!);
 
-    final answer = await _peerConnection!.createAnswer();
+    final answer = await _peerConnection!.createAnswer(_rtcOfferConstraints());
     await _peerConnection!.setLocalDescription(answer);
 
-    await callDoc.update({
-      'answer': {
-        'type': answer.type,
-        'sdp': answer.sdp,
-      },
-      'status': 'accepted',
+    await _sendSignal('call_answer', data: {
+      'sdp': answer.sdp,
+      'sdpType': answer.type,
     });
 
-    _listenForRemoteCandidates('callerCandidates');
+    await NotificationService().clearCallNotification(_callId!);
     if (mounted) setState(() => _phase = _CallPhase.inCall);
   }
 
   Future<void> _declineCall() async {
-    await _updateCallStatus('declined');
+    await _sendSignal('call_decline');
+    if (_callId != null) {
+      await NotificationService().clearCallNotification(_callId!);
+    }
     _endCallLocal();
   }
 
   Future<void> _hangUp() async {
-    await _updateCallStatus('ended');
+    await _sendSignal('call_end');
+    if (_callId != null) {
+      await NotificationService().clearCallNotification(_callId!);
+    }
     _endCallLocal();
-  }
-
-  Future<void> _updateCallStatus(String status) async {
-    if (_callId == null) return;
-    await _firestore.collection('calls').doc(_callId).update({
-      'status': status,
-      'endedAt': FieldValue.serverTimestamp(),
-    });
   }
 
   void _endCallLocal() {
@@ -439,6 +462,13 @@ class _CallScreenState extends State<CallScreen> {
       track.enabled = !_isCameraOff;
     }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _switchCamera() async {
+    if (!_isVideo) return;
+    final tracks = _localStream?.getVideoTracks();
+    if (tracks == null || tracks.isEmpty) return;
+    await Helper.switchCamera(tracks.first);
   }
 
   String _statusText() {
@@ -560,6 +590,12 @@ class _CallScreenState extends State<CallScreen> {
             icon: _isCameraOff ? Icons.videocam_off : Icons.videocam,
             color: Colors.white24,
             onPressed: _toggleCamera,
+          ),
+        if (_isVideo)
+          _buildCircleButton(
+            icon: Icons.cameraswitch,
+            color: Colors.white24,
+            onPressed: _switchCamera,
           ),
         _buildCircleButton(
           icon: _isSpeakerOn ? Icons.volume_up : Icons.volume_down,

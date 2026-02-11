@@ -19,7 +19,8 @@ class NotificationService {
   FlutterLocalNotificationsPlugin? _localNotifications;
   StreamSubscription<User?>? _authSubscription;
   String? _cachedToken;
-  bool _isInitialized = false;
+  bool _fcmInitialized = false;
+  bool _localInitialized = false;
 
   // Track message counts per conversation for notification grouping
   final Map<String, int> _messageCountPerSender = {};
@@ -30,9 +31,14 @@ class NotificationService {
   String? _activeChatUserId;
 
   // Check if notifications are supported on this platform
-  bool get isSupported {
+  bool get supportsFcm {
     if (kIsWeb) return false;
     return Platform.isAndroid || Platform.isIOS;
+  }
+
+  bool get supportsLocalNotifications {
+    if (kIsWeb) return false;
+    return Platform.isAndroid || Platform.isIOS || Platform.isWindows;
   }
 
   // Set the currently active chat
@@ -41,7 +47,7 @@ class NotificationService {
     print('✅ Active chat set to: $userId');
     
     // Clear notifications for this user when opening their chat
-    if (userId != null && isSupported) {
+    if (userId != null && supportsLocalNotifications) {
       clearNotificationsForSender(userId);
     }
   }
@@ -54,13 +60,22 @@ class NotificationService {
     print('🔔 Initializing NotificationService...');
     
     // Skip initialization on unsupported platforms
-    if (!isSupported) {
+    if (!supportsFcm && !supportsLocalNotifications) {
       print('⚠️ Push notifications not supported on this platform (Windows/Web/macOS/Linux)');
       return;
     }
 
-    _fcm ??= FirebaseMessaging.instance;
     _localNotifications ??= FlutterLocalNotificationsPlugin();
+    if (supportsLocalNotifications && !_localInitialized) {
+      await _initializeLocalNotifications();
+      _localInitialized = true;
+    }
+
+    if (supportsFcm) {
+      _fcm ??= FirebaseMessaging.instance;
+    } else {
+      return;
+    }
 
     _authSubscription ??= _auth.authStateChanges().listen((user) {
       if (user != null && _cachedToken != null) {
@@ -68,7 +83,7 @@ class NotificationService {
       }
     });
 
-    if (_isInitialized) {
+    if (_fcmInitialized) {
       if (_cachedToken != null && _auth.currentUser != null) {
         await _saveTokenToFirestore(_cachedToken!);
       }
@@ -105,16 +120,13 @@ class NotificationService {
         _saveTokenToFirestore(newToken);
       });
 
-      // Initialize local notifications
-      await _initializeLocalNotifications();
-
       // Handle foreground messages
       FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
       // Handle background messages
       FirebaseMessaging.onMessageOpenedApp.listen(_handleBackgroundMessage);
       
-      _isInitialized = true;
+      _fcmInitialized = true;
       print('✅ Notification service fully initialized');
     } else if (settings.authorizationStatus == AuthorizationStatus.denied) {
       print('❌ User denied notification permission');
@@ -123,9 +135,9 @@ class NotificationService {
     }
   }
 
-  // Initialize local notifications for Android/iOS
+  // Initialize local notifications for Android/iOS/Windows
   Future<void> _initializeLocalNotifications() async {
-    if (!isSupported || _localNotifications == null) return;
+    if (!supportsLocalNotifications || _localNotifications == null) return;
 
     print('📲 Initializing local notifications...');
 
@@ -160,6 +172,15 @@ class NotificationService {
         playSound: true,
       );
 
+      const AndroidNotificationChannel callsChannel = AndroidNotificationChannel(
+        'calls_channel',
+        'Calls',
+        description: 'Incoming calls',
+        importance: Importance.max,
+        enableVibration: true,
+        playSound: true,
+      );
+
       const AndroidNotificationChannel friendRequestsChannel = AndroidNotificationChannel(
         'friend_requests_channel',
         'Friend Requests',
@@ -173,6 +194,7 @@ class NotificationService {
           AndroidFlutterLocalNotificationsPlugin>();
       
       await plugin?.createNotificationChannel(channel);
+      await plugin?.createNotificationChannel(callsChannel);
       await plugin?.createNotificationChannel(friendRequestsChannel);
       
       print('✅ Android notification channels created');
@@ -247,7 +269,7 @@ class NotificationService {
     _activeChatUserId = null;
     
     // Clear all local notifications (only on supported platforms)
-    if (isSupported && _localNotifications != null) {
+    if (supportsLocalNotifications && _localNotifications != null) {
       await _localNotifications!.cancelAll();
       print('🗑️ All local notifications cleared');
     }
@@ -284,9 +306,62 @@ class NotificationService {
     // Handle navigation based on payload
   }
 
+  // Show incoming call notification (Android/iOS/Windows)
+  Future<void> showIncomingCallNotification({
+    required String callId,
+    required String callerName,
+    required bool isVideo,
+  }) async {
+    if (!supportsLocalNotifications || _localNotifications == null) return;
+
+    final notificationId = callId.hashCode.abs() % 100000;
+    final title = callerName.isEmpty ? 'Incoming call' : callerName;
+    final body = isVideo ? 'Incoming video call' : 'Incoming call';
+
+    final androidDetails = AndroidNotificationDetails(
+      'calls_channel',
+      'Calls',
+      channelDescription: 'Incoming calls',
+      importance: Importance.max,
+      priority: Priority.max,
+      category: AndroidNotificationCategory.call,
+      fullScreenIntent: true,
+      ongoing: true,
+      timeoutAfter: 35000,
+    );
+
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    final windowsDetails = WindowsNotificationDetails();
+
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+      windows: windowsDetails,
+    );
+
+    await _localNotifications!.show(
+      notificationId,
+      title,
+      body,
+      details,
+      payload: '{"type":"call","callId":"$callId"}',
+    );
+  }
+
+  Future<void> clearCallNotification(String callId) async {
+    if (!supportsLocalNotifications || _localNotifications == null) return;
+    final notificationId = callId.hashCode.abs() % 100000;
+    await _localNotifications!.cancel(notificationId);
+  }
+
   // Show local notification with grouping
   Future<void> _showLocalNotification(RemoteMessage message) async {
-    if (!isSupported || _localNotifications == null) return;
+    if (!supportsLocalNotifications || _localNotifications == null) return;
 
     final data = message.data;
     final type = data['type'];
@@ -400,7 +475,7 @@ class NotificationService {
 
   // Clear notifications for a specific sender (when opening chat)
   Future<void> clearNotificationsForSender(String senderId) async {
-    if (!isSupported || _localNotifications == null) return;
+    if (!supportsLocalNotifications || _localNotifications == null) return;
 
     final notificationId = senderId.hashCode.abs() % 100000;
     await _localNotifications!.cancel(notificationId);
