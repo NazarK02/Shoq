@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -872,6 +873,30 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
           Icons.person,
           size: radius,
           color: Colors.grey[600],
+        ),
+      );
+    }
+    // Windows-specific handling to prevent crashes
+    if (Platform.isWindows) {
+      return ClipOval(
+        child: Image.network(
+          photoUrl,
+          width: radius * 2,
+          height: radius * 2,
+          fit: BoxFit.cover,
+          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+            if (wasSynchronouslyLoaded) return child;
+            return AnimatedOpacity(
+              opacity: frame == null ? 0 : 1,
+              duration: const Duration(milliseconds: 150),
+              child: frame == null ? placeholder : child,
+            );
+          },
+          errorBuilder: (_, __, ___) => placeholder,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return placeholder;
+          },
         ),
       );
     }

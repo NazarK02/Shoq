@@ -909,7 +909,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       );
     }
+    // Windows-specific handling to prevent crashes
+    if (Platform.isWindows) {
+      return ClipOval(
+        child: Image.network(
+          photoUrl,
+          width: radius * 2,
+          height: radius * 2,
+          fit: BoxFit.cover,
+          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+            if (wasSynchronouslyLoaded) return child;
+            return AnimatedOpacity(
+              opacity: frame == null ? 0 : 1,
+              duration: const Duration(milliseconds: 150),
+              child: frame == null ? placeholder : child,
+            );
+          },
+          errorBuilder: (_, __, ___) => placeholder,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return placeholder;
+          },
+        ),
+      );
+    }
 
+    // Use CachedNetworkImage for mobile platforms
     final dpr = MediaQuery.of(context).devicePixelRatio;
     final cacheSize = (radius * 2 * dpr).round().clamp(64, 512);
 
