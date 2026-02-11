@@ -36,7 +36,7 @@ class CallScreen extends StatefulWidget {
   final bool isVideo;
   final bool isIncoming;
 
-  CallScreen.outgoing({
+  const CallScreen.outgoing({
     super.key,
     required this.peerId,
     required this.peerName,
@@ -72,6 +72,7 @@ class _CallScreenState extends State<CallScreen> {
   MediaStream? _remoteStream;
   StreamSubscription<Map<String, dynamic>>? _signalSub;
   Timer? _ringTimeout;
+  Timer? _offerRetry;
 
   final List<RTCIceCandidate> _pendingRemoteCandidates = [];
   bool _remoteDescriptionSet = false;
@@ -85,7 +86,10 @@ class _CallScreenState extends State<CallScreen> {
   String? _peerId;
   String _peerDisplayName = 'User';
   String? _peerPhotoUrl;
+  String _callerName = 'User';
+  String _callerPhotoUrl = '';
   Map<String, dynamic>? _remoteOffer;
+  Map<String, dynamic>? _localOffer;
   _CallPhase _phase = _CallPhase.ringing;
 
   @override
@@ -111,6 +115,7 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void dispose() {
     _ringTimeout?.cancel();
+    _offerRetry?.cancel();
     _signalSub?.cancel();
     _cleanupRtc();
     _localRenderer.dispose();
@@ -128,6 +133,8 @@ class _CallScreenState extends State<CallScreen> {
     final currentUser = _auth.currentUser;
     if (currentUser == null || _peerId == null) return;
     _selfId = currentUser.uid;
+    _callerName = currentUser.displayName ?? 'User';
+    _callerPhotoUrl = currentUser.photoURL ?? '';
     await _signaling.ensureConnected(userId: currentUser.uid);
 
     try {
@@ -141,23 +148,17 @@ class _CallScreenState extends State<CallScreen> {
     setState(() => _phase = _CallPhase.ringing);
 
     _callId = '${currentUser.uid}_${DateTime.now().microsecondsSinceEpoch}';
+    _listenToSignaling();
 
     final offer = await _peerConnection!.createOffer(_rtcOfferConstraints());
     await _peerConnection!.setLocalDescription(offer);
-
-    await _signaling.send({
-      'type': 'call_offer',
-      'callId': _callId,
-      'from': currentUser.uid,
-      'to': _peerId,
+    _localOffer = {
       'sdp': offer.sdp,
       'sdpType': offer.type,
-      'isVideo': _isVideo,
-      'callerName': currentUser.displayName ?? 'User',
-      'callerPhotoUrl': currentUser.photoURL ?? '',
-    });
+    };
 
-    _listenToSignaling();
+    await _sendOffer();
+    _startOfferRetry();
 
     _ringTimeout = Timer(const Duration(seconds: 35), () async {
       if (_phase != _CallPhase.ringing || _callId == null) return;
@@ -189,6 +190,7 @@ class _CallScreenState extends State<CallScreen> {
         };
         if (!_remoteDescriptionSet) {
           await _setRemoteDescription(answer);
+          _offerRetry?.cancel();
           _ringTimeout?.cancel();
           if (mounted) setState(() => _phase = _CallPhase.inCall);
         }
@@ -216,6 +218,7 @@ class _CallScreenState extends State<CallScreen> {
         if (_callId != null) {
           await NotificationService().clearCallNotification(_callId!);
         }
+        _offerRetry?.cancel();
         _endCallLocal();
         return;
       }
@@ -424,8 +427,38 @@ class _CallScreenState extends State<CallScreen> {
   void _endCallLocal() {
     if (!mounted) return;
     setState(() => _phase = _CallPhase.ended);
+    _offerRetry?.cancel();
     _cleanupRtc();
     Navigator.pop(context);
+  }
+
+  Future<void> _sendOffer() async {
+    if (_callId == null ||
+        _selfId == null ||
+        _peerId == null ||
+        _localOffer == null) {
+      return;
+    }
+
+    await _signaling.send({
+      'type': 'call_offer',
+      'callId': _callId,
+      'from': _selfId,
+      'to': _peerId,
+      'sdp': _localOffer!['sdp'],
+      'sdpType': _localOffer!['sdpType'],
+      'isVideo': _isVideo,
+      'callerName': _callerName,
+      'callerPhotoUrl': _callerPhotoUrl,
+    });
+  }
+
+  void _startOfferRetry() {
+    _offerRetry?.cancel();
+    _offerRetry = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (_phase != _CallPhase.ringing) return;
+      await _sendOffer();
+    });
   }
 
   void _cleanupRtc() {

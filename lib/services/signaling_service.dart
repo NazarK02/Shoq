@@ -14,7 +14,7 @@ class SignalingService {
       StreamController.broadcast();
 
   WebSocket? _socket;
-  bool _connecting = false;
+  Future<void>? _connectFuture;
   String? _userId;
   String? _url;
 
@@ -29,34 +29,51 @@ class SignalingService {
       print('SignalingService: SIGNALING_URL not set.');
       return;
     }
-    if (_connecting) return;
     if (isConnected && _userId == userId && _url == targetUrl) return;
 
-    _connecting = true;
+    if (_connectFuture != null) {
+      await _connectFuture;
+      return;
+    }
+
     _userId = userId;
     _url = targetUrl;
 
+    _connectFuture = () async {
+      try {
+        await _socket?.close();
+        _socket = await WebSocket.connect(targetUrl);
+        _socket!.listen(
+          _handleMessage,
+          onDone: _handleDone,
+          onError: _handleError,
+          cancelOnError: true,
+        );
+        _sendRaw({
+          'type': 'register',
+          'userId': userId,
+        });
+      } catch (e) {
+        print('SignalingService: connect failed: $e');
+      }
+    }();
+
     try {
-      await _socket?.close();
-      _socket = await WebSocket.connect(targetUrl);
-      _socket!.listen(
-        _handleMessage,
-        onDone: _handleDone,
-        onError: _handleError,
-        cancelOnError: true,
-      );
-      await send({
-        'type': 'register',
-        'userId': userId,
-      });
-    } catch (e) {
-      print('SignalingService: connect failed: $e');
+      await _connectFuture;
     } finally {
-      _connecting = false;
+      _connectFuture = null;
     }
   }
 
   Future<void> send(Map<String, dynamic> data) async {
+    if (_connectFuture != null) {
+      await _connectFuture;
+    }
+    if (!isConnected) return;
+    _sendRaw(data);
+  }
+
+  void _sendRaw(Map<String, dynamic> data) {
     if (!isConnected) return;
     try {
       _socket!.add(jsonEncode(data));
@@ -68,6 +85,7 @@ class SignalingService {
   void disconnect() {
     _socket?.close();
     _socket = null;
+    _connectFuture = null;
   }
 
   void _handleMessage(dynamic message) {
