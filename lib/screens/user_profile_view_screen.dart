@@ -876,11 +876,13 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         ),
       );
     }
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheSize = (radius * 2 * dpr).round().clamp(64, 512);
     // Windows-specific handling to prevent crashes
     if (Platform.isWindows) {
       return ClipOval(
-        child: Image.network(
-          photoUrl,
+        child: Image(
+          image: CachedNetworkImageProvider(photoUrl),
           width: radius * 2,
           height: radius * 2,
           fit: BoxFit.cover,
@@ -900,9 +902,6 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         ),
       );
     }
-
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    final cacheSize = (radius * 2 * dpr).round().clamp(64, 512);
 
     return ClipOval(
       child: CachedNetworkImage(

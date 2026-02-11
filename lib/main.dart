@@ -46,8 +46,9 @@ Future<void> main() async {
     firebaseMessagingBackgroundHandler,
   );
 
-  /// Initialize notification service
+  /// Initialize theme before UI to avoid flicker
   final themeService = ThemeService();
+  await themeService.initialize();
 
   runApp(
     ChangeNotifierProvider.value(
@@ -58,7 +59,6 @@ Future<void> main() async {
 
   // Defer non-critical init to keep startup fast
   Future.microtask(() async {
-    await themeService.initialize();
     await NotificationService().initialize();
   });
 }

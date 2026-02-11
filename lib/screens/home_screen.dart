@@ -31,7 +31,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _rebuildTimer;
   Timer? _cacheDebounce;
   final Set<String> _warmedUserIds = {};
+  final Set<String> _prefetchedImageUrls = {};
   List<Map<String, dynamic>> _cachedConversations = [];
+  bool _cacheLoaded = false;
 
   @override
   void initState() {
@@ -64,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     setState(() {
       _cachedConversations = cached;
+      _cacheLoaded = true;
     });
     _warmUsersFromConversations(cached, user.uid);
   }
@@ -275,6 +278,12 @@ class _HomeScreenState extends State<HomeScreen> {
         final canUseCache = (!hasSnapshot ||
                 snapshot.connectionState == ConnectionState.waiting) &&
             _cachedConversations.isNotEmpty;
+        final waitingForLive = (!hasSnapshot ||
+            snapshot.connectionState == ConnectionState.waiting);
+
+        if (waitingForLive && !_cacheLoaded) {
+          return _buildChatSkeleton();
+        }
 
         if (hasLiveData) {
           _scheduleConversationCacheWrite(
@@ -365,6 +374,7 @@ class _HomeScreenState extends State<HomeScreen> {
             final photoURL = _normalizePhotoUrl(
               userData?['photoUrl'] ?? userData?['photoURL'],
             );
+            _prefetchAvatar(photoURL);
 
             if (_searchQuery.isNotEmpty &&
                 !displayName.toLowerCase().contains(_searchQuery)) {
@@ -512,6 +522,48 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _prefetchAvatar(String? photoUrl) {
+    if (photoUrl == null || photoUrl.isEmpty) return;
+    if (_prefetchedImageUrls.contains(photoUrl)) return;
+    _prefetchedImageUrls.add(photoUrl);
+    try {
+      precacheImage(CachedNetworkImageProvider(photoUrl), context);
+    } catch (_) {
+      // Best-effort prefetch only.
+    }
+  }
+
+  Widget _buildChatSkeleton() {
+    return ListView.builder(
+      itemCount: 8,
+      itemBuilder: (context, index) {
+        return ListTile(
+          leading: CircleAvatar(
+            radius: 20,
+            backgroundColor: Colors.grey[300],
+          ),
+          title: _buildSkeletonLine(width: 140, height: 12),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: _buildSkeletonLine(width: 200, height: 10),
+          ),
+          trailing: _buildSkeletonLine(width: 32, height: 10),
+        );
+      },
+    );
+  }
+
+  Widget _buildSkeletonLine({required double width, required double height}) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.grey[300],
+        borderRadius: BorderRadius.circular(6),
+      ),
+    );
+  }
+
   String? _normalizePhotoUrl(dynamic value) {
     final text = value?.toString().trim() ?? '';
     if (text.isEmpty || text.toLowerCase() == 'null') return null;
@@ -543,6 +595,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheSize = (radius * 2 * dpr).round().clamp(32, 256);
     // Windows-specific handling to prevent crashes
     if (Platform.isWindows) {
       return ClipOval(
@@ -567,9 +621,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
-
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    final cacheSize = (radius * 2 * dpr).round().clamp(32, 256);
 
     return ClipOval(
       child: CachedNetworkImage(

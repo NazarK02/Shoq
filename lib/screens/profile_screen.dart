@@ -909,6 +909,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       );
     }
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheSize = (radius * 2 * dpr).round().clamp(64, 512);
     // Windows-specific handling to prevent crashes
     if (Platform.isWindows) {
       return ClipOval(
@@ -935,9 +937,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
 
     // Use CachedNetworkImage for mobile platforms
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    final cacheSize = (radius * 2 * dpr).round().clamp(64, 512);
-
     return ClipOval(
       child: CachedNetworkImage(
         imageUrl: photoUrl,

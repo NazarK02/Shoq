@@ -345,6 +345,8 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
     if (photoUrl == null || photoUrl.isEmpty) {
       return placeholder;
     }
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheSize = (radius * 2 * dpr).round().clamp(32, 256);
     // Windows-specific handling to prevent crashes
     if (Platform.isWindows) {
       return ClipOval(
@@ -352,8 +354,8 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
           width: radius * 2,
           height: radius * 2,
           color: Theme.of(context).scaffoldBackgroundColor,
-          child: Image.network(
-            photoUrl,
+          child: Image(
+            image: CachedNetworkImageProvider(photoUrl),
             width: radius * 2,
             height: radius * 2,
             fit: BoxFit.cover,
@@ -374,9 +376,6 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
         ),
       );
     }
-
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    final cacheSize = (radius * 2 * dpr).round().clamp(32, 256);
 
     return ClipOval(
       child: Container(
