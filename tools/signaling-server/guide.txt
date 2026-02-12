@@ -1,5 +1,5 @@
 flutter run --dart-define=SIGNALING_URL=ws://192.168.1.189:3000 --dart-define=LOCAL_ONLY=true
-to host
+
  cd tools/signaling-server
->> npm install
->> npm start 
+ npm install
+ npm start 

@@ -64,8 +64,10 @@ enum _CallPhase { ringing, connecting, inCall, ended }
 class _CallScreenState extends State<CallScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final SignalingService _signaling = SignalingService();
-  final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
-  final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
+  
+  // Only initialize video renderers for video calls
+  RTCVideoRenderer? _localRenderer;
+  RTCVideoRenderer? _remoteRenderer;
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
@@ -80,6 +82,8 @@ class _CallScreenState extends State<CallScreen> {
   bool _isSpeakerOn = false;
   bool _isCameraOff = false;
   bool _isVideo = false;
+  bool _isInitializing = true;
+  bool _renderersReady = false;
 
   String? _callId;
   String? _selfId;
@@ -95,9 +99,8 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void initState() {
     super.initState();
-    _localRenderer.initialize();
-    _remoteRenderer.initialize();
-
+    print('🎬 CallScreen initState - isVideo: ${widget.isVideo}, isIncoming: ${widget.isIncoming}');
+    
     _isVideo = widget.isVideo;
     _peerId = widget.peerId;
     _peerDisplayName = widget.peerName ?? 'User';
@@ -105,51 +108,115 @@ class _CallScreenState extends State<CallScreen> {
     _remoteOffer = widget.invite?.offer;
     _callId = widget.invite?.callId;
 
-    if (widget.isIncoming) {
-      _initIncomingCall();
-    } else {
-      _initOutgoingCall();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      print('🔧 Initializing renderers - isVideo: $_isVideo');
+      
+      // Only initialize renderers for video calls
+      if (_isVideo) {
+        _localRenderer = RTCVideoRenderer();
+        _remoteRenderer = RTCVideoRenderer();
+        
+        await _localRenderer!.initialize();
+        await _remoteRenderer!.initialize();
+        print('✅ Video renderers initialized');
+      } else {
+        print('✅ Audio-only call - skipping video renderer initialization');
+      }
+      
+      if (!mounted) {
+        print('⚠️ Widget unmounted during initialization');
+        return;
+      }
+      
+      setState(() => _renderersReady = true);
+
+      if (widget.isIncoming) {
+        print('📞 Initializing incoming call');
+        await _initIncomingCall();
+      } else {
+        print('📞 Initializing outgoing call');
+        await _initOutgoingCall();
+      }
+    } catch (e, stack) {
+      print('❌ Initialization error: $e');
+      print('Stack trace: $stack');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to initialize call: $e')),
+        );
+        Navigator.pop(context);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isInitializing = false);
+      }
     }
   }
 
   @override
   void dispose() {
+    print('🧹 CallScreen disposing');
     _ringTimeout?.cancel();
     _offerRetry?.cancel();
     _signalSub?.cancel();
     _cleanupRtc();
-    _localRenderer.dispose();
-    _remoteRenderer.dispose();
+    _localRenderer?.dispose();
+    _remoteRenderer?.dispose();
     super.dispose();
   }
 
   Future<void> _initOutgoingCall() async {
+    print('📱 Starting outgoing call initialization');
+    
     final allowed = await _ensurePermissions();
     if (!allowed) {
+      print('❌ Permissions denied');
       if (mounted) Navigator.pop(context);
       return;
     }
+    print('✅ Permissions granted');
 
     final currentUser = _auth.currentUser;
-    if (currentUser == null || _peerId == null) return;
+    if (currentUser == null || _peerId == null) {
+      print('❌ No user or peerId');
+      return;
+    }
+    
     _selfId = currentUser.uid;
     _callerName = currentUser.displayName ?? 'User';
     _callerPhotoUrl = currentUser.photoURL ?? '';
+    
+    print('🔌 Connecting to signaling server');
     await _signaling.ensureConnected(userId: currentUser.uid);
 
     try {
+      print('🔗 Creating peer connection');
       await _createPeerConnection();
+      
+      print('🎤 Starting local media stream');
       await _startLocalStream();
-    } catch (_) {
+      
+      print('✅ Local stream started successfully');
+    } catch (e, stack) {
+      print('❌ Error in call setup: $e');
+      print('Stack trace: $stack');
       _endCallLocal();
       return;
     }
 
-    setState(() => _phase = _CallPhase.ringing);
+    if (mounted) setState(() => _phase = _CallPhase.ringing);
 
     _callId = '${currentUser.uid}_${DateTime.now().microsecondsSinceEpoch}';
+    print('📱 Call ID: $_callId');
+    
     _listenToSignaling();
 
+    print('📝 Creating offer');
     final offer = await _peerConnection!.createOffer(_rtcOfferConstraints());
     await _peerConnection!.setLocalDescription(offer);
     _localOffer = {
@@ -157,10 +224,12 @@ class _CallScreenState extends State<CallScreen> {
       'sdpType': offer.type,
     };
 
+    print('📤 Sending offer');
     await _sendOffer();
     _startOfferRetry();
 
     _ringTimeout = Timer(const Duration(seconds: 35), () async {
+      print('⏰ Call timeout');
       if (_phase != _CallPhase.ringing || _callId == null) return;
       await _sendSignal('call_missed');
       _endCallLocal();
@@ -168,13 +237,20 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _initIncomingCall() async {
+    print('📞 Initializing incoming call');
+    
     final currentUser = _auth.currentUser;
-    if (currentUser == null || _callId == null) return;
+    if (currentUser == null || _callId == null) {
+      print('❌ No user or callId');
+      return;
+    }
+    
     _selfId = currentUser.uid;
     await _signaling.ensureConnected(userId: currentUser.uid);
     _listenToSignaling();
     await NotificationService().clearCallNotification(_callId!);
-    if (mounted) setState(() {});
+    
+    print('✅ Incoming call initialized');
   }
 
   Future<void> _listenToSignaling() async {
@@ -182,6 +258,7 @@ class _CallScreenState extends State<CallScreen> {
     _signalSub = _signaling.messages.listen((message) async {
       if (message['callId']?.toString() != _callId) return;
       final type = message['type']?.toString();
+      print('📨 Received signal: $type');
 
       if (type == 'call_answer') {
         final answer = {
@@ -189,6 +266,7 @@ class _CallScreenState extends State<CallScreen> {
           'type': message['sdpType'],
         };
         if (!_remoteDescriptionSet) {
+          print('📥 Setting remote description (answer)');
           await _setRemoteDescription(answer);
           _offerRetry?.cancel();
           _ringTimeout?.cancel();
@@ -215,6 +293,7 @@ class _CallScreenState extends State<CallScreen> {
       if (type == 'call_end' ||
           type == 'call_decline' ||
           type == 'call_missed') {
+        print('☎️ Call ended by peer: $type');
         if (_callId != null) {
           await NotificationService().clearCallNotification(_callId!);
         }
@@ -237,17 +316,32 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<bool> _ensurePermissions() async {
-    if (!Platform.isAndroid) return true;
+    print('🔐 Checking permissions - isVideo: $_isVideo');
+    
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      print('✅ Non-mobile platform, skipping permission check');
+      return true;
+    }
 
     final permissions = <Permission>[Permission.microphone];
     if (_isVideo) permissions.add(Permission.camera);
 
+    print('📋 Requesting permissions: ${permissions.map((p) => p.toString()).join(", ")}');
+    
     final results = await permissions.request();
+    
+    for (var entry in results.entries) {
+      print('   ${entry.key}: ${entry.value}');
+    }
+    
     final granted = results.values.every((status) => status.isGranted);
 
     if (!granted && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Permissions required for calling')),
+        const SnackBar(
+          content: Text('Microphone permission required for calls'),
+          duration: Duration(seconds: 3),
+        ),
       );
     }
 
@@ -255,6 +349,8 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _createPeerConnection() async {
+    print('🔗 Creating RTCPeerConnection');
+    
     final config = {
       'iceServers': CallConfig.iceServers,
       'sdpSemantics': 'unified-plan',
@@ -268,9 +364,11 @@ class _CallScreenState extends State<CallScreen> {
     };
 
     _peerConnection = await createPeerConnection(config, constraints);
+    print('✅ PeerConnection created');
 
     _peerConnection!.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
+      print('🧊 ICE candidate generated');
       _sendSignal('call_ice', data: {
         'candidate': candidate.candidate,
         'sdpMid': candidate.sdpMid,
@@ -279,39 +377,60 @@ class _CallScreenState extends State<CallScreen> {
     };
 
     _peerConnection!.onTrack = (event) async {
+      print('🎵 Remote track received: ${event.track.kind}');
+      final track = event.track;
       MediaStream? stream;
       if (event.streams.isNotEmpty) {
         stream = event.streams.first;
       } else {
         stream = _remoteStream ?? await createLocalMediaStream('remote');
-        stream.addTrack(event.track);
+        final hasTrack = stream.getTracks().any((t) => t.id == track.id);
+        if (!hasTrack) {
+          stream.addTrack(track);
+        }
       }
 
       _remoteStream = stream;
-      _remoteRenderer.srcObject = _remoteStream;
+      if (_isVideo && track.kind == 'video' && _remoteRenderer != null) {
+        _remoteRenderer!.srcObject = _remoteStream;
+      }
       if (mounted) setState(() {});
     };
 
     _peerConnection!.onAddStream = (stream) {
+      print('📺 Remote stream added');
       _remoteStream = stream;
-      _remoteRenderer.srcObject = _remoteStream;
+      if (_isVideo && _remoteRenderer != null && _hasRemoteVideo()) {
+        _remoteRenderer!.srcObject = _remoteStream;
+      }
       if (mounted) setState(() {});
     };
 
     _peerConnection!.onConnectionState = (state) {
+      print('🔗 Connection state: $state');
+      
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected &&
           mounted) {
+        print('✅ Call connected!');
         setState(() => _phase = _CallPhase.inCall);
       }
 
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
-          state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+          state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+        print('❌ Connection failed/disconnected: $state');
         _endCallLocal();
       }
+    };
+
+    _peerConnection!.onIceConnectionState = (state) {
+      print('ICE connection state: $state');
     };
   }
 
   Future<void> _startLocalStream() async {
+    print('🎤 Getting user media - audio: true, video: $_isVideo');
+    
     final mediaConstraints = {
       'audio': {
         'echoCancellation': true,
@@ -329,28 +448,55 @@ class _CallScreenState extends State<CallScreen> {
 
     try {
       _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
-    } catch (e) {
+      
+      final audioTracks = _localStream!.getAudioTracks();
+      final videoTracks = _localStream!.getVideoTracks();
+      
+      print('✅ Got local stream - audio: ${audioTracks.length}, video: ${videoTracks.length}');
+      
+      for (var track in audioTracks) {
+        print('   Audio track: ${track.label} (enabled: ${track.enabled})');
+      }
+      for (var track in videoTracks) {
+        print('   Video track: ${track.label} (enabled: ${track.enabled})');
+      }
+      
+    } catch (e, stack) {
+      print('❌ Failed to get media: $e');
+      print('Stack trace: $stack');
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to access media devices: $e')),
+          SnackBar(
+            content: Text('Failed to access ${_isVideo ? "camera/microphone" : "microphone"}: $e'),
+            duration: const Duration(seconds: 4),
+          ),
         );
       }
       rethrow;
     }
 
-    _localRenderer.srcObject = _localStream;
+    if (_isVideo && _localRenderer != null) {
+      _localRenderer!.srcObject = _localStream;
+    }
 
     for (final track in _localStream!.getTracks()) {
       await _peerConnection!.addTrack(track, _localStream!);
+      print('✅ Added track to peer connection: ${track.kind}');
     }
 
     if (Platform.isAndroid) {
       await Helper.setSpeakerphoneOn(_isVideo);
+      _isSpeakerOn = _isVideo;
     }
+    
+    if (mounted) setState(() {});
   }
 
   Future<void> _setRemoteDescription(Map<String, dynamic> data) async {
     if (_peerConnection == null) return;
+    print('📥 Setting remote description');
+    
     final description = RTCSessionDescription(
       data['sdp'],
       data['type'],
@@ -358,6 +504,7 @@ class _CallScreenState extends State<CallScreen> {
     await _peerConnection!.setRemoteDescription(description);
     _remoteDescriptionSet = true;
 
+    print('🧊 Adding ${_pendingRemoteCandidates.length} pending ICE candidates');
     for (final candidate in _pendingRemoteCandidates) {
       await _peerConnection!.addCandidate(candidate);
     }
@@ -375,13 +522,17 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _answerCall() async {
+    print('📞 Answering call');
+    
     final allowed = await _ensurePermissions();
     if (!allowed) {
+      print('❌ Permissions denied for answer');
       await _declineCall();
       return;
     }
 
     if (_remoteOffer == null) {
+      print('❌ No remote offer available');
       _endCallLocal();
       return;
     }
@@ -389,7 +540,9 @@ class _CallScreenState extends State<CallScreen> {
     try {
       await _createPeerConnection();
       await _startLocalStream();
-    } catch (_) {
+    } catch (e, stack) {
+      print('❌ Error answering call: $e');
+      print('Stack trace: $stack');
       _endCallLocal();
       return;
     }
@@ -406,9 +559,12 @@ class _CallScreenState extends State<CallScreen> {
 
     await NotificationService().clearCallNotification(_callId!);
     if (mounted) setState(() => _phase = _CallPhase.inCall);
+    
+    print('✅ Call answered');
   }
 
   Future<void> _declineCall() async {
+    print('❌ Declining call');
     await _sendSignal('call_decline');
     if (_callId != null) {
       await NotificationService().clearCallNotification(_callId!);
@@ -417,6 +573,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _hangUp() async {
+    print('📵 Hanging up');
     await _sendSignal('call_end');
     if (_callId != null) {
       await NotificationService().clearCallNotification(_callId!);
@@ -425,11 +582,20 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   void _endCallLocal() {
+    print('🛑 Ending call locally');
     if (!mounted) return;
+    
     setState(() => _phase = _CallPhase.ended);
     _offerRetry?.cancel();
+    _ringTimeout?.cancel();
     _cleanupRtc();
-    Navigator.pop(context);
+    
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        print('👋 Popping call screen');
+        Navigator.pop(context);
+      }
+    });
   }
 
   Future<void> _sendOffer() async {
@@ -457,14 +623,19 @@ class _CallScreenState extends State<CallScreen> {
     _offerRetry?.cancel();
     _offerRetry = Timer.periodic(const Duration(seconds: 3), (_) async {
       if (_phase != _CallPhase.ringing) return;
+      print('🔄 Retrying offer');
       await _sendOffer();
     });
   }
 
   void _cleanupRtc() {
+    print('🧹 Cleaning up RTC resources');
+    
     for (final track in _localStream?.getTracks() ?? []) {
       track.stop();
     }
+    _localRenderer?.srcObject = null;
+    _remoteRenderer?.srcObject = null;
     _localStream?.dispose();
     _remoteStream?.dispose();
     _peerConnection?.close();
@@ -478,6 +649,7 @@ class _CallScreenState extends State<CallScreen> {
     for (final track in _localStream?.getAudioTracks() ?? []) {
       track.enabled = !_isMuted;
     }
+    print('🎤 Mute: $_isMuted');
     if (mounted) setState(() {});
   }
 
@@ -486,6 +658,7 @@ class _CallScreenState extends State<CallScreen> {
     if (Platform.isAndroid) {
       Helper.setSpeakerphoneOn(_isSpeakerOn);
     }
+    print('🔊 Speaker: $_isSpeakerOn');
     if (mounted) setState(() {});
   }
 
@@ -494,6 +667,7 @@ class _CallScreenState extends State<CallScreen> {
     for (final track in _localStream?.getVideoTracks() ?? []) {
       track.enabled = !_isCameraOff;
     }
+    print('📹 Camera off: $_isCameraOff');
     if (mounted) setState(() {});
   }
 
@@ -502,6 +676,7 @@ class _CallScreenState extends State<CallScreen> {
     final tracks = _localStream?.getVideoTracks();
     if (tracks == null || tracks.isEmpty) return;
     await Helper.switchCamera(tracks.first);
+    print('🔄 Camera switched');
   }
 
   String _statusText() {
@@ -517,50 +692,95 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
+  bool _hasRemoteVideo() {
+    if (!_isVideo || _remoteStream == null) return false;
+    final tracks = _remoteStream!.getVideoTracks();
+    return tracks.isNotEmpty && tracks.any((t) => t.enabled);
+  }
+
   Widget _buildAvatar() {
     if (_peerPhotoUrl == null || _peerPhotoUrl!.isEmpty) {
       return CircleAvatar(
-        radius: 48,
-        backgroundColor: Colors.grey[300],
-        child: const Icon(Icons.person, size: 48, color: Colors.grey),
+        radius: 56,
+        backgroundColor: Colors.grey[800],
+        child: const Icon(Icons.person, size: 64, color: Colors.white70),
       );
     }
 
     return CircleAvatar(
-      radius: 48,
+      radius: 56,
       backgroundImage: NetworkImage(_peerPhotoUrl!),
-      backgroundColor: Colors.grey[300],
+      backgroundColor: Colors.grey[800],
+    );
+  }
+
+  Widget _buildLoadingIndicator() {
+    return Container(
+      color: const Color(0xFF1a1a1a),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(color: Colors.white),
+            const SizedBox(height: 24),
+            Text(
+              'Initializing ${_isVideo ? 'video' : 'audio'} call...',
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _buildRemoteView() {
-    if (_isVideo && _remoteRenderer.srcObject != null) {
+    // For video calls with active remote stream
+    if (_isVideo &&
+        _remoteRenderer != null &&
+        _remoteRenderer!.srcObject != null &&
+        _hasRemoteVideo()) {
       return RTCVideoView(
-        _remoteRenderer,
+        _remoteRenderer!,
         objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
       );
     }
 
+    // For audio calls or video calls without remote stream yet
     return Container(
-      color: Colors.black,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            const Color(0xFF1a1a1a),
+            const Color(0xFF2d2d2d),
+          ],
+        ),
+      ),
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             _buildAvatar(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
             Text(
               _peerDisplayName,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+                fontSize: 24,
+                fontWeight: FontWeight.w500,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
               _statusText(),
-              style: const TextStyle(color: Colors.white70),
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 16,
+              ),
             ),
           ],
         ),
@@ -569,7 +789,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Widget _buildLocalPreview() {
-    if (!_isVideo || _localRenderer.srcObject == null) {
+    if (!_isVideo || _localRenderer == null || _localRenderer!.srcObject == null) {
       return const SizedBox.shrink();
     }
 
@@ -578,11 +798,15 @@ class _CallScreenState extends State<CallScreen> {
       right: 16,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: SizedBox(
+        child: Container(
           width: 110,
           height: 150,
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.white24, width: 2),
+            borderRadius: BorderRadius.circular(12),
+          ),
           child: RTCVideoView(
-            _localRenderer,
+            _localRenderer!,
             mirror: true,
             objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
           ),
@@ -593,54 +817,82 @@ class _CallScreenState extends State<CallScreen> {
 
   Widget _buildControls() {
     if (widget.isIncoming && _phase == _CallPhase.ringing) {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _buildCircleButton(
-            icon: Icons.call_end,
-            color: Colors.red,
-            onPressed: _declineCall,
+      return Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [
+              Colors.black.withOpacity(0.7),
+              Colors.transparent,
+            ],
           ),
-          _buildCircleButton(
-            icon: Icons.call,
-            color: Colors.green,
-            onPressed: _answerCall,
-          ),
-        ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _buildCircleButton(
+              icon: Icons.call_end,
+              color: Colors.red,
+              label: 'Decline',
+              onPressed: _declineCall,
+            ),
+            _buildCircleButton(
+              icon: Icons.call,
+              color: Colors.green,
+              label: 'Accept',
+              onPressed: _answerCall,
+            ),
+          ],
+        ),
       );
     }
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        _buildCircleButton(
-          icon: _isMuted ? Icons.mic_off : Icons.mic,
-          color: Colors.white24,
-          onPressed: _toggleMute,
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            Colors.black.withOpacity(0.7),
+            Colors.transparent,
+          ],
         ),
-        if (_isVideo)
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
           _buildCircleButton(
-            icon: _isCameraOff ? Icons.videocam_off : Icons.videocam,
-            color: Colors.white24,
-            onPressed: _toggleCamera,
+            icon: _isMuted ? Icons.mic_off : Icons.mic,
+            color: _isMuted ? Colors.red : Colors.white24,
+            onPressed: _toggleMute,
           ),
-        if (_isVideo)
+          if (_isVideo)
+            _buildCircleButton(
+              icon: _isCameraOff ? Icons.videocam_off : Icons.videocam,
+              color: _isCameraOff ? Colors.red : Colors.white24,
+              onPressed: _toggleCamera,
+            ),
+          if (_isVideo)
+            _buildCircleButton(
+              icon: Icons.cameraswitch,
+              color: Colors.white24,
+              onPressed: _switchCamera,
+            ),
           _buildCircleButton(
-            icon: Icons.cameraswitch,
+            icon: _isSpeakerOn ? Icons.volume_up : Icons.volume_down,
             color: Colors.white24,
-            onPressed: _switchCamera,
+            onPressed: _toggleSpeaker,
           ),
-        _buildCircleButton(
-          icon: _isSpeakerOn ? Icons.volume_up : Icons.volume_down,
-          color: Colors.white24,
-          onPressed: _toggleSpeaker,
-        ),
-        _buildCircleButton(
-          icon: Icons.call_end,
-          color: Colors.red,
-          onPressed: _hangUp,
-        ),
-      ],
+          _buildCircleButton(
+            icon: Icons.call_end,
+            color: Colors.red,
+            onPressed: _hangUp,
+          ),
+        ],
+      ),
     );
   }
 
@@ -648,19 +900,53 @@ class _CallScreenState extends State<CallScreen> {
     required IconData icon,
     required Color color,
     required VoidCallback onPressed,
+    String? label,
   }) {
-    return CircleAvatar(
-      radius: 26,
-      backgroundColor: color,
+    final button = Container(
+      width: 60,
+      height: 60,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+      ),
       child: IconButton(
-        icon: Icon(icon, color: Colors.white),
+        icon: Icon(icon, color: Colors.white, size: 28),
         onPressed: onPressed,
       ),
     );
+
+    if (label != null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          button,
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return button;
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isInitializing || !_renderersReady) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF1a1a1a),
+        body: SafeArea(
+          child: _buildLoadingIndicator(),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -671,7 +957,7 @@ class _CallScreenState extends State<CallScreen> {
             Positioned(
               left: 0,
               right: 0,
-              bottom: 32,
+              bottom: 0,
               child: _buildControls(),
             ),
           ],
