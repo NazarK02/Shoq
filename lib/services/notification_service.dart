@@ -13,7 +13,7 @@ class NotificationService {
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  
+
   // These will be null on unsupported platforms
   FirebaseMessaging? _fcm;
   FlutterLocalNotificationsPlugin? _localNotifications;
@@ -26,7 +26,7 @@ class NotificationService {
   final Map<String, int> _messageCountPerSender = {};
   // Track all messages per sender for inbox style
   final Map<String, List<String>> _messagesPerSender = {};
-  
+
   // Track which chat is currently active/open
   String? _activeChatUserId;
 
@@ -45,7 +45,7 @@ class NotificationService {
   void setActiveChat(String? userId) {
     _activeChatUserId = userId;
     print('✅ Active chat set to: $userId');
-    
+
     // Clear notifications for this user when opening their chat
     if (userId != null && supportsLocalNotifications) {
       clearNotificationsForSender(userId);
@@ -58,17 +58,23 @@ class NotificationService {
   // Initialize notifications
   Future<void> initialize() async {
     print('🔔 Initializing NotificationService...');
-    
+
     // Skip initialization on unsupported platforms
     if (!supportsFcm && !supportsLocalNotifications) {
-      print('⚠️ Push notifications not supported on this platform (Windows/Web/macOS/Linux)');
+      print(
+        '⚠️ Push notifications not supported on this platform (Windows/Web/macOS/Linux)',
+      );
       return;
     }
 
     _localNotifications ??= FlutterLocalNotificationsPlugin();
     if (supportsLocalNotifications && !_localInitialized) {
-      await _initializeLocalNotifications();
-      _localInitialized = true;
+      try {
+        await _initializeLocalNotifications();
+        _localInitialized = true;
+      } catch (e) {
+        print('Failed to initialize local notifications: $e');
+      }
     }
 
     if (supportsFcm) {
@@ -91,7 +97,7 @@ class NotificationService {
     }
 
     print('📱 Requesting notification permissions...');
-    
+
     // Request permission
     NotificationSettings settings = await _fcm!.requestPermission(
       alert: true,
@@ -102,7 +108,7 @@ class NotificationService {
 
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
       print('✅ User granted notification permission');
-      
+
       // Get FCM token
       String? token = await _fcm!.getToken();
       if (token != null) {
@@ -125,7 +131,7 @@ class NotificationService {
 
       // Handle background messages
       FirebaseMessaging.onMessageOpenedApp.listen(_handleBackgroundMessage);
-      
+
       _fcmInitialized = true;
       print('✅ Notification service fully initialized');
     } else if (settings.authorizationStatus == AuthorizationStatus.denied) {
@@ -146,15 +152,24 @@ class NotificationService {
 
     const DarwinInitializationSettings initializationSettingsIOS =
         DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
-    );
+          requestAlertPermission: true,
+          requestBadgePermission: true,
+          requestSoundPermission: true,
+        );
 
-    const InitializationSettings initializationSettings = InitializationSettings(
-      android: initializationSettingsAndroid,
-      iOS: initializationSettingsIOS,
-    );
+    const WindowsInitializationSettings initializationSettingsWindows =
+        WindowsInitializationSettings(
+          appName: 'Shoq',
+          appUserModelId: 'com.example.shoq',
+          guid: '3f0f0f85-9151-4f18-b68f-8e8f6f1e7b1a',
+        );
+
+    const InitializationSettings initializationSettings =
+        InitializationSettings(
+          android: initializationSettingsAndroid,
+          iOS: initializationSettingsIOS,
+          windows: initializationSettingsWindows,
+        );
 
     await _localNotifications!.initialize(
       initializationSettings,
@@ -172,31 +187,35 @@ class NotificationService {
         playSound: true,
       );
 
-      const AndroidNotificationChannel callsChannel = AndroidNotificationChannel(
-        'calls_channel',
-        'Calls',
-        description: 'Incoming calls',
-        importance: Importance.max,
-        enableVibration: true,
-        playSound: true,
-      );
+      const AndroidNotificationChannel callsChannel =
+          AndroidNotificationChannel(
+            'calls_channel',
+            'Calls',
+            description: 'Incoming calls',
+            importance: Importance.max,
+            enableVibration: true,
+            playSound: true,
+          );
 
-      const AndroidNotificationChannel friendRequestsChannel = AndroidNotificationChannel(
-        'friend_requests_channel',
-        'Friend Requests',
-        description: 'Notifications for friend requests',
-        importance: Importance.high,
-        enableVibration: true,
-        playSound: true,
-      );
+      const AndroidNotificationChannel friendRequestsChannel =
+          AndroidNotificationChannel(
+            'friend_requests_channel',
+            'Friend Requests',
+            description: 'Notifications for friend requests',
+            importance: Importance.high,
+            enableVibration: true,
+            playSound: true,
+          );
 
-      final plugin = _localNotifications!.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
-      
+      final plugin = _localNotifications!
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+
       await plugin?.createNotificationChannel(channel);
       await plugin?.createNotificationChannel(callsChannel);
       await plugin?.createNotificationChannel(friendRequestsChannel);
-      
+
       print('✅ Android notification channels created');
     }
   }
@@ -211,16 +230,16 @@ class NotificationService {
 
     try {
       print('💾 Saving FCM token to Firestore for user: ${user.uid}');
-      
+
       // First, remove this token from any other user's document
       await _removeTokenFromOtherUsers(token, user.uid);
-      
+
       // Then save it to the current user
       await _firestore.collection('users').doc(user.uid).set({
         'fcmToken': token,
         'lastTokenUpdate': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-      
+
       print('✅ FCM token saved successfully');
     } catch (e) {
       print('❌ Error saving FCM token: $e');
@@ -228,7 +247,10 @@ class NotificationService {
   }
 
   // Remove token from other users (for account switching on same device)
-  Future<void> _removeTokenFromOtherUsers(String token, String currentUserId) async {
+  Future<void> _removeTokenFromOtherUsers(
+    String token,
+    String currentUserId,
+  ) async {
     try {
       // Find all users with this token
       final usersWithToken = await _firestore
@@ -264,16 +286,20 @@ class NotificationService {
         print('❌ Error clearing token: $e');
       }
     }
-    
+
     // Clear active chat
     _activeChatUserId = null;
-    
+
     // Clear all local notifications (only on supported platforms)
     if (supportsLocalNotifications && _localNotifications != null) {
-      await _localNotifications!.cancelAll();
-      print('🗑️ All local notifications cleared');
+      if (_localInitialized) {
+        await _localNotifications!.cancelAll();
+        print('Local notifications cleared');
+      } else {
+        print('Local notifications not initialized; skipping cancelAll');
+      }
     }
-    
+
     // Clear message counts and message history
     _messageCountPerSender.clear();
     _messagesPerSender.clear();
@@ -312,7 +338,11 @@ class NotificationService {
     required String callerName,
     required bool isVideo,
   }) async {
-    if (!supportsLocalNotifications || _localNotifications == null) return;
+    if (!supportsLocalNotifications ||
+        _localNotifications == null ||
+        !_localInitialized) {
+      return;
+    }
 
     final notificationId = callId.hashCode.abs() % 100000;
     final title = callerName.isEmpty ? 'Incoming call' : callerName;
@@ -354,14 +384,22 @@ class NotificationService {
   }
 
   Future<void> clearCallNotification(String callId) async {
-    if (!supportsLocalNotifications || _localNotifications == null) return;
+    if (!supportsLocalNotifications ||
+        _localNotifications == null ||
+        !_localInitialized) {
+      return;
+    }
     final notificationId = callId.hashCode.abs() % 100000;
     await _localNotifications!.cancel(notificationId);
   }
 
   // Show local notification with grouping
   Future<void> _showLocalNotification(RemoteMessage message) async {
-    if (!supportsLocalNotifications || _localNotifications == null) return;
+    if (!supportsLocalNotifications ||
+        _localNotifications == null ||
+        !_localInitialized) {
+      return;
+    }
 
     final data = message.data;
     final type = data['type'];
@@ -372,12 +410,15 @@ class NotificationService {
     if (type == 'new_message' && senderId != null) {
       // Check if user is currently in chat with this sender
       if (_activeChatUserId == senderId) {
-        print('⏭️ User is currently in chat with $senderId, skipping notification');
+        print(
+          '⏭️ User is currently in chat with $senderId, skipping notification',
+        );
         return;
       }
 
       // Increment message count for this sender
-      _messageCountPerSender[senderId] = (_messageCountPerSender[senderId] ?? 0) + 1;
+      _messageCountPerSender[senderId] =
+          (_messageCountPerSender[senderId] ?? 0) + 1;
       final messageCount = _messageCountPerSender[senderId]!;
 
       // Add message to the list for this sender
@@ -386,7 +427,7 @@ class NotificationService {
         _messagesPerSender[senderId] = [];
       }
       _messagesPerSender[senderId]!.add(messageText);
-      
+
       // Keep only last 5 messages to avoid overflow
       if (_messagesPerSender[senderId]!.length > 5) {
         _messagesPerSender[senderId]!.removeAt(0);
@@ -394,27 +435,30 @@ class NotificationService {
 
       // Use a consistent notification ID for each sender
       final notificationId = senderId.hashCode.abs() % 100000;
-      
+
       final senderName = data['senderName'] ?? 'Someone';
 
-      print('📢 Showing notification for $senderName (ID: $notificationId, count: $messageCount)');
+      print(
+        '📢 Showing notification for $senderName (ID: $notificationId, count: $messageCount)',
+      );
 
       // Create inbox style notification showing all messages
-      final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-        'messages_channel',
-        'Messages',
-        channelDescription: 'Notifications for new messages',
-        importance: Importance.high,
-        priority: Priority.high,
-        showWhen: true,
-        styleInformation: InboxStyleInformation(
-          _messagesPerSender[senderId]!,
-          contentTitle: senderName,
-          summaryText: messageCount > 1 ? '$messageCount messages' : null,
-        ),
-        number: messageCount,
-        tag: 'message_$senderId',
-      );
+      final AndroidNotificationDetails androidDetails =
+          AndroidNotificationDetails(
+            'messages_channel',
+            'Messages',
+            channelDescription: 'Notifications for new messages',
+            importance: Importance.high,
+            priority: Priority.high,
+            showWhen: true,
+            styleInformation: InboxStyleInformation(
+              _messagesPerSender[senderId]!,
+              contentTitle: senderName,
+              summaryText: messageCount > 1 ? '$messageCount messages' : null,
+            ),
+            number: messageCount,
+            tag: 'message_$senderId',
+          );
 
       const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
         presentAlert: true,
@@ -439,16 +483,17 @@ class NotificationService {
       print('✅ Notification shown successfully');
     } else if (type == 'friend_request') {
       print('📢 Showing friend request notification');
-      
+
       // Friend request notification (separate channel)
-      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-        'friend_requests_channel',
-        'Friend Requests',
-        channelDescription: 'Notifications for friend requests',
-        importance: Importance.high,
-        priority: Priority.high,
-        showWhen: true,
-      );
+      const AndroidNotificationDetails androidDetails =
+          AndroidNotificationDetails(
+            'friend_requests_channel',
+            'Friend Requests',
+            channelDescription: 'Notifications for friend requests',
+            importance: Importance.high,
+            priority: Priority.high,
+            showWhen: true,
+          );
 
       const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
         presentAlert: true,
@@ -468,20 +513,24 @@ class NotificationService {
         notificationDetails,
         payload: '{"type": "friend_request", "senderId": "$senderId"}',
       );
-      
+
       print('✅ Friend request notification shown');
     }
   }
 
   // Clear notifications for a specific sender (when opening chat)
   Future<void> clearNotificationsForSender(String senderId) async {
-    if (!supportsLocalNotifications || _localNotifications == null) return;
+    if (!supportsLocalNotifications ||
+        _localNotifications == null ||
+        !_localInitialized) {
+      return;
+    }
 
     final notificationId = senderId.hashCode.abs() % 100000;
     await _localNotifications!.cancel(notificationId);
     _messageCountPerSender.remove(senderId);
     _messagesPerSender.remove(senderId);
-    
+
     print('🗑️ Cleared notifications for sender: $senderId');
   }
 
@@ -491,22 +540,27 @@ class NotificationService {
     required String senderName,
   }) async {
     try {
-      print('📤 Attempting to send friend request notification to: $recipientId');
-      
-      final recipientDoc = await _firestore.collection('users').doc(recipientId).get();
-      
+      print(
+        '📤 Attempting to send friend request notification to: $recipientId',
+      );
+
+      final recipientDoc = await _firestore
+          .collection('users')
+          .doc(recipientId)
+          .get();
+
       if (!recipientDoc.exists) {
         print('❌ Recipient user document not found');
         return;
       }
-      
+
       final fcmToken = recipientDoc.data()?['fcmToken'];
 
       if (fcmToken == null) {
         print('❌ Recipient has no FCM token - notifications not enabled');
         return;
       }
-      
+
       print('✅ Recipient FCM token found: ${fcmToken.substring(0, 20)}...');
 
       // Save notification to database
@@ -525,10 +579,14 @@ class NotificationService {
         'createdAt': FieldValue.serverTimestamp(),
         'processed': false, // Will be set to true by Cloud Function
       });
-      
+
       print('✅ Notification saved to Firestore with ID: ${notificationDoc.id}');
-      print('⚠️ NOTE: You need Cloud Functions to actually deliver this notification');
-      print('   The notification is saved but won\'t be sent without Cloud Functions');
+      print(
+        '⚠️ NOTE: You need Cloud Functions to actually deliver this notification',
+      );
+      print(
+        '   The notification is saved but won\'t be sent without Cloud Functions',
+      );
     } catch (e) {
       print('❌ Error sending friend request notification: $e');
     }
@@ -542,21 +600,24 @@ class NotificationService {
   }) async {
     try {
       print('📤 Attempting to send message notification to: $recipientId');
-      
-      final recipientDoc = await _firestore.collection('users').doc(recipientId).get();
-      
+
+      final recipientDoc = await _firestore
+          .collection('users')
+          .doc(recipientId)
+          .get();
+
       if (!recipientDoc.exists) {
         print('❌ Recipient user document not found');
         return;
       }
-      
+
       final fcmToken = recipientDoc.data()?['fcmToken'];
 
       if (fcmToken == null) {
         print('❌ Recipient has no FCM token - notifications not enabled');
         return;
       }
-      
+
       print('✅ Recipient FCM token found: ${fcmToken.substring(0, 20)}...');
 
       // Save notification to database
@@ -566,7 +627,9 @@ class NotificationService {
         'senderId': _auth.currentUser?.uid,
         'fcmToken': fcmToken,
         'title': senderName,
-        'body': messageText.length > 100 ? '${messageText.substring(0, 100)}...' : messageText,
+        'body': messageText.length > 100
+            ? '${messageText.substring(0, 100)}...'
+            : messageText,
         'data': {
           'type': 'new_message',
           'senderId': _auth.currentUser?.uid,
@@ -575,10 +638,14 @@ class NotificationService {
         'createdAt': FieldValue.serverTimestamp(),
         'processed': false, // Will be set to true by Cloud Function
       });
-      
+
       print('✅ Notification saved to Firestore with ID: ${notificationDoc.id}');
-      print('⚠️ NOTE: You need Cloud Functions to actually deliver this notification');
-      print('   The notification is saved but won\'t be sent without Cloud Functions');
+      print(
+        '⚠️ NOTE: You need Cloud Functions to actually deliver this notification',
+      );
+      print(
+        '   The notification is saved but won\'t be sent without Cloud Functions',
+      );
     } catch (e) {
       print('❌ Error sending message notification: $e');
     }
@@ -625,11 +692,11 @@ class NotificationService {
           .collection('settings')
           .doc('notifications')
           .set({
-        'friendRequests': friendRequests,
-        'messages': messages,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      
+            'friendRequests': friendRequests,
+            'messages': messages,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
       print('✅ Notification settings updated');
     } catch (e) {
       print('❌ Error updating notification settings: $e');

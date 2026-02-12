@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:io';
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
-
 import '../services/call_config.dart';
 import '../services/notification_service.dart';
 import '../services/signaling_service.dart';
@@ -75,6 +73,8 @@ class _CallScreenState extends State<CallScreen> {
   StreamSubscription<Map<String, dynamic>>? _signalSub;
   Timer? _ringTimeout;
   Timer? _offerRetry;
+  Timer? _connectionTimeout;
+  static const Duration _maxConnectionWait = Duration(seconds: 20);
 
   final List<RTCIceCandidate> _pendingRemoteCandidates = [];
   bool _remoteDescriptionSet = false;
@@ -84,6 +84,9 @@ class _CallScreenState extends State<CallScreen> {
   bool _isVideo = false;
   bool _isInitializing = true;
   bool _renderersReady = false;
+
+  int _offerRetryCount = 0;
+  static const int _maxOfferRetries = 10;
 
   String? _callId;
   String? _selfId;
@@ -113,47 +116,59 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _initialize() async {
     try {
-      print('🔧 Initializing renderers - isVideo: $_isVideo');
-      
+      print('Initializing renderers - isVideo: $_isVideo');
+
       // Only initialize renderers for video calls
       if (_isVideo) {
         _localRenderer = RTCVideoRenderer();
         _remoteRenderer = RTCVideoRenderer();
-        
+
         await _localRenderer!.initialize();
         await _remoteRenderer!.initialize();
-        print('✅ Video renderers initialized');
+        print('Video renderers initialized');
       } else {
-        print('✅ Audio-only call - skipping video renderer initialization');
-      }
-      
-      if (!mounted) {
-        print('⚠️ Widget unmounted during initialization');
-        return;
-      }
-      
-      setState(() => _renderersReady = true);
-
-      if (widget.isIncoming) {
-        print('📞 Initializing incoming call');
-        await _initIncomingCall();
-      } else {
-        print('📞 Initializing outgoing call');
-        await _initOutgoingCall();
+        print('Audio-only call - skipping video renderer initialization');
       }
     } catch (e, stack) {
-      print('❌ Initialization error: $e');
+      print('Renderer initialization error: $e');
       print('Stack trace: $stack');
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to initialize call: $e')),
         );
         Navigator.pop(context);
       }
-    } finally {
+      return;
+    }
+
+    if (!mounted) {
+      print('Widget unmounted during initialization');
+      return;
+    }
+
+    setState(() {
+      _renderersReady = true;
+      _isInitializing = false;
+    });
+
+    try {
+      if (widget.isIncoming) {
+        print('Initializing incoming call');
+        await _initIncomingCall();
+      } else {
+        print('Initializing outgoing call');
+        await _initOutgoingCall();
+      }
+    } catch (e, stack) {
+      print('Initialization error: $e');
+      print('Stack trace: $stack');
+
       if (mounted) {
-        setState(() => _isInitializing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to initialize call: $e')),
+        );
+        Navigator.pop(context);
       }
     }
   }
@@ -163,6 +178,7 @@ class _CallScreenState extends State<CallScreen> {
     print('🧹 CallScreen disposing');
     _ringTimeout?.cancel();
     _offerRetry?.cancel();
+    _connectionTimeout?.cancel();
     _signalSub?.cancel();
     _cleanupRtc();
     _localRenderer?.dispose();
@@ -187,12 +203,47 @@ class _CallScreenState extends State<CallScreen> {
       return;
     }
     
+    // Prevent calling yourself
+    if (_peerId == currentUser.uid) {
+      print('❌ Cannot call yourself');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You cannot call yourself. Please test with another user.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        Navigator.pop(context);
+      }
+      return;
+    }
+
     _selfId = currentUser.uid;
     _callerName = currentUser.displayName ?? 'User';
     _callerPhotoUrl = currentUser.photoURL ?? '';
     
     print('🔌 Connecting to signaling server');
-    await _signaling.ensureConnected(userId: currentUser.uid);
+    try {
+      await _signaling.ensureConnected(userId: currentUser.uid);
+    } catch (e) {
+      print('❌ Failed to connect to signaling server: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Cannot connect to call server. '
+              'Please check your internet connection and try again.\n'
+              'Error: $e'
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+        Navigator.pop(context);
+      }
+      return;
+    }
 
     try {
       print('🔗 Creating peer connection');
@@ -350,7 +401,24 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _createPeerConnection() async {
     print('🔗 Creating RTCPeerConnection');
-    
+
+    // Clear any existing connection timeout and start a new one
+    _connectionTimeout?.cancel();
+    _connectionTimeout = Timer(_maxConnectionWait, () {
+      if (_phase != _CallPhase.inCall) {
+        print('⏰ Connection timeout - call failed to establish');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Call failed: Connection timeout'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        _endCallLocal();
+      }
+    });
+
     final config = {
       'iceServers': CallConfig.iceServers,
       'sdpSemantics': 'unified-plan',
@@ -409,16 +477,17 @@ class _CallScreenState extends State<CallScreen> {
     _peerConnection!.onConnectionState = (state) {
       print('🔗 Connection state: $state');
       
-      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected &&
-          mounted) {
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         print('✅ Call connected!');
-        setState(() => _phase = _CallPhase.inCall);
+        _connectionTimeout?.cancel(); // Cancel timeout on successful connection
+        if (mounted) setState(() => _phase = _CallPhase.inCall);
       }
 
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
         print('❌ Connection failed/disconnected: $state');
+        _connectionTimeout?.cancel();
         _endCallLocal();
       }
     };
@@ -621,9 +690,31 @@ class _CallScreenState extends State<CallScreen> {
 
   void _startOfferRetry() {
     _offerRetry?.cancel();
+    _offerRetryCount = 0;
     _offerRetry = Timer.periodic(const Duration(seconds: 3), (_) async {
-      if (_phase != _CallPhase.ringing) return;
-      print('🔄 Retrying offer');
+      if (_phase != _CallPhase.ringing) {
+        _offerRetry?.cancel();
+        return;
+      }
+      
+      _offerRetryCount++;
+      print('🔄 Retrying offer (attempt $_offerRetryCount/$_maxOfferRetries)');
+
+      if (_offerRetryCount >= _maxOfferRetries) {
+        print('❌ Max retry attempts reached');
+        _offerRetry?.cancel();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Call failed: No response from recipient'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        _endCallLocal();
+        return;
+      }
+
       await _sendOffer();
     });
   }
@@ -682,7 +773,14 @@ class _CallScreenState extends State<CallScreen> {
   String _statusText() {
     switch (_phase) {
       case _CallPhase.ringing:
-        return widget.isIncoming ? 'Incoming call' : 'Calling...';
+        if (widget.isIncoming) {
+          return 'Incoming call';
+        } else {
+          if (_offerRetryCount > 0) {
+            return 'Connecting... (attempt $_offerRetryCount)';
+          }
+          return 'Calling...';
+        }
       case _CallPhase.connecting:
         return 'Connecting...';
       case _CallPhase.inCall:
@@ -790,7 +888,7 @@ class _CallScreenState extends State<CallScreen> {
 
   Widget _buildLocalPreview() {
     if (!_isVideo || _localRenderer == null || _localRenderer!.srcObject == null) {
-      return const SizedBox.shrink();
+      return const Positioned.fill(child: SizedBox.shrink());
     }
 
     return Positioned(
@@ -938,7 +1036,8 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isInitializing || !_renderersReady) {
+    final needsRenderers = _isVideo;
+    if (_isInitializing || (needsRenderers && !_renderersReady)) {
       return Scaffold(
         backgroundColor: const Color(0xFF1a1a1a),
         body: SafeArea(

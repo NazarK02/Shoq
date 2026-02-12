@@ -1,67 +1,24 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'crypto_service.dart';
+import 'device_info_service.dart';
 
 class UserService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
   final CryptoService _crypto = CryptoService();
+  final DeviceInfoService _deviceInfo = DeviceInfoService();
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
   Map<String, dynamic>? _cachedUserData;
   String? _lastProfileCacheJson;
 
   /// Automatically detect deviceId + deviceType
   Future<Map<String, String>> _getDeviceInfo() async {
-    if (kIsWeb) {
-      return {
-        'deviceId': 'web',
-        'deviceType': 'web',
-      };
-    }
-
-    if (Platform.isAndroid) {
-      final android = await _deviceInfo.androidInfo;
-      return {
-        'deviceId': android.id,
-        'deviceType': 'android',
-      };
-    }
-
-    if (Platform.isIOS) {
-      final ios = await _deviceInfo.iosInfo;
-      return {
-        'deviceId': ios.identifierForVendor ?? 'ios',
-        'deviceType': 'ios',
-      };
-    }
-
-    if (Platform.isWindows) {
-      final windows = await _deviceInfo.windowsInfo;
-      return {
-        'deviceId': windows.deviceId,
-        'deviceType': 'windows',
-      };
-    }
-
-    if (Platform.isMacOS) {
-      final mac = await _deviceInfo.macOsInfo;
-      return {
-        'deviceId': mac.systemGUID ?? 'macos',
-        'deviceType': 'macos',
-      };
-    }
-
-    return {
-      'deviceId': 'unknown',
-      'deviceType': 'unknown',
-    };
+    return _deviceInfo.getDeviceInfo();
   }
 
   /// Create or update user document (basic info only, no E2EE yet)
@@ -87,12 +44,8 @@ class UserService {
         'lastSeen': FieldValue.serverTimestamp(),
         'lastHeartbeat': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
-        'devices': {
-          deviceId: {
-            'deviceType': deviceType,
-            'lastActive': FieldValue.serverTimestamp(),
-          }
-        }
+        'devices.$deviceId.deviceType': deviceType,
+        'devices.$deviceId.lastActive': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       print('✅ User document saved successfully');
@@ -177,13 +130,6 @@ class UserService {
 
     try {
       final userDoc = await _firestore.collection('users').doc(user.uid).get();
-      if (userDoc.data()?['publicKey'] != null) {
-        print('E2EE already initialized for user: ${user.uid}');
-        return;
-      }
-
-      print('Initializing E2EE for user: ${user.uid}');
-
       await _crypto.initialize();
 
       final publicKey = _crypto.myPublicKeyBase64;
@@ -194,11 +140,25 @@ class UserService {
 
       print('E2EE initialized, public key: ${publicKey.substring(0, 20)}...');
 
-      // Update user document with public key
-      await _firestore.collection('users').doc(user.uid).set({
-        'publicKey': publicKey,
-        'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      final device = await _getDeviceInfo();
+      final deviceId = device['deviceId'] ?? 'unknown';
+      final deviceType = device['deviceType'] ?? 'unknown';
+
+      final updates = <String, dynamic>{
+        'devices.$deviceId.deviceType': deviceType,
+        'devices.$deviceId.publicKey': publicKey,
+        'devices.$deviceId.publicKeyUpdatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (userDoc.data()?['publicKey'] == null) {
+        updates['publicKey'] = publicKey;
+        updates['publicKeyUpdatedAt'] = FieldValue.serverTimestamp();
+      }
+
+      await _firestore.collection('users').doc(user.uid).set(
+        updates,
+        SetOptions(merge: true),
+      );
 
       print('Public key saved to Firestore');
     } catch (e) {
@@ -287,6 +247,13 @@ class UserService {
     await setOffline();
     await _crypto.clear();
     stopUserDocListener();
+    try {
+      final googleSignIn = GoogleSignIn();
+      await googleSignIn.signOut();
+      await googleSignIn.disconnect();
+    } catch (e) {
+      print('Google sign-out skipped/failed: $e');
+    }
     await _auth.signOut();
   }
 }

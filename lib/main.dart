@@ -23,9 +23,7 @@ import 'services/signaling_service.dart';
 /// Background notification handler
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   debugPrint('BG message: ${message.messageId}');
 }
@@ -34,35 +32,32 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   /// Firebase init
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   // Enable local persistence for faster startup and offline cache.
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
-  
+
   /// FCM background messages
-  FirebaseMessaging.onBackgroundMessage(
-    firebaseMessagingBackgroundHandler,
-  );
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
   /// Initialize theme before UI to avoid flicker
   final themeService = ThemeService();
   await themeService.initialize();
 
   runApp(
-    ChangeNotifierProvider.value(
-      value: themeService,
-      child: const MyApp(),
-    ),
+    ChangeNotifierProvider.value(value: themeService, child: const MyApp()),
   );
 
   // Defer non-critical init to keep startup fast
   Future.microtask(() async {
-    await NotificationService().initialize();
+    try {
+      await NotificationService().initialize();
+    } catch (e) {
+      debugPrint('Notification init failed: $e');
+    }
   });
 }
 
@@ -107,7 +102,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) async {
+    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((
+      user,
+    ) async {
       if (user != null) {
         await UserService().saveUserToFirestore(user: user);
         UserService().loadCachedProfile();
@@ -119,7 +116,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           await _initializeE2EEForUser();
           _e2eeInitialized = true;
         }
-        
+
         _presenceService.startPresenceTracking();
       } else {
         _presenceService.stopPresenceTracking();
@@ -151,7 +148,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       final callerName = message['callerName']?.toString() ?? 'User';
       final isVideo = message['isVideo'] == true;
 
-      if (_appLifecycleState != AppLifecycleState.resumed || Platform.isWindows) {
+      if (_appLifecycleState != AppLifecycleState.resumed ||
+          Platform.isWindows) {
         NotificationService().showIncomingCallNotification(
           callId: callId,
           callerName: callerName,
@@ -165,10 +163,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         callerName: callerName,
         callerPhotoUrl: message['callerPhotoUrl']?.toString(),
         isVideo: isVideo,
-        offer: {
-          'sdp': message['sdp'],
-          'type': message['sdpType'],
-        },
+        offer: {'sdp': message['sdp'], 'type': message['sdpType']},
       );
 
       Navigator.of(context)
@@ -178,9 +173,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             ),
           )
           .whenComplete(() {
-        _callRouteOpen = false;
-        _activeIncomingCallId = null;
-      });
+            _callRouteOpen = false;
+            _activeIncomingCallId = null;
+          });
     });
   }
 

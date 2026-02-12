@@ -1,9 +1,12 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 import '../services/user_service_e2ee.dart';
 import '../services/theme_service.dart';
+import '../services/windows_google_auth_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'email_verification_screen.dart';
 
@@ -20,7 +23,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final _nameController = TextEditingController();
-  
+
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
@@ -28,6 +31,24 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
+
+  bool get _googleSignInSupportedDesktop {
+    if (kIsWeb) return true;
+    if (Platform.isLinux) return false;
+    if (Platform.isWindows) return WindowsGoogleAuthService.isConfigured;
+    return true;
+  }
+
+  String? get _googleSignInDesktopHint {
+    if (kIsWeb) return null;
+    if (Platform.isLinux) {
+      return 'Google Sign-In is not supported on Linux desktop.';
+    }
+    if (Platform.isWindows && !WindowsGoogleAuthService.isConfigured) {
+      return WindowsGoogleAuthService.setupHint;
+    }
+    return null;
+  }
 
   @override
   void dispose() {
@@ -38,7 +59,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     super.dispose();
   }
 
-  // Email/Password Registration 
+  // Email/Password Registration
   Future<void> _registerWithEmail() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -59,19 +80,17 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       print('🔵 Creating user account...');
 
       // Create user
-      UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
+      UserCredential userCredential = await _auth
+          .createUserWithEmailAndPassword(email: email, password: password);
 
       print('✅ User account created: ${userCredential.user?.uid}');
 
       // Update display name
       await userCredential.user?.updateDisplayName(name);
-      
+
       // IMPORTANT: Reload the user to get the updated displayName
       await userCredential.user?.reload();
-      
+
       // Get the refreshed user object
       User? refreshedUser = _auth.currentUser;
 
@@ -92,9 +111,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Verification email sent! Check your inbox.')),
+          const SnackBar(
+            content: Text('Verification email sent! Check your inbox.'),
+          ),
         );
-        
+
         // Navigate to email verification screen
         // Using pushReplacement to prevent going back to registration
         Navigator.of(context).pushReplacement(
@@ -105,7 +126,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       }
     } on FirebaseAuthException catch (e) {
       print('❌ Firebase Auth Error: ${e.code} - ${e.message}');
-      
+
       String message = 'An error occurred';
       if (e.code == 'weak-password') {
         message = 'The password is too weak';
@@ -118,19 +139,19 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       } else if (e.code == 'network-request-failed') {
         message = 'Network error. Please check your connection.';
       }
-      
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     } catch (e) {
       print('❌ Unknown Error: $e');
-      
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -139,6 +160,31 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
   // Google Sign-In
   Future<void> _signInWithGoogle() async {
+    final isWindowsDesktop = !kIsWeb && Platform.isWindows;
+    final usesProviderFlow = !kIsWeb && Platform.isMacOS;
+
+    if (!kIsWeb && Platform.isLinux) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Google Sign-In is not supported on desktop. Use email/password.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (isWindowsDesktop && !WindowsGoogleAuthService.isConfigured) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(WindowsGoogleAuthService.setupHint)),
+        );
+      }
+      return;
+    }
+
     if (!_acceptedTerms) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please accept the Terms and Conditions')),
@@ -149,45 +195,60 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     setState(() => _isLoading = true);
 
     try {
-      print('🔵 Starting Google Sign-In...');
-      
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      
-      if (googleUser == null) {
-        print('⚠️  Google Sign-In cancelled');
-        setState(() => _isLoading = false);
-        return;
+      UserCredential userCredential;
+
+      if (isWindowsDesktop) {
+        userCredential = await WindowsGoogleAuthService().signInWithGoogle();
+      } else if (usesProviderFlow) {
+        final googleProvider = GoogleAuthProvider();
+        googleProvider.addScope('email');
+        googleProvider.addScope('profile');
+        userCredential = await _auth.signInWithProvider(googleProvider);
+      } else {
+        print('Starting Google Sign-In...');
+
+        final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+
+        if (googleUser == null) {
+          print('Google Sign-In cancelled');
+          return;
+        }
+
+        print('Selected Google account: ${googleUser.email}');
+
+        final GoogleSignInAuthentication googleAuth =
+            await googleUser.authentication;
+
+        final credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+
+        print('Signing in with Google credentials...');
+        userCredential = await _auth.signInWithCredential(credential);
       }
 
-      print('✅ Google user selected: ${googleUser.email}');
-
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-
-      print('🔵 Signing in with Google credentials...');
-      
-      UserCredential userCredential = await _auth.signInWithCredential(credential);
-
-      print('✅ Signed in: ${userCredential.user?.uid}');
+      print('Signed in: ${userCredential.user?.uid}');
 
       // Save user to Firestore (basic info only, no E2EE yet)
       if (userCredential.user != null) {
-        print('🔵 Saving Google user to Firestore...');
+        print('Saving Google user to Firestore...');
         await UserService().saveUserToFirestore(user: userCredential.user!);
         await UserService().initializeE2EE();
-        print('✅ Google user saved to Firestore');
+        print('Google user saved to Firestore');
       }
 
       // AuthWrapper will automatically navigate to HomeScreen
       // No need to manually navigate here
-      
+    } on WindowsGoogleAuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
     } on FirebaseAuthException catch (e) {
-      print('❌ Firebase Auth Error: ${e.code} - ${e.message}');
-      
+      print('Firebase Auth Error: ${e.code} - ${e.message}');
+
       if (mounted) {
         String message = 'Google Sign-In failed';
         if (e.code == 'account-exists-with-different-credential') {
@@ -198,15 +259,19 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           message = 'Google Sign-In is not enabled';
         } else if (e.code == 'user-disabled') {
           message = 'This account has been disabled';
+        } else if (e.code == 'unknown-error' &&
+            (e.message ?? '').contains('non-mobile systems')) {
+          message =
+              'Google Sign-In is not supported by Firebase Auth on this desktop platform.';
         }
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
+
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     } catch (e) {
-      print('❌ Unknown Error: $e');
-      
+      print('Unknown Error: $e');
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Sign-In error: ${e.toString()}')),
@@ -220,7 +285,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   @override
   Widget build(BuildContext context) {
     final themeService = Provider.of<ThemeService>(context);
-    
+
     return Scaffold(
       body: SafeArea(
         child: Stack(
@@ -251,17 +316,16 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                       Text(
                         'Create Account',
                         textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                        style: Theme.of(context).textTheme.headlineMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         'Sign up to get started',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Colors.grey[600],
-                            ),
+                          color: Colors.grey[600],
+                        ),
                       ),
                       const SizedBox(height: 32),
 
@@ -316,10 +380,14 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
                             icon: Icon(
-                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                              _obscurePassword
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
                             ),
                             onPressed: () {
-                              setState(() => _obscurePassword = !_obscurePassword);
+                              setState(
+                                () => _obscurePassword = !_obscurePassword,
+                              );
                             },
                           ),
                           border: OutlineInputBorder(
@@ -347,10 +415,15 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
                             icon: Icon(
-                              _obscureConfirmPassword ? Icons.visibility_off : Icons.visibility,
+                              _obscureConfirmPassword
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
                             ),
                             onPressed: () {
-                              setState(() => _obscureConfirmPassword = !_obscureConfirmPassword);
+                              setState(
+                                () => _obscureConfirmPassword =
+                                    !_obscureConfirmPassword,
+                              );
                             },
                           ),
                           border: OutlineInputBorder(
@@ -381,7 +454,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                           Expanded(
                             child: GestureDetector(
                               onTap: () {
-                                setState(() => _acceptedTerms = !_acceptedTerms);
+                                setState(
+                                  () => _acceptedTerms = !_acceptedTerms,
+                                );
                               },
                               child: RichText(
                                 text: TextSpan(
@@ -394,15 +469,22 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                     WidgetSpan(
                                       child: GestureDetector(
                                         onTap: () async {
-                                          final url = Uri.parse('https://aeamadoraoeste.edu.pt/');
+                                          final url = Uri.parse(
+                                            'https://aeamadoraoeste.edu.pt/',
+                                          );
                                           final success = await launchUrl(
                                             url,
-                                            mode: LaunchMode.externalApplication,
+                                            mode:
+                                                LaunchMode.externalApplication,
                                           );
                                           if (!success && mounted) {
-                                            ScaffoldMessenger.of(context).showSnackBar(
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
                                               const SnackBar(
-                                                content: Text('Could not open link'),
+                                                content: Text(
+                                                  'Could not open link',
+                                                ),
                                               ),
                                             );
                                           }
@@ -410,9 +492,12 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                         child: Text(
                                           'Terms and Conditions',
                                           style: TextStyle(
-                                            color: Theme.of(context).colorScheme.primary,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
                                             fontWeight: FontWeight.bold,
-                                            decoration: TextDecoration.underline,
+                                            decoration:
+                                                TextDecoration.underline,
                                           ),
                                         ),
                                       ),
@@ -439,11 +524,17 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                             ? const SizedBox(
                                 height: 20,
                                 width: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
                               )
                             : const Text(
                                 'Sign Up',
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                       ),
                       const SizedBox(height: 24),
@@ -466,11 +557,16 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
                       // Google Sign-In Button
                       OutlinedButton.icon(
-                        onPressed: _isLoading ? null : _signInWithGoogle,
+                        onPressed:
+                            (_isLoading || !_googleSignInSupportedDesktop)
+                            ? null
+                            : _signInWithGoogle,
                         icon: const Icon(Icons.g_mobiledata, size: 32),
-                        label: const Text(
-                          'Continue with Google',
-                          style: TextStyle(fontSize: 16),
+                        label: Text(
+                          _googleSignInSupportedDesktop
+                              ? 'Continue with Google'
+                              : 'Google Sign-In unavailable on desktop',
+                          style: const TextStyle(fontSize: 16),
                         ),
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 16),
@@ -480,6 +576,15 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                           side: BorderSide(color: Colors.grey[300]!),
                         ),
                       ),
+                      if (!_googleSignInSupportedDesktop) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _googleSignInDesktopHint ??
+                              'Google Sign-In unavailable on desktop.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.grey[600]),
+                        ),
+                      ],
                       const SizedBox(height: 24),
 
                       // Login Link

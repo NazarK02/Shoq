@@ -4,12 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'registration_screen.dart';
 import 'friends_list_screen.dart';
 import 'profile_screen.dart';
 import 'settings_screen.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
+import '../services/user_service_e2ee.dart';
 import '../services/user_cache_service.dart';
 import '../services/conversation_cache_service.dart';
 import 'chat_screen_e2ee.dart';
@@ -56,6 +56,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onUserCacheUpdated() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _handleLogout() async {
+    if (Navigator.of(context).canPop()) {
+      Navigator.pop(context);
+    }
+
+    try {
+      await NotificationService().clearToken();
+      await PresenceService().stopPresenceTracking();
+      await UserService().signOut();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Logout failed: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _loadCachedConversations() async {
@@ -240,17 +258,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),
             title: const Text('Logout', style: TextStyle(color: Colors.red)),
-            onTap: () async {
-              await NotificationService().clearToken();
-              await PresenceService().setOffline();
-              await FirebaseAuth.instance.signOut();
-              if (context.mounted) {
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const RegistrationScreen()),
-                  (route) => false,
-                );
-              }
-            },
+            onTap: _handleLogout,
           ),
         ],
       ),

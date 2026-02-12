@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'crypto_service.dart';
+import 'device_info_service.dart';
 
 class ChatFileUpload {
   final String messageId;
@@ -27,6 +28,7 @@ class ChatService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final CryptoService _crypto = CryptoService();
+  final DeviceInfoService _deviceInfo = DeviceInfoService();
 
   User? get currentUser => _auth.currentUser;
   bool get isEncryptionReady => _crypto.isEncryptionEnabled;
@@ -77,31 +79,70 @@ class ChatService {
     return conversationId;
   }
 
-  /// Ensure a user has E2EE keys (initialize if needed)
-  Future<void> _ensureUserHasE2EE(String userId) async {
-    final userDoc = await _firestore.collection('users').doc(userId).get();
-    final hasPublicKey = userDoc.data()?['publicKey'] != null;
-
-    if (!hasPublicKey) {
-      print('⚠️  User $userId missing E2EE keys, initializing...');
-      
-      // If it's the current user, we can initialize
-      if (userId == _auth.currentUser?.uid) {
-        await _crypto.initialize();
-        final publicKey = _crypto.myPublicKeyBase64;
-        
-        if (publicKey != null) {
-          await _firestore.collection('users').doc(userId).update({
-            'publicKey': publicKey,
-            'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
-          });
-          print('✅ E2EE initialized for current user');
+  Map<String, String> _extractDevicePublicKeys(dynamic devicesRaw) {
+    final keys = <String, String>{};
+    if (devicesRaw is Map) {
+      for (final entry in devicesRaw.entries) {
+        final deviceId = entry.key?.toString() ?? '';
+        final value = entry.value;
+        if (deviceId.isEmpty) continue;
+        if (value is Map && value['publicKey'] is String) {
+          keys[deviceId] = value['publicKey'] as String;
         }
-      } else {
-        print('⚠️  Cannot initialize E2EE for other user, they must login first');
       }
     }
+    return keys;
   }
+
+  /// Ensure a user has E2EE keys (initialize if needed)
+  Future<_UserKeySet> _ensureUserHasE2EE(String userId) async {
+    final userDoc = await _firestore.collection('users').doc(userId).get();
+    final data = userDoc.data() ?? <String, dynamic>{};
+
+    String? legacyKey = data['publicKey'] as String?;
+    final deviceKeys = _extractDevicePublicKeys(data['devices']);
+
+    if (userId == _auth.currentUser?.uid) {
+      await _crypto.initialize();
+      final publicKey = _crypto.myPublicKeyBase64;
+
+      if (publicKey != null) {
+        final device = await _deviceInfo.getDeviceInfo();
+        final deviceId = device['deviceId'] ?? 'unknown';
+        final deviceType = device['deviceType'] ?? 'unknown';
+
+        final updates = <String, dynamic>{};
+
+        if (deviceKeys[deviceId] != publicKey) {
+          updates['devices.$deviceId.publicKey'] = publicKey;
+          updates['devices.$deviceId.publicKeyUpdatedAt'] =
+              FieldValue.serverTimestamp();
+          updates['devices.$deviceId.deviceType'] = deviceType;
+          updates['devices.$deviceId.lastActive'] =
+              FieldValue.serverTimestamp();
+          deviceKeys[deviceId] = publicKey;
+        }
+
+        if (legacyKey == null || legacyKey.isEmpty) {
+          updates['publicKey'] = publicKey;
+          updates['publicKeyUpdatedAt'] = FieldValue.serverTimestamp();
+          legacyKey = publicKey;
+        }
+
+        if (updates.isNotEmpty) {
+          await _firestore
+              .collection('users')
+              .doc(userId)
+              .set(updates, SetOptions(merge: true));
+        }
+      }
+    } else if (legacyKey == null && deviceKeys.isEmpty) {
+      print('Cannot initialize E2EE for other user; they must login first');
+    }
+
+    return _UserKeySet(legacyKey: legacyKey, deviceKeys: deviceKeys);
+  }
+
 
   /// Send an encrypted message
   Future<void> sendMessage({
@@ -118,43 +159,94 @@ class ChatService {
       throw Exception('Encryption not initialized. Call initializeEncryption() first.');
     }
 
-    print('📤 Sending encrypted message...');
+    print('Sending encrypted message...');
 
     try {
-      // Ensure recipient has E2EE before sending
-      await _ensureUserHasE2EE(recipientId);
+      final senderKeys = await _ensureUserHasE2EE(currentUser.uid);
+      final recipientKeys = await _ensureUserHasE2EE(recipientId);
 
-      // Encrypt the message
-      final ciphertext = await _crypto.encryptMessage(
-        plaintext: messageText,
-        recipientUserId: recipientId,
-      );
-      // Encrypt a copy for the sender so they can decrypt their own messages
-      final senderCiphertext = await _crypto.encryptMessage(
-        plaintext: messageText,
-        recipientUserId: currentUser.uid,
-      );
+      if (!recipientKeys.hasAnyKey) {
+        throw Exception('Recipient has no encryption keys');
+      }
+
+      final device = await _deviceInfo.getDeviceInfo();
+      final senderDeviceId = device['deviceId'] ?? 'unknown';
+      final senderDeviceType = device['deviceType'] ?? 'unknown';
+
+      final senderDeviceKeys = Map<String, String>.from(senderKeys.deviceKeys);
+      final myPublicKey = _crypto.myPublicKeyBase64;
+      if (myPublicKey != null && !senderDeviceKeys.containsKey(senderDeviceId)) {
+        senderDeviceKeys[senderDeviceId] = myPublicKey;
+      }
+
+      final recipientCiphertexts = <String, String>{};
+      for (final entry in recipientKeys.deviceKeys.entries) {
+        recipientCiphertexts[entry.key] = await _crypto.encryptMessageWithPublicKey(
+          plaintext: messageText,
+          recipientPublicKeyBase64: entry.value,
+        );
+      }
+
+      final senderCiphertexts = <String, String>{};
+      for (final entry in senderDeviceKeys.entries) {
+        senderCiphertexts[entry.key] = await _crypto.encryptMessageWithPublicKey(
+          plaintext: messageText,
+          recipientPublicKeyBase64: entry.value,
+        );
+      }
+
+      String? legacyRecipientCiphertext;
+      if (recipientKeys.legacyKey != null && recipientKeys.legacyKey!.isNotEmpty) {
+        legacyRecipientCiphertext = await _crypto.encryptMessageWithPublicKey(
+          plaintext: messageText,
+          recipientPublicKeyBase64: recipientKeys.legacyKey!,
+        );
+      }
+
+      String? legacySenderCiphertext;
+      if (senderKeys.legacyKey != null && senderKeys.legacyKey!.isNotEmpty) {
+        legacySenderCiphertext = await _crypto.encryptMessageWithPublicKey(
+          plaintext: messageText,
+          recipientPublicKeyBase64: senderKeys.legacyKey!,
+        );
+      }
 
       // Get first 50 chars of plaintext for preview (will be shown as encrypted in UI)
-      final preview = messageText.length > 50 
-          ? '${messageText.substring(0, 50)}...' 
+      final preview = messageText.length > 50
+          ? '${messageText.substring(0, 50)}...'
           : messageText;
+
+      final payload = <String, dynamic>{
+        'senderId': currentUser.uid,
+        'senderDeviceId': senderDeviceId,
+        'senderDeviceType': senderDeviceType,
+        'timestamp': FieldValue.serverTimestamp(),
+        'clientTimestamp': Timestamp.now(),
+        'read': false,
+        'encrypted': true,
+        'type': 'text',
+        'encryptionVersion': 2,
+      };
+
+      if (recipientCiphertexts.isNotEmpty) {
+        payload['ciphertexts'] = recipientCiphertexts;
+      }
+      if (senderCiphertexts.isNotEmpty) {
+        payload['senderCiphertexts'] = senderCiphertexts;
+      }
+      if (legacyRecipientCiphertext != null) {
+        payload['ciphertext'] = legacyRecipientCiphertext;
+      }
+      if (legacySenderCiphertext != null) {
+        payload['senderCiphertext'] = legacySenderCiphertext;
+      }
 
       // Store encrypted message
       await _firestore
           .collection('conversations')
           .doc(conversationId)
           .collection('messages')
-          .add({
-        'senderId': currentUser.uid,
-        'ciphertext': ciphertext,
-        'senderCiphertext': senderCiphertext,
-        'timestamp': FieldValue.serverTimestamp(),
-        'clientTimestamp': Timestamp.now(),
-        'read': false,
-        'encrypted': true,
-        'type': 'text',
-      });
+          .add(payload);
 
       // Update conversation metadata with plaintext preview for UI
       await _firestore.collection('conversations').doc(conversationId).update({
@@ -164,14 +256,15 @@ class ChatService {
         'hasMessages': true,
       });
 
-      print('✅ Encrypted message sent successfully');
+      print('Encrypted message sent successfully');
     } catch (e) {
-      print('❌ Failed to send encrypted message: $e');
+      print('Failed to send encrypted message: $e');
       rethrow;
     }
   }
 
   /// Send a file message (non-encrypted file contents).
+
   Future<void> sendFileMessage({
     required String conversationId,
     required String recipientId,
@@ -301,6 +394,27 @@ class ChatService {
         .snapshots();
   }
 
+  Future<String?> _resolveSenderPublicKey({
+    required String senderId,
+    String? senderDeviceId,
+  }) async {
+    final senderDoc = await _firestore.collection('users').doc(senderId).get();
+    final data = senderDoc.data();
+    if (data == null) return null;
+
+    if (senderDeviceId != null && senderDeviceId.isNotEmpty) {
+      final devices = data['devices'];
+      if (devices is Map) {
+        final deviceEntry = devices[senderDeviceId];
+        if (deviceEntry is Map && deviceEntry['publicKey'] is String) {
+          return deviceEntry['publicKey'] as String;
+        }
+      }
+    }
+
+    return data['publicKey'] as String?;
+  }
+
   /// Decrypt a single message
   Future<String> decryptMessage({
     required Map<String, dynamic> messageData,
@@ -320,37 +434,64 @@ class ChatService {
         return '';
       }
 
+      final senderDeviceId = messageData['senderDeviceId'] as String?;
+      final device = await _deviceInfo.getDeviceInfo();
+      final currentDeviceId = device['deviceId'] ?? 'unknown';
+
       final currentUserId = _auth.currentUser?.uid;
       String? ciphertext;
       if (currentUserId != null && senderId == currentUserId) {
-        // For my own messages, use the self-encrypted copy if available.
-        ciphertext = messageData['senderCiphertext'] as String?;
+        // For my own messages, use the per-device self-encrypted copy if available.
+        final senderCiphertexts = messageData['senderCiphertexts'];
+        if (senderCiphertexts is Map) {
+          final fromMap = senderCiphertexts[currentDeviceId];
+          if (fromMap is String) {
+            ciphertext = fromMap;
+          }
+        }
+        ciphertext ??= messageData['senderCiphertext'] as String?;
         if (ciphertext == null) {
           // Legacy messages (before senderCiphertext) can't be decrypted by sender.
           return '[Sent]';
         }
       } else {
-        ciphertext = messageData['ciphertext'] as String?;
+        final ciphertexts = messageData['ciphertexts'];
+        if (ciphertexts is Map) {
+          final fromMap = ciphertexts[currentDeviceId];
+          if (fromMap is String) {
+            ciphertext = fromMap;
+          }
+        }
+        ciphertext ??= messageData['ciphertext'] as String?;
       }
 
       if (ciphertext == null) {
         return '';
       }
 
+      final senderPublicKey = await _resolveSenderPublicKey(
+        senderId: senderId,
+        senderDeviceId: senderDeviceId,
+      );
+      if (senderPublicKey == null || senderPublicKey.isEmpty) {
+        return '';
+      }
+
       // Decrypt
-      final plaintext = await _crypto.decryptMessage(
+      final plaintext = await _crypto.decryptMessageWithSenderPublicKey(
         ciphertextBase64: ciphertext,
-        senderUserId: senderId,
+        senderPublicKeyBase64: senderPublicKey,
       );
 
       return plaintext;
     } catch (e) {
-      print('❌ Decryption failed: $e');
+      print('Decryption failed: $e');
       return '';
     }
   }
 
   /// Get conversation stream
+
   Stream<DocumentSnapshot> getConversation(String conversationId) {
     return _firestore
         .collection('conversations')
@@ -436,6 +577,23 @@ class ChatService {
   /// Check if user has encryption enabled
   Future<bool> userHasEncryption(String userId) async {
     final userDoc = await _firestore.collection('users').doc(userId).get();
-    return userDoc.data()?['publicKey'] != null;
+    final data = userDoc.data();
+    if (data == null) return false;
+    if (data['publicKey'] != null) return true;
+    final deviceKeys = _extractDevicePublicKeys(data['devices']);
+    return deviceKeys.isNotEmpty;
   }
+}
+
+class _UserKeySet {
+  final String? legacyKey;
+  final Map<String, String> deviceKeys;
+
+  const _UserKeySet({
+    required this.legacyKey,
+    required this.deviceKeys,
+  });
+
+  bool get hasAnyKey =>
+      (legacyKey != null && legacyKey!.isNotEmpty) || deviceKeys.isNotEmpty;
 }

@@ -1,4 +1,10 @@
 flutter run --dart-define=SIGNALING_URL=ws://192.168.1.189:3000 --dart-define=LOCAL_ONLY=true
+OPTIONAL OVERRIDE:
+flutter run --dart-define=SIGNALING_URL=ws://192.168.1.189:3000 --dart-define=LOCAL_ONLY=true --dart-define=GOOGLE_WINDOWS_CLIENT_ID=YOUR_DESKTOP_CLIENT_ID.apps.googleusercontent.com
+flutter run --dart-define=SIGNALING_URL=ws://192.168.1.189:3000 --dart-define=LOCAL_ONLY=true --dart-define=GOOGLE_WINDOWS_CLIENT_ID=YOUR_DESKTOP_CLIENT_ID.apps.googleusercontent.com --dart-define=GOOGLE_WINDOWS_CLIENT_SECRET=YOUR_DESKTOP_CLIENT_SECRET
+WINDOWS GOOGLE OAUTH (ONE-TIME PROJECT SETUP):
+Use client ID from lib/services/app_auth_config.dart and set Authorized redirect URI to:
+http://127.0.0.1:53682/oauth2callback
 
  cd tools/signaling-server
  npm install

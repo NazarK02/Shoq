@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -5,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../services/user_service_e2ee.dart';
 import '../services/notification_service.dart';
 import '../services/theme_service.dart';
+import '../services/windows_google_auth_service.dart';
 import 'registration_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -18,13 +21,31 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  
+
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _rememberMe = false;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
+
+  bool get _googleSignInSupportedDesktop {
+    if (kIsWeb) return true;
+    if (Platform.isLinux) return false;
+    if (Platform.isWindows) return WindowsGoogleAuthService.isConfigured;
+    return true;
+  }
+
+  String? get _googleSignInDesktopHint {
+    if (kIsWeb) return null;
+    if (Platform.isLinux) {
+      return 'Google Sign-In is not supported on Linux desktop.';
+    }
+    if (Platform.isWindows && !WindowsGoogleAuthService.isConfigured) {
+      return WindowsGoogleAuthService.setupHint;
+    }
+    return null;
+  }
 
   @override
   void dispose() {
@@ -53,7 +74,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       // IMPORTANT: Re-initialize notifications for new user
       await NotificationService().initialize();
-      
+
       // Update last seen
       await UserService().updateLastSeen();
 
@@ -73,17 +94,17 @@ class _LoginScreenState extends State<LoginScreen> {
       } else if (e.code == 'too-many-requests') {
         message = 'Too many attempts. Please try again later';
       }
-      
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -92,30 +113,67 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // Google Sign-In
   Future<void> _signInWithGoogle() async {
+    final isWindowsDesktop = !kIsWeb && Platform.isWindows;
+    final isLinuxDesktop = !kIsWeb && Platform.isLinux;
+    final usesProviderFlow = !kIsWeb && Platform.isMacOS;
+
+    if (isLinuxDesktop) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Google Sign-In is not supported on desktop. Use email/password.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (isWindowsDesktop && !WindowsGoogleAuthService.isConfigured) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(WindowsGoogleAuthService.setupHint)),
+        );
+      }
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      
-      if (googleUser == null) {
-        setState(() => _isLoading = false);
-        return;
+      UserCredential userCredential;
+
+      if (isWindowsDesktop) {
+        userCredential = await WindowsGoogleAuthService().signInWithGoogle();
+      } else if (usesProviderFlow) {
+        final googleProvider = GoogleAuthProvider();
+        googleProvider.addScope('email');
+        googleProvider.addScope('profile');
+        userCredential = await _auth.signInWithProvider(googleProvider);
+      } else {
+        final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+
+        if (googleUser == null) {
+          return;
+        }
+
+        final GoogleSignInAuthentication googleAuth =
+            await googleUser.authentication;
+
+        final credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+
+        userCredential = await _auth.signInWithCredential(credential);
       }
-
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-
-      UserCredential userCredential = await _auth.signInWithCredential(credential);
 
       // Save/update user in Firestore
       if (userCredential.user != null) {
         await UserService().saveUserToFirestore(user: userCredential.user!);
         await UserService().initializeE2EE();
-        
+
         // IMPORTANT: Re-initialize notifications for new user
         await NotificationService().initialize();
       }
@@ -123,16 +181,26 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) {
         // AuthWrapper will automatically navigate
       }
+    } on WindowsGoogleAuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
     } on FirebaseAuthException catch (e) {
       if (mounted) {
         String message = 'Google Sign-In failed';
         if (e.code == 'account-exists-with-different-credential') {
           message = 'Account already exists with different credentials';
+        } else if (e.code == 'unknown-error' &&
+            (e.message ?? '').contains('non-mobile systems')) {
+          message =
+              'Google Sign-In is not supported by Firebase Auth on this desktop platform.';
         }
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
+
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     } catch (e) {
       if (mounted) {
@@ -149,7 +217,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final themeService = Provider.of<ThemeService>(context);
-    
+
     return Scaffold(
       body: SafeArea(
         child: Stack(
@@ -180,17 +248,16 @@ class _LoginScreenState extends State<LoginScreen> {
                       Text(
                         'Welcome Back',
                         textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                        style: Theme.of(context).textTheme.headlineMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         'Sign in to continue',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Colors.grey[600],
-                            ),
+                          color: Colors.grey[600],
+                        ),
                       ),
                       const SizedBox(height: 32),
 
@@ -226,10 +293,14 @@ class _LoginScreenState extends State<LoginScreen> {
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
                             icon: Icon(
-                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                              _obscurePassword
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
                             ),
                             onPressed: () {
-                              setState(() => _obscurePassword = !_obscurePassword);
+                              setState(
+                                () => _obscurePassword = !_obscurePassword,
+                              );
                             },
                           ),
                           border: OutlineInputBorder(
@@ -263,7 +334,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           TextButton(
                             onPressed: () {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Forgot password - Coming soon')),
+                                const SnackBar(
+                                  content: Text(
+                                    'Forgot password - Coming soon',
+                                  ),
+                                ),
                               );
                             },
                             child: const Text('Forgot Password?'),
@@ -285,11 +360,16 @@ class _LoginScreenState extends State<LoginScreen> {
                             ? const SizedBox(
                                 height: 20,
                                 width: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Text(
                                 'Sign In',
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                       ),
                       const SizedBox(height: 24),
@@ -312,11 +392,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
                       // Google Sign-In Button
                       OutlinedButton.icon(
-                        onPressed: _isLoading ? null : _signInWithGoogle,
+                        onPressed:
+                            (_isLoading || !_googleSignInSupportedDesktop)
+                            ? null
+                            : _signInWithGoogle,
                         icon: const Icon(Icons.g_mobiledata, size: 32),
-                        label: const Text(
-                          'Continue with Google',
-                          style: TextStyle(fontSize: 16),
+                        label: Text(
+                          _googleSignInSupportedDesktop
+                              ? 'Continue with Google'
+                              : 'Google Sign-In unavailable on desktop',
+                          style: const TextStyle(fontSize: 16),
                         ),
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 16),
@@ -326,6 +411,15 @@ class _LoginScreenState extends State<LoginScreen> {
                           side: BorderSide(color: Colors.grey[300]!),
                         ),
                       ),
+                      if (!_googleSignInSupportedDesktop) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _googleSignInDesktopHint ??
+                              'Google Sign-In unavailable on desktop.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.grey[600]),
+                        ),
+                      ],
                       const SizedBox(height: 24),
 
                       // Register Link

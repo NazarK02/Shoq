@@ -6,6 +6,7 @@ import 'package:sodium_libs/sodium_libs.dart' as sodium_libs;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'device_info_service.dart';
 
 class CryptoService {
   static final CryptoService _instance = CryptoService._internal();
@@ -15,6 +16,7 @@ class CryptoService {
   final _secureStorage = const FlutterSecureStorage();
   final _firestore = FirebaseFirestore.instance;
   final _auth = FirebaseAuth.instance;
+  final DeviceInfoService _deviceInfo = DeviceInfoService();
 
   late Sodium _sodium;
   KeyPair? _keyPair;
@@ -72,6 +74,7 @@ class CryptoService {
         publicKey: Uint8List.fromList(publicKeyBytes),
         secretKey: secretKey,
       );
+      await _syncDevicePublicKey(base64.encode(_keyPair!.publicKey));
       return;
     }
 
@@ -92,6 +95,7 @@ class CryptoService {
           key: publicKeyKey,
           value: storedPublicKeyBase64,
         );
+        await _syncDevicePublicKey(storedPublicKeyBase64);
       } else {
         // Public key missing and cannot be derived from secret key.
         // Generate a fresh keypair and replace stored keys.
@@ -106,28 +110,56 @@ class CryptoService {
           value: base64.encode(_keyPair!.publicKey),
         );
 
-        await _firestore.collection('users').doc(user.uid).set({
-          'publicKey': base64.encode(_keyPair!.publicKey),
-          'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+        final publicKeyBase64 = base64.encode(_keyPair!.publicKey);
+        await _syncDevicePublicKey(publicKeyBase64);
+        await _maybeWriteLegacyPublicKey(publicKeyBase64);
       }
     } else {
       _keyPair = _sodium.crypto.box.keyPair();
 
+      final publicKeyBase64 = base64.encode(_keyPair!.publicKey);
       await _secureStorage.write(
         key: privateKeyKey,
         value: base64.encode(_keyPair!.secretKey.extractBytes()),
       );
       await _secureStorage.write(
         key: publicKeyKey,
-        value: base64.encode(_keyPair!.publicKey),
+        value: publicKeyBase64,
       );
 
-      await _firestore.collection('users').doc(user.uid).set({
-        'publicKey': base64.encode(_keyPair!.publicKey),
-        'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      await _syncDevicePublicKey(publicKeyBase64);
+      await _maybeWriteLegacyPublicKey(publicKeyBase64);
     }
+  }
+
+  Future<void> _syncDevicePublicKey(String publicKeyBase64) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    final device = await _deviceInfo.getDeviceInfo();
+    final deviceId = device['deviceId'] ?? 'unknown';
+    final deviceType = device['deviceType'] ?? 'unknown';
+
+    await _firestore.collection('users').doc(user.uid).set({
+      'devices.$deviceId.deviceType': deviceType,
+      'devices.$deviceId.publicKey': publicKeyBase64,
+      'devices.$deviceId.publicKeyUpdatedAt': FieldValue.serverTimestamp(),
+      'devices.$deviceId.lastActive': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> _maybeWriteLegacyPublicKey(String publicKeyBase64) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    final userDoc = await _firestore.collection('users').doc(user.uid).get();
+    final existing = userDoc.data()?['publicKey'] as String?;
+    if (existing != null && existing.isNotEmpty) return;
+
+    await _firestore.collection('users').doc(user.uid).set({
+      'publicKey': publicKeyBase64,
+      'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   /// Encrypt message
@@ -149,23 +181,10 @@ class CryptoService {
       throw Exception('Recipient has no public key');
     }
 
-    final recipientPublicKey =
-        Uint8List.fromList(base64.decode(recipientPublicKeyBase64));
-
-    final nonce = _sodium.randombytes
-        .buf(_sodium.crypto.box.nonceBytes);
-
-    final messageBytes = Uint8List.fromList(utf8.encode(plaintext));
-
-    final cipherText = _sodium.crypto.box.easy(
-      message: messageBytes,
-      nonce: nonce,
-      publicKey: recipientPublicKey,
-      secretKey: _keyPair!.secretKey,
+    return encryptMessageWithPublicKey(
+      plaintext: plaintext,
+      recipientPublicKeyBase64: recipientPublicKeyBase64,
     );
-
-    final combined = Uint8List.fromList([...nonce, ...cipherText]);
-    return base64.encode(combined);
   }
 
   /// Decrypt message
@@ -185,6 +204,47 @@ class CryptoService {
 
     if (senderPublicKeyBase64 == null) {
       throw Exception('Sender has no public key');
+    }
+
+    return decryptMessageWithSenderPublicKey(
+      ciphertextBase64: ciphertextBase64,
+      senderPublicKeyBase64: senderPublicKeyBase64,
+    );
+  }
+
+  Future<String> encryptMessageWithPublicKey({
+    required String plaintext,
+    required String recipientPublicKeyBase64,
+  }) async {
+    if (!_initialized || _keyPair == null) {
+      throw Exception('CryptoService not ready');
+    }
+
+    final recipientPublicKey =
+        Uint8List.fromList(base64.decode(recipientPublicKeyBase64));
+
+    final nonce = _sodium.randombytes
+        .buf(_sodium.crypto.box.nonceBytes);
+
+    final messageBytes = Uint8List.fromList(utf8.encode(plaintext));
+
+    final cipherText = _sodium.crypto.box.easy(
+      message: messageBytes,
+      nonce: nonce,
+      publicKey: recipientPublicKey,
+      secretKey: _keyPair!.secretKey,
+    );
+
+    final combined = Uint8List.fromList([...nonce, ...cipherText]);
+    return base64.encode(combined);
+  }
+
+  Future<String> decryptMessageWithSenderPublicKey({
+    required String ciphertextBase64,
+    required String senderPublicKeyBase64,
+  }) async {
+    if (!_initialized || _keyPair == null) {
+      throw Exception('CryptoService not ready');
     }
 
     final senderPublicKey =
