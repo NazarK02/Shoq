@@ -789,21 +789,21 @@ class _CallScreenState extends State<CallScreen> {
     required Duration duration,
   }) {
     final callType = _isVideo ? 'Video call' : 'Audio call';
-    final when = DateFormat('MMM d, HH:mm').format(startedAt);
+    final when = DateFormat('MMM d, h:mm a').format(startedAt);
 
     if (wasAccepted) {
-      return '$callType accepted at $when - Duration ${_formatDuration(duration)}';
+      return '$callType completed - Duration ${_formatDuration(duration)} - $when';
     }
 
     switch (_callEndReason) {
       case 'declined':
-        return '$callType declined at $when';
+        return '$callType declined - $when';
       case 'missed':
-        return '$callType missed at $when';
+        return '$callType missed - $when';
       case 'failed':
-        return '$callType failed at $when';
+        return '$callType failed to connect - $when';
       default:
-        return '$callType ended at $when';
+        return '$callType ended - $when';
     }
   }
 
@@ -812,9 +812,6 @@ class _CallScreenState extends State<CallScreen> {
     _callSummarySent = true;
 
     try {
-      // Only caller writes summary to avoid duplicate log entries.
-      if (widget.isIncoming) return;
-
       final currentUser = _auth.currentUser;
       final peerId = _peerId;
       if (currentUser == null || peerId == null || peerId.trim().isEmpty) {
@@ -837,11 +834,17 @@ class _CallScreenState extends State<CallScreen> {
       await _chatService.initializeEncryption();
       final conversationId = await _chatService.initializeConversation(peerId);
       if (conversationId == null) return;
+      final normalizedCallId =
+          (_callId ??
+                  '${currentUser.uid}_${_callOpenedAt.microsecondsSinceEpoch}')
+              .replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      final summaryMessageId = 'call_$normalizedCallId';
 
       await _chatService.sendMessage(
         conversationId: conversationId,
         messageText: summaryText,
         recipientId: peerId,
+        messageId: summaryMessageId,
       );
     } catch (e) {
       print('Failed to send call summary message: $e');

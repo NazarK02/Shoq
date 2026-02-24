@@ -25,7 +25,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final UserCacheService _userCache = UserCacheService();
-  final ConversationCacheService _conversationCache = ConversationCacheService();
+  final ConversationCacheService _conversationCache =
+      ConversationCacheService();
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   Timer? _rebuildTimer;
@@ -69,9 +70,9 @@ class _HomeScreenState extends State<HomeScreen> {
       await UserService().signOut();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Logout failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Logout failed: $e')));
       }
     }
   }
@@ -121,9 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         ),
         elevation: 1,
-        actions: [
-          _buildFriendRequestsBadge(),
-        ],
+        actions: [_buildFriendRequestsBadge()],
       ),
       drawer: _buildDrawer(context, user),
       body: _buildChatsList(),
@@ -142,7 +141,7 @@ class _HomeScreenState extends State<HomeScreen> {
           .snapshots(),
       builder: (context, snapshot) {
         final count = snapshot.hasData ? snapshot.data!.docs.length : 0;
-        
+
         return Stack(
           children: [
             IconButton(
@@ -150,7 +149,9 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () {
                 Navigator.push(
                   context,
-                    MaterialPageRoute(builder: (_) => const ImprovedFriendsListScreen()),
+                  MaterialPageRoute(
+                    builder: (_) => const ImprovedFriendsListScreen(),
+                  ),
                 );
               },
             ),
@@ -191,9 +192,7 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: EdgeInsets.zero,
         children: [
           UserAccountsDrawerHeader(
-            decoration: BoxDecoration(
-              color: Theme.of(context).primaryColor,
-            ),
+            decoration: BoxDecoration(color: Theme.of(context).primaryColor),
             currentAccountPicture: _buildAvatar(
               _normalizePhotoUrl(user?.photoURL),
               40,
@@ -223,7 +222,9 @@ class _HomeScreenState extends State<HomeScreen> {
               Navigator.pop(context);
               Navigator.push(
                 context,
-                  MaterialPageRoute(builder: (_) => const ImprovedFriendsListScreen()),
+                MaterialPageRoute(
+                  builder: (_) => const ImprovedFriendsListScreen(),
+                ),
               );
             },
           ),
@@ -250,7 +251,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 applicationVersion: '1.0.0',
                 applicationIcon: const Icon(Icons.shopping_bag, size: 48),
                 children: [
-                  const Text('Secure messaging app with end-to-end encryption.'),
+                  const Text(
+                    'Secure messaging app with end-to-end encryption.',
+                  ),
                 ],
               );
             },
@@ -283,10 +286,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
         final hasSnapshot = snapshot.hasData;
         final hasLiveData = snapshot.hasData && snapshot.data!.docs.isNotEmpty;
-        final canUseCache = (!hasSnapshot ||
+        final canUseCache =
+            (!hasSnapshot ||
                 snapshot.connectionState == ConnectionState.waiting) &&
             _cachedConversations.isNotEmpty;
-        final waitingForLive = (!hasSnapshot ||
+        final waitingForLive =
+            (!hasSnapshot ||
             snapshot.connectionState == ConnectionState.waiting);
 
         if (waitingForLive && !_cacheLoaded) {
@@ -294,10 +299,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         if (hasLiveData) {
-          _scheduleConversationCacheWrite(
-            user.uid,
-            snapshot.data!.docs,
-          );
+          _scheduleConversationCacheWrite(user.uid, snapshot.data!.docs);
         } else if (hasSnapshot && snapshot.data!.docs.isEmpty) {
           _scheduleConversationCacheClear(user.uid);
         }
@@ -316,25 +318,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 16),
                 Text(
                   'No chats yet',
-                  style: TextStyle(
-                    fontSize: 18,
-                    color: Colors.grey[600],
-                  ),
+                  style: TextStyle(fontSize: 18, color: Colors.grey[600]),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   'Add friends to start chatting',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[500],
-                  ),
+                  style: TextStyle(fontSize: 14, color: Colors.grey[500]),
                 ),
                 const SizedBox(height: 24),
                 ElevatedButton.icon(
                   onPressed: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => const ImprovedFriendsListScreen()),
+                      MaterialPageRoute(
+                        builder: (_) => const ImprovedFriendsListScreen(),
+                      ),
                     );
                   },
                   icon: const Icon(Icons.person_add),
@@ -346,19 +344,18 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         final items = hasLiveData
-            ? _conversationCache
-                .buildCacheItemsFromDocs(snapshot.data!.docs)
+            ? _conversationCache.buildCacheItemsFromDocs(snapshot.data!.docs)
             : _cachedConversations;
-        
+
         final sortedDocs = items.toList()
           ..sort((a, b) {
             final aTime = a['lastMessageTime'] as Timestamp?;
             final bTime = b['lastMessageTime'] as Timestamp?;
-            
+
             if (aTime == null && bTime == null) return 0;
             if (aTime == null) return 1;
             if (bTime == null) return -1;
-            
+
             return bTime.compareTo(aTime);
           });
 
@@ -402,59 +399,77 @@ class _HomeScreenState extends State<HomeScreen> {
               lastMessageText = 'Sent a message';
             }
 
-            return ListTile(
-              leading: Stack(
-                children: [
-                  _buildAvatar(photoURL, 20, null),
-                  if (isOnline)
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color: Colors.green,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Theme.of(context).scaffoldBackgroundColor,
-                            width: 2,
-                          ),
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              child: Material(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ImprovedChatScreen(
+                          recipientId: otherUserId,
+                          recipientName: displayName,
                         ),
                       ),
+                    );
+                  },
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 4,
                     ),
-                ],
-              ),
-              title: Text(
-                displayName,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              subtitle: Text(
-                lastMessageText,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.grey),
-              ),
-              trailing: chatData['lastMessageTime'] != null
-                  ? Text(
-                      _formatTime(chatData['lastMessageTime'] as Timestamp),
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontSize: 12,
-                      ),
-                    )
-                  : null,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ImprovedChatScreen(
-                      recipientId: otherUserId,
-                      recipientName: displayName,
+                    leading: Stack(
+                      children: [
+                        _buildAvatar(photoURL, 20, null),
+                        if (isOnline)
+                          Positioned(
+                            right: 0,
+                            bottom: 0,
+                            child: Container(
+                              width: 14,
+                              height: 14,
+                              decoration: BoxDecoration(
+                                color: Colors.green,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Theme.of(
+                                    context,
+                                  ).scaffoldBackgroundColor,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
+                    title: Text(
+                      displayName,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text(
+                      lastMessageText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                    trailing: chatData['lastMessageTime'] != null
+                        ? Text(
+                            _formatTime(
+                              chatData['lastMessageTime'] as Timestamp,
+                            ),
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 12,
+                            ),
+                          )
+                        : null,
                   ),
-                );
-              },
+                ),
+              ),
             );
           },
         );
@@ -546,10 +561,7 @@ class _HomeScreenState extends State<HomeScreen> {
       itemCount: 8,
       itemBuilder: (context, index) {
         return ListTile(
-          leading: CircleAvatar(
-            radius: 20,
-            backgroundColor: Colors.grey[300],
-          ),
+          leading: CircleAvatar(radius: 20, backgroundColor: Colors.grey[300]),
           title: _buildSkeletonLine(width: 140, height: 12),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 8),

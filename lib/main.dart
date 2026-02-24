@@ -95,7 +95,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   bool _callRouteOpen = false;
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
   bool _e2eeInitialized = false;
-  bool _reloadCheckScheduled = false;
+  String? _verificationCheckUid;
+  bool _verificationCheckInProgress = false;
+  bool _verificationCheckCompleted = false;
 
   @override
   void initState() {
@@ -106,6 +108,12 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       user,
     ) async {
       if (user != null) {
+        if (_verificationCheckUid != user.uid) {
+          _verificationCheckUid = user.uid;
+          _verificationCheckInProgress = false;
+          _verificationCheckCompleted = false;
+        }
+
         await UserService().saveUserToFirestore(user: user);
         UserService().loadCachedProfile();
         UserService().startUserDocListener();
@@ -125,8 +133,50 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         ConversationCacheService().clearAll();
         _stopIncomingCallListener();
         _e2eeInitialized = false;
+        _verificationCheckUid = null;
+        _verificationCheckInProgress = false;
+        _verificationCheckCompleted = false;
       }
     });
+  }
+
+  void _scheduleVerificationRefresh(User user) {
+    if (_verificationCheckInProgress && _verificationCheckUid == user.uid) {
+      return;
+    }
+
+    _verificationCheckUid = user.uid;
+    _verificationCheckInProgress = true;
+    _verificationCheckCompleted = false;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await user.reload().timeout(const Duration(seconds: 4));
+      } catch (_) {
+        // Ignore timeout/errors and gracefully continue.
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _verificationCheckInProgress = false;
+        _verificationCheckCompleted = true;
+      });
+    });
+  }
+
+  Widget _buildStartupLoader() {
+    return const Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 12),
+            Text('Loading your account...'),
+          ],
+        ),
+      ),
+    );
   }
 
   void _startIncomingCallListener(String uid) {
@@ -246,35 +296,30 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         final user = snapshot.data;
 
         if (user != null) {
-          final isGoogleUser = user.providerData.any(
+          final activeUser = FirebaseAuth.instance.currentUser ?? user;
+          final isGoogleUser = activeUser.providerData.any(
             (p) => p.providerId == 'google.com',
           );
 
           if (isGoogleUser) return const HomeScreen();
 
-          if (user.emailVerified) return const HomeScreen();
+          if (activeUser.emailVerified) return const HomeScreen();
 
-          // Don't block the UI waiting for `reload()` (some platforms
-          // may hang). Instead, show the EmailVerificationScreen immediately
-          // and run a background reload-with-timeout that will navigate to
-          // HomeScreen if verification is confirmed.
-          if (!_reloadCheckScheduled) {
-            _reloadCheckScheduled = true;
-            WidgetsBinding.instance.addPostFrameCallback((_) async {
-              try {
-                await user.reload().timeout(const Duration(seconds: 5));
-              } catch (_) {
-                // ignore timeout or errors
-              }
+          final shouldRefreshVerification =
+              _verificationCheckUid != activeUser.uid ||
+              (!_verificationCheckCompleted && !_verificationCheckInProgress);
+          if (shouldRefreshVerification) {
+            _scheduleVerificationRefresh(activeUser);
+          }
 
-              final refreshedUser = FirebaseAuth.instance.currentUser;
-              if (!mounted) return;
-              if (refreshedUser != null && refreshedUser.emailVerified) {
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (_) => const HomeScreen()),
-                );
-              }
-            });
+          if (_verificationCheckInProgress &&
+              _verificationCheckUid == activeUser.uid) {
+            return _buildStartupLoader();
+          }
+
+          final refreshedUser = FirebaseAuth.instance.currentUser;
+          if (refreshedUser != null && refreshedUser.emailVerified) {
+            return const HomeScreen();
           }
 
           return const EmailVerificationScreen();

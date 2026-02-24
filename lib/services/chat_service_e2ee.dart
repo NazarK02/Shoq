@@ -192,6 +192,7 @@ class ChatService {
     required String conversationId,
     required String messageText,
     required String recipientId,
+    String? messageId,
   }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) throw Exception('User not logged in');
@@ -330,12 +331,18 @@ class ChatService {
         payload['senderCiphertext'] = legacySenderCiphertext;
       }
 
-      // Store encrypted message
-      await _firestore
+      // Store encrypted message. Allow caller-provided IDs for optimistic UI
+      // and idempotent writes (for example call summaries).
+      final messagesRef = _firestore
           .collection('conversations')
           .doc(conversationId)
-          .collection('messages')
-          .add(payload);
+          .collection('messages');
+      final trimmedMessageId = messageId?.trim();
+      final messageRef =
+          (trimmedMessageId != null && trimmedMessageId.isNotEmpty)
+          ? messagesRef.doc(trimmedMessageId)
+          : messagesRef.doc();
+      await messageRef.set(payload);
 
       // Update conversation metadata with plaintext preview for UI
       await _firestore.collection('conversations').doc(conversationId).update({

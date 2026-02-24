@@ -42,12 +42,15 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   final UserCacheService _userCache = UserCacheService();
   final FileDownloadService _downloadService = FileDownloadService();
   final TextEditingController _messageController = TextEditingController();
+  final FocusNode _messageFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
 
   String? _conversationId;
   Map<String, dynamic>? _recipientData;
   bool _hasMessages = false;
   String? _initError;
+  bool _sendPulse = false;
+  final List<_PendingTextMessage> _pendingTextMessages = [];
   final List<_PendingUpload> _pendingUploads = [];
 
   @override
@@ -123,6 +126,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     _downloadService.removeListener(_onDownloadProgressUpdate);
     WidgetsBinding.instance.removeObserver(this);
     _messageController.dispose();
+    _messageFocusNode.dispose();
     _scrollController.dispose();
     for (final upload in _pendingUploads) {
       upload.sub?.cancel();
@@ -166,14 +170,34 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
 
     final messageText = _messageController.text.trim();
     if (messageText.isEmpty) return;
+    final pendingId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    final pendingMessage = _PendingTextMessage(
+      id: pendingId,
+      text: messageText,
+      createdAt: DateTime.now(),
+    );
 
     try {
       _messageController.clear();
+      _messageFocusNode.requestFocus();
+      if (mounted) {
+        setState(() {
+          _pendingTextMessages.add(pendingMessage);
+          _sendPulse = true;
+        });
+      }
+      Future.delayed(const Duration(milliseconds: 170), () {
+        if (!mounted) return;
+        setState(() {
+          _sendPulse = false;
+        });
+      });
 
       await _chatService.sendMessage(
         conversationId: _conversationId!,
         messageText: messageText,
         recipientId: widget.recipientId,
+        messageId: pendingId,
       );
 
       try {
@@ -188,8 +212,18 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       }
 
       _scrollToBottom();
+      Future.delayed(const Duration(seconds: 12), () {
+        _removePendingTextMessage(pendingId);
+      });
     } catch (e) {
+      _removePendingTextMessage(pendingId);
       if (mounted) {
+        if (_messageController.text.trim().isEmpty) {
+          _messageController.text = messageText;
+          _messageController.selection = TextSelection.fromPosition(
+            TextPosition(offset: _messageController.text.length),
+          );
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to send message: ${e.toString()}')),
         );
@@ -252,7 +286,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
               chatService: _chatService,
               downloadService: _downloadService,
               hasMessages: _hasMessages,
+              pendingTextMessages: _pendingTextMessages,
               pendingUploads: _pendingUploads,
+              onPendingTextDelivered: _ackPendingTextMessages,
               onCancelUpload: _cancelPendingUpload,
             ),
           ),
@@ -444,13 +480,15 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   }
 
   Widget _buildMessageInput() {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
       decoration: BoxDecoration(
         color: Theme.of(context).scaffoldBackgroundColor,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 4,
             offset: const Offset(0, -2),
           ),
@@ -459,29 +497,68 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       child: SafeArea(
         child: Row(
           children: [
-            IconButton(
-              icon: const Icon(Icons.attach_file),
-              onPressed: _showAttachmentSheet,
-              tooltip: 'Attach',
-            ),
-            Expanded(
-              child: TextField(
-                controller: _messageController,
-                decoration: const InputDecoration(
-                  hintText: 'Type a message...',
-                ),
-                maxLines: null,
-                textCapitalization: TextCapitalization.sentences,
-                onSubmitted: (_) => _sendMessage(),
+            Material(
+              color: colorScheme.surfaceContainerHighest.withValues(
+                alpha: 0.55,
               ),
-            ),
-            const SizedBox(width: 8),
-            CircleAvatar(
-              backgroundColor: Theme.of(context).primaryColor,
+              shape: const CircleBorder(),
               child: IconButton(
-                icon: const Icon(Icons.send, color: Colors.white),
-                onPressed: _sendMessage,
+                icon: const Icon(Icons.attach_file),
+                onPressed: _showAttachmentSheet,
+                tooltip: 'Attach',
               ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.55,
+                  ),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: TextField(
+                  controller: _messageController,
+                  focusNode: _messageFocusNode,
+                  decoration: const InputDecoration(
+                    hintText: 'Type a message...',
+                    border: InputBorder.none,
+                  ),
+                  maxLines: null,
+                  textCapitalization: TextCapitalization.sentences,
+                  onSubmitted: (_) => _sendMessage(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _messageController,
+              builder: (context, value, _) {
+                final canSend =
+                    _conversationId != null && value.text.trim().isNotEmpty;
+
+                return AnimatedScale(
+                  scale: _sendPulse ? 0.86 : 1,
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOutBack,
+                  child: CircleAvatar(
+                    radius: 20,
+                    backgroundColor: canSend
+                        ? colorScheme.primary
+                        : colorScheme.surfaceContainerHighest,
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.send_rounded,
+                        color: canSend
+                            ? colorScheme.onPrimary
+                            : colorScheme.onSurface.withValues(alpha: 0.45),
+                      ),
+                      onPressed: canSend ? _sendMessage : null,
+                    ),
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -628,6 +705,24 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     }
   }
 
+  void _removePendingTextMessage(String id) {
+    if (!mounted) return;
+    final index = _pendingTextMessages.indexWhere(
+      (pending) => pending.id == id,
+    );
+    if (index == -1) return;
+    setState(() {
+      _pendingTextMessages.removeAt(index);
+    });
+  }
+
+  void _ackPendingTextMessages(Set<String> deliveredIds) {
+    if (!mounted || deliveredIds.isEmpty) return;
+    setState(() {
+      _pendingTextMessages.removeWhere((m) => deliveredIds.contains(m.id));
+    });
+  }
+
   void _cancelPendingUpload(String id) {
     final index = _pendingUploads.indexWhere((upload) => upload.id == id);
     if (index == -1) return;
@@ -676,7 +771,9 @@ class _MessagesList extends StatefulWidget {
   final ChatService chatService;
   final FileDownloadService downloadService;
   final bool hasMessages;
+  final List<_PendingTextMessage> pendingTextMessages;
   final List<_PendingUpload> pendingUploads;
+  final void Function(Set<String> ids) onPendingTextDelivered;
   final void Function(String id) onCancelUpload;
 
   const _MessagesList({
@@ -686,7 +783,9 @@ class _MessagesList extends StatefulWidget {
     required this.chatService,
     required this.downloadService,
     required this.hasMessages,
+    required this.pendingTextMessages,
     required this.pendingUploads,
+    required this.onPendingTextDelivered,
     required this.onCancelUpload,
   });
 
@@ -700,6 +799,8 @@ class _MessagesListState extends State<_MessagesList>
   final Map<String, String> _decryptedCache = {};
   final Map<String, Future<String>> _decryptFutureCache = {};
   final Map<String, String> _decryptInputSignature = {};
+  final Set<String> _animatedMessageIds = {};
+  bool _animationCachePrimed = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -729,6 +830,25 @@ class _MessagesListState extends State<_MessagesList>
     ].join('||');
   }
 
+  Widget _animateOnFirstPaint({required String id, required Widget child}) {
+    final shouldAnimate = _animatedMessageIds.add(id);
+    if (!shouldAnimate) return child;
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 230),
+      curve: Curves.easeOutCubic,
+      child: child,
+      builder: (context, value, child) {
+        final offsetY = (1 - value) * 16;
+        return Opacity(
+          opacity: value,
+          child: Transform.translate(offset: Offset(0, offsetY), child: child),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -751,12 +871,29 @@ class _MessagesListState extends State<_MessagesList>
 
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData &&
+            widget.pendingTextMessages.isEmpty &&
             widget.pendingUploads.isEmpty) {
           return const SizedBox.shrink();
         }
 
         final messages = snapshot.data?.docs ?? [];
+        if (!_animationCachePrimed && messages.isNotEmpty) {
+          _animationCachePrimed = true;
+          _animatedMessageIds.addAll(messages.map((doc) => 'msg_${doc.id}'));
+          _animatedMessageIds.addAll(messages.map((doc) => 'file_${doc.id}'));
+        }
+
         final visibleMessageIds = messages.map((doc) => doc.id).toSet();
+        final deliveredPendingIds = widget.pendingTextMessages
+            .where((pending) => visibleMessageIds.contains(pending.id))
+            .map((pending) => pending.id)
+            .toSet();
+        if (deliveredPendingIds.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            widget.onPendingTextDelivered(deliveredPendingIds);
+          });
+        }
+
         _decryptedCache.removeWhere(
           (key, _) => !visibleMessageIds.contains(key),
         );
@@ -767,22 +904,41 @@ class _MessagesListState extends State<_MessagesList>
           (key, _) => !visibleMessageIds.contains(key),
         );
 
-        if (messages.isEmpty && widget.pendingUploads.isEmpty) {
+        if (messages.isEmpty &&
+            widget.pendingTextMessages.isEmpty &&
+            widget.pendingUploads.isEmpty) {
           return _buildEmptyState();
         }
 
-        final pending = widget.pendingUploads;
+        final pendingText = widget.pendingTextMessages;
+        final pendingUploads = widget.pendingUploads;
 
         return ListView.builder(
           controller: widget.scrollController,
           padding: const EdgeInsets.all(16),
-          itemCount: messages.length + pending.length,
+          itemCount:
+              messages.length + pendingText.length + pendingUploads.length,
           itemBuilder: (context, index) {
             if (index >= messages.length) {
-              final upload = pending[index - messages.length];
-              return _buildPendingUploadBubble(
-                upload,
-                key: ValueKey('pending_${upload.id}'),
+              final pendingIndex = index - messages.length;
+              if (pendingIndex < pendingText.length) {
+                final textMessage = pendingText[pendingIndex];
+                return _animateOnFirstPaint(
+                  id: 'pending_text_${textMessage.id}',
+                  child: _buildPendingTextBubble(
+                    textMessage,
+                    key: ValueKey('pending_text_${textMessage.id}'),
+                  ),
+                );
+              }
+
+              final upload = pendingUploads[pendingIndex - pendingText.length];
+              return _animateOnFirstPaint(
+                id: 'pending_upload_${upload.id}',
+                child: _buildPendingUploadBubble(
+                  upload,
+                  key: ValueKey('pending_upload_${upload.id}'),
+                ),
               );
             }
 
@@ -796,21 +952,27 @@ class _MessagesListState extends State<_MessagesList>
             final type = message['type']?.toString() ?? 'text';
 
             if (type == 'file') {
-              return _buildFileBubble(
-                message,
-                isMe,
-                timestamp,
-                messageId: messageId,
-                key: ValueKey(messageId),
+              return _animateOnFirstPaint(
+                id: 'file_$messageId',
+                child: _buildFileBubble(
+                  message,
+                  isMe,
+                  timestamp,
+                  messageId: messageId,
+                  key: ValueKey(messageId),
+                ),
               );
             }
 
             if (_decryptedCache.containsKey(messageId)) {
-              return _buildMessageBubble(
-                _decryptedCache[messageId]!,
-                isMe,
-                timestamp,
-                key: ValueKey(messageId),
+              return _animateOnFirstPaint(
+                id: 'msg_$messageId',
+                child: _buildMessageBubble(
+                  _decryptedCache[messageId]!,
+                  isMe,
+                  timestamp,
+                  key: ValueKey(messageId),
+                ),
               );
             }
 
@@ -863,11 +1025,14 @@ class _MessagesListState extends State<_MessagesList>
                   }
                 }
 
-                return _buildMessageBubble(
-                  displayText,
-                  isMe,
-                  timestamp,
-                  key: ValueKey(messageId),
+                return _animateOnFirstPaint(
+                  id: 'msg_$messageId',
+                  child: _buildMessageBubble(
+                    displayText,
+                    isMe,
+                    timestamp,
+                    key: ValueKey(messageId),
+                  ),
                 );
               },
             );
@@ -919,13 +1084,22 @@ class _MessagesListState extends State<_MessagesList>
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
         decoration: BoxDecoration(
-          color: isMe ? Theme.of(context).primaryColor : Colors.grey[300],
+          color: isMe
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(16),
             topRight: const Radius.circular(16),
             bottomLeft: Radius.circular(isMe ? 16 : 4),
             bottomRight: Radius.circular(isMe ? 4 : 16),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -947,6 +1121,62 @@ class _MessagesListState extends State<_MessagesList>
                 ),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPendingTextBubble(_PendingTextMessage pending, {Key? key}) {
+    return Align(
+      key: key,
+      alignment: Alignment.centerRight,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        decoration: BoxDecoration(
+          color: Theme.of(context).primaryColor.withValues(alpha: 0.82),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(16),
+            topRight: Radius.circular(16),
+            bottomLeft: Radius.circular(16),
+            bottomRight: Radius.circular(4),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              pending.text,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 10,
+                  height: 10,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.6,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Sending...',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  DateFormat('HH:mm').format(pending.createdAt),
+                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -1366,6 +1596,18 @@ class _LiveStatusWidgetState extends State<_LiveStatusWidget> {
       },
     );
   }
+}
+
+class _PendingTextMessage {
+  final String id;
+  final String text;
+  final DateTime createdAt;
+
+  _PendingTextMessage({
+    required this.id,
+    required this.text,
+    required this.createdAt,
+  });
 }
 
 class _PendingUpload {

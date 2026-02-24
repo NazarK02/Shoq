@@ -194,6 +194,7 @@ class SignalingService {
     _socket?.close();
     _socket = null;
     _connectFuture = null;
+    _userId = null;
     _url = null;
     _reconnectAttempts = 0;
   }

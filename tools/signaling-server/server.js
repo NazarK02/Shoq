@@ -2,16 +2,42 @@ const WebSocket = require("ws");
 
 const PORT = process.env.PORT || 3000;
 const wss = new WebSocket.Server({ port: PORT });
-const clients = new Map(); // userId -> ws
+const clients = new Map(); // userId -> Set<ws>
+const socketToUser = new Map(); // ws -> userId
 
 function safeSend(ws, payload) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify(payload));
 }
 
-wss.on("connection", (ws) => {
-  let userId = null;
+function unregisterSocket(ws) {
+  const userId = socketToUser.get(ws);
+  if (!userId) return;
 
+  socketToUser.delete(ws);
+  const sockets = clients.get(userId);
+  if (!sockets) return;
+
+  sockets.delete(ws);
+  if (sockets.size === 0) {
+    clients.delete(userId);
+  }
+}
+
+function registerSocket(userId, ws) {
+  const prevUserId = socketToUser.get(ws);
+  if (prevUserId && prevUserId !== userId) {
+    unregisterSocket(ws);
+  }
+
+  socketToUser.set(ws, userId);
+  if (!clients.has(userId)) {
+    clients.set(userId, new Set());
+  }
+  clients.get(userId).add(ws);
+}
+
+wss.on("connection", (ws) => {
   ws.on("message", (raw) => {
     let data = null;
     try {
@@ -23,23 +49,23 @@ wss.on("connection", (ws) => {
     if (!data || typeof data !== "object") return;
 
     if (data.type === "register" && data.userId) {
-      userId = String(data.userId);
-      clients.set(userId, ws);
+      registerSocket(String(data.userId), ws);
       return;
     }
 
     // Forward to target user if present
     if (data.to) {
       const targetId = String(data.to);
-      const target = clients.get(targetId);
-      safeSend(target, data);
+      const targets = clients.get(targetId);
+      if (!targets) return;
+      for (const target of targets) {
+        safeSend(target, data);
+      }
     }
   });
 
   ws.on("close", () => {
-    if (userId) {
-      clients.delete(userId);
-    }
+    unregisterSocket(ws);
   });
 });
 
