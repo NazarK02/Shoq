@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 class SignalingService {
   static final SignalingService _instance = SignalingService._internal();
@@ -20,7 +21,7 @@ class SignalingService {
     'ws://192.168.1.189:3000',
   ];
 
-  static const int _maxReconnectAttempts = 3;
+  static const int _maxReconnectDelaySeconds = 20;
 
   final StreamController<Map<String, dynamic>> _controller =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -31,8 +32,11 @@ class SignalingService {
   String? _url;
   int _reconnectAttempts = 0;
   Timer? _reconnectTimer;
+  final String _clientId =
+      '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(1 << 32)}';
 
   Stream<Map<String, dynamic>> get messages => _controller.stream;
+  String get clientId => _clientId;
   bool get isConnected =>
       _socket != null && _socket!.readyState == WebSocket.open;
 
@@ -57,7 +61,12 @@ class SignalingService {
     if (_connectFuture != null) {
       print('SignalingService: connection in progress, waiting...');
       await _connectFuture;
-      return;
+      if (isConnected &&
+          _userId == userId &&
+          _url != null &&
+          targetUrls.contains(_url)) {
+        return;
+      }
     }
 
     _userId = userId;
@@ -154,8 +163,8 @@ class SignalingService {
       cancelOnError: false,
     );
 
-    _sendRaw({'type': 'register', 'userId': userId});
-    print('SignalingService: registered as $userId');
+    _sendRaw({'type': 'register', 'userId': userId, 'clientId': _clientId});
+    print('SignalingService: registered as $userId ($_clientId)');
   }
 
   Future<void> send(Map<String, dynamic> data) async {
@@ -234,19 +243,24 @@ class SignalingService {
     if (_userId != userId) {
       return;
     }
-    if (_reconnectAttempts >= _maxReconnectAttempts) {
-      return;
-    }
 
     _reconnectAttempts++;
-    final delay = Duration(seconds: 2 * _reconnectAttempts);
+    final delaySeconds = (2 * _reconnectAttempts).clamp(
+      2,
+      _maxReconnectDelaySeconds,
+    );
+    final delay = Duration(seconds: delaySeconds);
     print(
-      'SignalingService: reconnecting in ${delay.inSeconds}s ($reason, attempt $_reconnectAttempts/$_maxReconnectAttempts)',
+      'SignalingService: reconnecting in ${delay.inSeconds}s ($reason, attempt $_reconnectAttempts)',
     );
 
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(delay, () {
-      ensureConnected(userId: userId);
+    _reconnectTimer = Timer(delay, () async {
+      try {
+        await ensureConnected(userId: userId);
+      } catch (_) {
+        // keep retry loop active
+      }
     });
   }
 

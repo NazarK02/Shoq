@@ -52,6 +52,34 @@ service cloud.firestore {
         request.auth.uid in resource.data.participants;
 
       match /messages/{messageId} {
+        function isConversationParticipant() {
+          return request.auth != null &&
+            request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        }
+
+        function reactionsOrEmpty(data) {
+          return data.reactions is map ? data.reactions : {};
+        }
+
+        function isReadReceiptUpdate() {
+          return request.resource.data.diff(resource.data).changedKeys().hasOnly(['read', 'readAt']) &&
+            request.resource.data.read == true;
+        }
+
+        function isOwnReactionUpdate() {
+          let before = reactionsOrEmpty(resource.data);
+          let after = reactionsOrEmpty(request.resource.data);
+          let reactionDiff = after.diff(before);
+          return request.resource.data.diff(resource.data).changedKeys().hasOnly(['reactions']) &&
+            reactionDiff.addedKeys().hasOnly([request.auth.uid]) &&
+            reactionDiff.changedKeys().hasOnly([request.auth.uid]) &&
+            reactionDiff.removedKeys().hasOnly([request.auth.uid]) &&
+            (
+              !(request.auth.uid in after) ||
+              after[request.auth.uid] is string
+            );
+        }
+
         allow read: if request.auth != null &&
           request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
 
@@ -91,7 +119,14 @@ service cloud.firestore {
              request.resource.data.storagePath is string)
           );
 
-        allow update, delete: if request.auth != null &&
+        allow update: if isConversationParticipant() &&
+          (
+            request.auth.uid == resource.data.senderId ||
+            isReadReceiptUpdate() ||
+            isOwnReactionUpdate()
+          );
+
+        allow delete: if request.auth != null &&
           request.auth.uid == resource.data.senderId;
       }
     }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -44,12 +45,16 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
+  static const double _autoScrollThreshold = 110;
+  static const double _scrollButtonThreshold = 320;
 
   String? _conversationId;
   Map<String, dynamic>? _recipientData;
   bool _hasMessages = false;
   String? _initError;
   bool _sendPulse = false;
+  bool _showScrollToBottomButton = false;
+  _ReplyDraft? _replyDraft;
   final List<_PendingTextMessage> _pendingTextMessages = [];
   final List<_PendingUpload> _pendingUploads = [];
 
@@ -62,6 +67,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     _recipientData = _userCache.getCachedUser(widget.recipientId);
     _userCache.warmUsers([widget.recipientId], listen: false);
     _downloadService.addListener(_onDownloadProgressUpdate);
+    _scrollController.addListener(_handleScrollChanged);
 
     final currentUser = _auth.currentUser;
     if (currentUser != null) {
@@ -105,6 +111,24 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     if (mounted) setState(() {});
   }
 
+  void _handleScrollChanged() {
+    if (!_scrollController.hasClients) return;
+    final distance =
+        _scrollController.position.maxScrollExtent - _scrollController.offset;
+    final shouldShow = distance > _scrollButtonThreshold;
+    if (!mounted || shouldShow == _showScrollToBottomButton) return;
+    setState(() {
+      _showScrollToBottomButton = shouldShow;
+    });
+  }
+
+  bool _isNearBottom() {
+    if (!_scrollController.hasClients) return true;
+    final distance =
+        _scrollController.position.maxScrollExtent - _scrollController.offset;
+    return distance <= _autoScrollThreshold;
+  }
+
   void _listenToConversationMetadata() {
     _firestore
         .collection('conversations')
@@ -124,6 +148,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   void dispose() {
     _notificationService.setActiveChat(null);
     _downloadService.removeListener(_onDownloadProgressUpdate);
+    _scrollController.removeListener(_handleScrollChanged);
     WidgetsBinding.instance.removeObserver(this);
     _messageController.dispose();
     _messageFocusNode.dispose();
@@ -170,20 +195,15 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
 
     final messageText = _messageController.text.trim();
     if (messageText.isEmpty) return;
-    final pendingId = 'local_${DateTime.now().microsecondsSinceEpoch}';
-    final pendingMessage = _PendingTextMessage(
-      id: pendingId,
-      text: messageText,
-      createdAt: DateTime.now(),
-    );
+    final replyDraft = _replyDraft;
 
     try {
       _messageController.clear();
       _messageFocusNode.requestFocus();
       if (mounted) {
         setState(() {
-          _pendingTextMessages.add(pendingMessage);
           _sendPulse = true;
+          _replyDraft = null;
         });
       }
       Future.delayed(const Duration(milliseconds: 170), () {
@@ -197,7 +217,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         conversationId: _conversationId!,
         messageText: messageText,
         recipientId: widget.recipientId,
-        messageId: pendingId,
+        replyToMessageId: replyDraft?.messageId,
+        replyToText: replyDraft?.previewText,
+        replyToSenderId: replyDraft?.senderId,
       );
 
       try {
@@ -206,17 +228,14 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
           recipientId: widget.recipientId,
           senderName: senderName,
           messageText: 'Sent a message',
+          conversationId: _conversationId,
         );
       } catch (notificationError) {
         print('Error sending notification: $notificationError');
       }
 
       _scrollToBottom();
-      Future.delayed(const Duration(seconds: 12), () {
-        _removePendingTextMessage(pendingId);
-      });
     } catch (e) {
-      _removePendingTextMessage(pendingId);
       if (mounted) {
         if (_messageController.text.trim().isEmpty) {
           _messageController.text = messageText;
@@ -224,6 +243,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
             TextPosition(offset: _messageController.text.length),
           );
         }
+        setState(() {
+          _replyDraft = replyDraft;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to send message: ${e.toString()}')),
         );
@@ -231,14 +253,31 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     }
   }
 
-  void _scrollToBottom() {
-    if (_scrollController.hasClients) {
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (_scrollController.hasClients) {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-        }
-      });
-    }
+  void _setReplyDraft(_ReplyDraft draft) {
+    if (!mounted) return;
+    setState(() {
+      _replyDraft = draft;
+    });
+    _messageFocusNode.requestFocus();
+  }
+
+  void _scrollToBottom({bool force = false, bool animated = true}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      if (!force && !_isNearBottom()) return;
+
+      final target = _scrollController.position.maxScrollExtent;
+      if (animated) {
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+        return;
+      }
+
+      _scrollController.jumpTo(target);
+    });
   }
 
   @override
@@ -279,17 +318,50 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       body: Column(
         children: [
           Expanded(
-            child: _MessagesList(
-              conversationId: _conversationId,
-              recipientName: widget.recipientName,
-              scrollController: _scrollController,
-              chatService: _chatService,
-              downloadService: _downloadService,
-              hasMessages: _hasMessages,
-              pendingTextMessages: _pendingTextMessages,
-              pendingUploads: _pendingUploads,
-              onPendingTextDelivered: _ackPendingTextMessages,
-              onCancelUpload: _cancelPendingUpload,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: _MessagesList(
+                    conversationId: _conversationId,
+                    recipientName: widget.recipientName,
+                    scrollController: _scrollController,
+                    chatService: _chatService,
+                    downloadService: _downloadService,
+                    hasMessages: _hasMessages,
+                    recipientId: widget.recipientId,
+                    pendingTextMessages: _pendingTextMessages,
+                    pendingUploads: _pendingUploads,
+                    onPendingTextDelivered: _ackPendingTextMessages,
+                    onCancelUpload: _cancelPendingUpload,
+                    onReplyRequested: _setReplyDraft,
+                    shouldAutoScroll: _isNearBottom,
+                    onAutoScrollToBottom: () =>
+                        _scrollToBottom(force: true, animated: true),
+                  ),
+                ),
+                Positioned(
+                  right: 14,
+                  bottom: 14,
+                  child: AnimatedSlide(
+                    offset: _showScrollToBottomButton
+                        ? Offset.zero
+                        : const Offset(0, 1.1),
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    child: AnimatedOpacity(
+                      opacity: _showScrollToBottomButton ? 1 : 0,
+                      duration: const Duration(milliseconds: 180),
+                      child: FloatingActionButton.small(
+                        heroTag: 'chat_scroll_bottom',
+                        onPressed: () =>
+                            _scrollToBottom(force: true, animated: true),
+                        tooltip: 'Jump to latest',
+                        child: const Icon(Icons.keyboard_arrow_down_rounded),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           _buildMessageInput(),
@@ -495,70 +567,129 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         ],
       ),
       child: SafeArea(
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Material(
-              color: colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.55,
-              ),
-              shape: const CircleBorder(),
-              child: IconButton(
-                icon: const Icon(Icons.attach_file),
-                onPressed: _showAttachmentSheet,
-                tooltip: 'Attach',
-              ),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
+            if (_replyDraft != null)
+              Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
                 decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHigh,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border(
+                    left: BorderSide(color: colorScheme.primary, width: 3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Replying to ${_replyDraft!.senderName}',
+                            style: TextStyle(
+                              color: colorScheme.primary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _replyDraft!.previewText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        setState(() => _replyDraft = null);
+                      },
+                      tooltip: 'Cancel reply',
+                    ),
+                  ],
+                ),
+              ),
+            Row(
+              children: [
+                Material(
                   color: colorScheme.surfaceContainerHighest.withValues(
                     alpha: 0.55,
                   ),
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: TextField(
-                  controller: _messageController,
-                  focusNode: _messageFocusNode,
-                  decoration: const InputDecoration(
-                    hintText: 'Type a message...',
-                    border: InputBorder.none,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    icon: const Icon(Icons.attach_file),
+                    onPressed: _showAttachmentSheet,
+                    tooltip: 'Attach',
                   ),
-                  maxLines: null,
-                  textCapitalization: TextCapitalization.sentences,
-                  onSubmitted: (_) => _sendMessage(),
                 ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            ValueListenableBuilder<TextEditingValue>(
-              valueListenable: _messageController,
-              builder: (context, value, _) {
-                final canSend =
-                    _conversationId != null && value.text.trim().isNotEmpty;
-
-                return AnimatedScale(
-                  scale: _sendPulse ? 0.86 : 1,
-                  duration: const Duration(milliseconds: 160),
-                  curve: Curves.easeOutBack,
-                  child: CircleAvatar(
-                    radius: 20,
-                    backgroundColor: canSend
-                        ? colorScheme.primary
-                        : colorScheme.surfaceContainerHighest,
-                    child: IconButton(
-                      icon: Icon(
-                        Icons.send_rounded,
-                        color: canSend
-                            ? colorScheme.onPrimary
-                            : colorScheme.onSurface.withValues(alpha: 0.45),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest.withValues(
+                        alpha: 0.55,
                       ),
-                      onPressed: canSend ? _sendMessage : null,
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                    child: TextField(
+                      controller: _messageController,
+                      focusNode: _messageFocusNode,
+                      decoration: const InputDecoration(
+                        hintText: 'Type a message...',
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
+                        filled: false,
+                        isCollapsed: true,
+                      ),
+                      maxLines: null,
+                      textCapitalization: TextCapitalization.sentences,
+                      onSubmitted: (_) => _sendMessage(),
                     ),
                   ),
-                );
-              },
+                ),
+                const SizedBox(width: 6),
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _messageController,
+                  builder: (context, value, _) {
+                    final canSend =
+                        _conversationId != null && value.text.trim().isNotEmpty;
+
+                    return AnimatedScale(
+                      scale: _sendPulse ? 0.86 : 1,
+                      duration: const Duration(milliseconds: 160),
+                      curve: Curves.easeOutBack,
+                      child: CircleAvatar(
+                        radius: 20,
+                        backgroundColor: canSend
+                            ? colorScheme.primary
+                            : colorScheme.surfaceContainerHighest,
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.send_rounded,
+                            color: canSend
+                                ? colorScheme.onPrimary
+                                : colorScheme.onSurface.withValues(alpha: 0.45),
+                          ),
+                          onPressed: canSend ? _sendMessage : null,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
           ],
         ),
@@ -674,6 +805,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
           recipientId: widget.recipientId,
           senderName: senderName,
           messageText: 'Sent a file',
+          conversationId: _conversationId,
         );
       } catch (notificationError) {
         print('Error sending notification: $notificationError');
@@ -766,6 +898,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
 /// Messages list with image preview and on-demand downloads
 class _MessagesList extends StatefulWidget {
   final String? conversationId;
+  final String recipientId;
   final String recipientName;
   final ScrollController scrollController;
   final ChatService chatService;
@@ -775,9 +908,13 @@ class _MessagesList extends StatefulWidget {
   final List<_PendingUpload> pendingUploads;
   final void Function(Set<String> ids) onPendingTextDelivered;
   final void Function(String id) onCancelUpload;
+  final void Function(_ReplyDraft draft) onReplyRequested;
+  final bool Function() shouldAutoScroll;
+  final VoidCallback onAutoScrollToBottom;
 
   const _MessagesList({
     required this.conversationId,
+    required this.recipientId,
     required this.recipientName,
     required this.scrollController,
     required this.chatService,
@@ -787,6 +924,9 @@ class _MessagesList extends StatefulWidget {
     required this.pendingUploads,
     required this.onPendingTextDelivered,
     required this.onCancelUpload,
+    required this.onReplyRequested,
+    required this.shouldAutoScroll,
+    required this.onAutoScrollToBottom,
   });
 
   @override
@@ -796,11 +936,14 @@ class _MessagesList extends StatefulWidget {
 class _MessagesListState extends State<_MessagesList>
     with AutomaticKeepAliveClientMixin {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Map<String, String> _decryptedCache = {};
   final Map<String, Future<String>> _decryptFutureCache = {};
   final Map<String, String> _decryptInputSignature = {};
   final Set<String> _animatedMessageIds = {};
   bool _animationCachePrimed = false;
+  int _lastTotalItems = 0;
+  bool _markReadInFlight = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -849,6 +992,336 @@ class _MessagesListState extends State<_MessagesList>
     );
   }
 
+  void _scheduleAutoScrollIfNeeded(int totalItems) {
+    if (totalItems <= 0) {
+      _lastTotalItems = 0;
+      return;
+    }
+
+    final firstLoad = _lastTotalItems == 0;
+    final hasNewItems = totalItems > _lastTotalItems;
+    final shouldAutoScroll =
+        firstLoad || (hasNewItems && widget.shouldAutoScroll());
+    _lastTotalItems = totalItems;
+
+    if (!shouldAutoScroll) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.onAutoScrollToBottom();
+    });
+  }
+
+  void _markIncomingMessagesAsRead(
+    List<QueryDocumentSnapshot> messages,
+    String currentUserId,
+  ) {
+    if (_markReadInFlight || widget.conversationId == null) return;
+
+    final hasUnreadFromPeer = messages.any((doc) {
+      final data = doc.data();
+      if (data is! Map) return false;
+      final map = Map<String, dynamic>.from(data as Map);
+      final senderId = map['senderId']?.toString();
+      final isRead = map['read'] == true;
+      return senderId == widget.recipientId && !isRead;
+    });
+
+    if (!hasUnreadFromPeer) return;
+    _markReadInFlight = true;
+    unawaited(
+      widget.chatService
+          .markMessagesAsRead(
+            conversationId: widget.conversationId!,
+            otherUserId: widget.recipientId,
+          )
+          .catchError((error) {
+            if (!mounted) return;
+            debugPrint('markMessagesAsRead failed: $error');
+          })
+          .whenComplete(() {
+            _markReadInFlight = false;
+          }),
+    );
+  }
+
+  Map<String, String> _extractReactions(Map<String, dynamic> message) {
+    final raw = message['reactions'];
+    if (raw is! Map) return const <String, String>{};
+    final result = <String, String>{};
+    raw.forEach((key, value) {
+      final uid = key.toString().trim();
+      final emoji = value?.toString().trim() ?? '';
+      if (uid.isEmpty || emoji.isEmpty) return;
+      result[uid] = emoji;
+    });
+    return result;
+  }
+
+  String _formatDetailsTime(Timestamp? timestamp) {
+    if (timestamp == null) return 'Unknown';
+    final date = timestamp.toDate();
+    return DateFormat('MMM d, yyyy • h:mm a').format(date);
+  }
+
+  Future<void> _showEditDialog({
+    required String messageId,
+    required String originalText,
+  }) async {
+    final conversationId = widget.conversationId;
+    if (conversationId == null) return;
+
+    final controller = TextEditingController(text: originalText);
+    final editedText = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit message'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: null,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(
+            hintText: 'Edit your message',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+
+    if (!mounted || editedText == null) return;
+    if (editedText.isEmpty || editedText == originalText.trim()) return;
+
+    try {
+      await widget.chatService.editMessage(
+        conversationId: conversationId,
+        messageId: messageId,
+        recipientId: widget.recipientId,
+        messageText: editedText,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not edit message: $e')));
+    }
+  }
+
+  Future<void> _showReactionPicker({
+    required String messageId,
+    required Map<String, dynamic> message,
+  }) async {
+    final conversationId = widget.conversationId;
+    final currentUserId = _auth.currentUser?.uid;
+    if (conversationId == null || currentUserId == null) return;
+
+    const emojis = ['👍', '❤️', '😂', '🔥', '😮', '😢', '🙏'];
+    final currentReaction = _extractReactions(message)[currentUserId];
+
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+            child: Wrap(
+              spacing: 8,
+              children: [
+                for (final emoji in emojis)
+                  ChoiceChip(
+                    label: Text(emoji, style: const TextStyle(fontSize: 22)),
+                    selected: currentReaction == emoji,
+                    onSelected: (_) async {
+                      Navigator.pop(context);
+                      try {
+                        final ref = _firestore
+                            .collection('conversations')
+                            .doc(conversationId)
+                            .collection('messages')
+                            .doc(messageId);
+                        if (currentReaction == emoji) {
+                          await ref.update({
+                            'reactions.$currentUserId': FieldValue.delete(),
+                          });
+                        } else {
+                          await ref.set({
+                            'reactions': {currentUserId: emoji},
+                          }, SetOptions(merge: true));
+                        }
+                      } catch (e) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          SnackBar(
+                            content: Text('Could not save reaction: $e'),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showMessageActions({
+    required String messageId,
+    required Map<String, dynamic> message,
+    required String displayText,
+    required bool isMe,
+    required Timestamp? sentAt,
+    required Timestamp? readAt,
+  }) async {
+    final canEdit = isMe && (message['type']?.toString() ?? 'text') == 'text';
+    final rootContext = context;
+
+    await showModalBottomSheet<void>(
+      context: rootContext,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.reply),
+                title: const Text('Reply'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  widget.onReplyRequested(
+                    _ReplyDraft(
+                      messageId: messageId,
+                      senderId: message['senderId']?.toString() ?? '',
+                      senderName: isMe ? 'You' : widget.recipientName,
+                      previewText: displayText,
+                    ),
+                  );
+                },
+              ),
+              if (canEdit)
+                ListTile(
+                  leading: const Icon(Icons.edit),
+                  title: const Text('Edit'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showEditDialog(
+                      messageId: messageId,
+                      originalText: displayText,
+                    );
+                  },
+                ),
+              ListTile(
+                leading: const Icon(Icons.forward),
+                title: const Text('Forward'),
+                subtitle: const Text('Copies message text'),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  await Clipboard.setData(ClipboardData(text: displayText));
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(rootContext).showSnackBar(
+                    const SnackBar(content: Text('Message copied for forward')),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.emoji_emotions_outlined),
+                title: const Text('React'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _showReactionPicker(messageId: messageId, message: message);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text('Read details'),
+                subtitle: Text(
+                  isMe
+                      ? (readAt != null
+                            ? 'Read ${_formatDetailsTime(readAt)}'
+                            : 'Not read yet')
+                      : 'Sent ${_formatDetailsTime(sentAt)}',
+                ),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  showDialog<void>(
+                    context: rootContext,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text('Message details'),
+                      content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Sent: ${_formatDetailsTime(sentAt)}'),
+                          const SizedBox(height: 8),
+                          Text(
+                            isMe
+                                ? (readAt != null
+                                      ? 'Read: ${_formatDetailsTime(readAt)}'
+                                      : 'Read: Not read yet')
+                                : 'Read receipt is shown for your own messages',
+                          ),
+                        ],
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          child: const Text('Close'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildReactionsRow(Map<String, dynamic> message) {
+    final reactions = _extractReactions(message);
+    if (reactions.isEmpty) return const SizedBox.shrink();
+
+    final counts = <String, int>{};
+    for (final emoji in reactions.values) {
+      counts[emoji] = (counts[emoji] ?? 0) + 1;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 4,
+        children: [
+          for (final entry in counts.entries)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '${entry.key} ${entry.value}',
+                style: const TextStyle(fontSize: 11),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -884,6 +1357,7 @@ class _MessagesListState extends State<_MessagesList>
         }
 
         final visibleMessageIds = messages.map((doc) => doc.id).toSet();
+        _markIncomingMessagesAsRead(messages, currentUser.uid);
         final deliveredPendingIds = widget.pendingTextMessages
             .where((pending) => visibleMessageIds.contains(pending.id))
             .map((pending) => pending.id)
@@ -912,12 +1386,14 @@ class _MessagesListState extends State<_MessagesList>
 
         final pendingText = widget.pendingTextMessages;
         final pendingUploads = widget.pendingUploads;
+        final totalItems =
+            messages.length + pendingText.length + pendingUploads.length;
+        _scheduleAutoScrollIfNeeded(totalItems);
 
         return ListView.builder(
           controller: widget.scrollController,
           padding: const EdgeInsets.all(16),
-          itemCount:
-              messages.length + pendingText.length + pendingUploads.length,
+          itemCount: totalItems,
           itemBuilder: (context, index) {
             if (index >= messages.length) {
               final pendingIndex = index - messages.length;
@@ -949,6 +1425,9 @@ class _MessagesListState extends State<_MessagesList>
             final timestamp =
                 (message['timestamp'] as Timestamp?) ??
                 (message['clientTimestamp'] as Timestamp?);
+            final isPending = messageDoc.metadata.hasPendingWrites;
+            final isRead = message['read'] == true;
+            final readAt = message['readAt'] as Timestamp?;
             final type = message['type']?.toString() ?? 'text';
 
             if (type == 'file') {
@@ -958,6 +1437,8 @@ class _MessagesListState extends State<_MessagesList>
                   message,
                   isMe,
                   timestamp,
+                  isPending: isPending,
+                  isRead: isRead,
                   messageId: messageId,
                   key: ValueKey(messageId),
                 ),
@@ -971,6 +1452,11 @@ class _MessagesListState extends State<_MessagesList>
                   _decryptedCache[messageId]!,
                   isMe,
                   timestamp,
+                  messageId: messageId,
+                  messageData: message,
+                  isPending: isPending,
+                  isRead: isRead,
+                  readAt: readAt,
                   key: ValueKey(messageId),
                 ),
               );
@@ -1031,6 +1517,11 @@ class _MessagesListState extends State<_MessagesList>
                     displayText,
                     isMe,
                     timestamp,
+                    messageId: messageId,
+                    messageData: message,
+                    isPending: isPending,
+                    isRead: isRead,
+                    readAt: readAt,
                     key: ValueKey(messageId),
                   ),
                 );
@@ -1068,60 +1559,166 @@ class _MessagesListState extends State<_MessagesList>
     String text,
     bool isMe,
     Timestamp? timestamp, {
+    required String messageId,
+    required Map<String, dynamic> messageData,
+    required bool isPending,
+    required bool isRead,
+    required Timestamp? readAt,
     Key? key,
   }) {
     if (text.isEmpty) {
       return const SizedBox.shrink();
     }
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDarkTheme = Theme.of(context).brightness == Brightness.dark;
+    final receivedTextColor = colorScheme.onSurface;
+    final receivedMetaColor = colorScheme.onSurfaceVariant;
+    final incomingBubbleColor = isDarkTheme
+        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.92)
+        : colorScheme.surfaceContainerHigh;
+
+    final replyText = messageData['replyToText']?.toString().trim() ?? '';
+    final replySenderId = messageData['replyToSenderId']?.toString() ?? '';
+    final replySenderName = replySenderId == _auth.currentUser?.uid
+        ? 'You'
+        : widget.recipientName;
+    final isEdited = messageData['edited'] == true;
+    final sentAtText = timestamp != null
+        ? DateFormat('HH:mm').format(timestamp.toDate())
+        : '';
+    final statusIcon = isPending ? Icons.done : Icons.done_all;
+    final statusColor = isPending
+        ? colorScheme.onPrimary.withValues(alpha: 0.72)
+        : (isRead
+              ? colorScheme.tertiary
+              : colorScheme.onPrimary.withValues(alpha: 0.72));
 
     return Align(
       key: key,
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-        ),
-        decoration: BoxDecoration(
-          color: isMe
-              ? Theme.of(context).colorScheme.primary
-              : Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isMe ? 16 : 4),
-            bottomRight: Radius.circular(isMe ? 4 : 16),
+      child: GestureDetector(
+        onLongPress: () {
+          _showMessageActions(
+            messageId: messageId,
+            message: messageData,
+            displayText: text,
+            isMe: isMe,
+            sentAt: timestamp,
+            readAt: readAt,
+          );
+        },
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.75,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
+          decoration: BoxDecoration(
+            color: isMe ? colorScheme.primary : incomingBubbleColor,
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(16),
+              topRight: const Radius.circular(16),
+              bottomLeft: Radius.circular(isMe ? 16 : 4),
+              bottomRight: Radius.circular(isMe ? 4 : 16),
             ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              text,
-              style: TextStyle(
-                color: isMe ? Colors.white : Colors.black87,
-                fontSize: 15,
-              ),
-            ),
-            if (timestamp != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                DateFormat('HH:mm').format(timestamp.toDate()),
-                style: TextStyle(
-                  color: isMe ? Colors.white70 : Colors.black54,
-                  fontSize: 11,
-                ),
+            border: !isMe && isDarkTheme
+                ? Border.all(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                  )
+                : null,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
               ),
             ],
-          ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (replyText.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                  decoration: BoxDecoration(
+                    color: isMe
+                        ? colorScheme.onPrimary.withValues(alpha: 0.16)
+                        : colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        replySenderName,
+                        style: TextStyle(
+                          color: isMe
+                              ? colorScheme.onPrimary.withValues(alpha: 0.92)
+                              : colorScheme.primary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        replyText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isMe
+                              ? colorScheme.onPrimary.withValues(alpha: 0.8)
+                              : receivedMetaColor,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              Text(
+                text,
+                style: TextStyle(
+                  color: isMe ? colorScheme.onPrimary : receivedTextColor,
+                  fontSize: 15,
+                ),
+              ),
+              if (isEdited) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'edited',
+                  style: TextStyle(
+                    color: isMe
+                        ? colorScheme.onPrimary.withValues(alpha: 0.72)
+                        : receivedMetaColor,
+                    fontSize: 10,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+              _buildReactionsRow(messageData),
+              if (timestamp != null) ...[
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      sentAtText,
+                      style: TextStyle(
+                        color: isMe
+                            ? colorScheme.onPrimary.withValues(alpha: 0.72)
+                            : receivedMetaColor,
+                        fontSize: 11,
+                      ),
+                    ),
+                    if (isMe) ...[
+                      const SizedBox(width: 4),
+                      Icon(statusIcon, size: 14, color: statusColor),
+                    ],
+                  ],
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -1253,6 +1850,8 @@ class _MessagesListState extends State<_MessagesList>
     Map<String, dynamic> message,
     bool isMe,
     Timestamp? timestamp, {
+    required bool isPending,
+    required bool isRead,
     required String messageId,
     Key? key,
   }) {
@@ -1271,6 +1870,11 @@ class _MessagesListState extends State<_MessagesList>
     final isDownloaded = downloadProgress?.status == DownloadStatus.completed;
     final localPath = downloadProgress?.localPath;
     final progress = downloadProgress?.progress ?? 0;
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDarkTheme = Theme.of(context).brightness == Brightness.dark;
+    final incomingBubbleColor = isDarkTheme
+        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.92)
+        : colorScheme.surfaceContainerHigh;
 
     return Align(
       key: key,
@@ -1284,8 +1888,13 @@ class _MessagesListState extends State<_MessagesList>
         decoration: BoxDecoration(
           color: isImage
               ? Colors.transparent
-              : (isMe ? Theme.of(context).primaryColor : Colors.grey[300]),
+              : (isMe ? colorScheme.primary : incomingBubbleColor),
           borderRadius: BorderRadius.circular(isImage ? 12 : 16),
+          border: !isImage && !isMe && isDarkTheme
+              ? Border.all(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                )
+              : null,
         ),
         child: isImage
             ? _buildImagePreview(
@@ -1305,6 +1914,8 @@ class _MessagesListState extends State<_MessagesList>
                 progress: progress,
                 timestamp: timestamp,
                 isMe: isMe,
+                isPending: isPending,
+                isRead: isRead,
                 onAction: () => _handleFileAction(
                   messageId: messageId,
                   url: fileUrl,
@@ -1407,14 +2018,20 @@ class _MessagesListState extends State<_MessagesList>
     required double progress,
     required Timestamp? timestamp,
     required bool isMe,
+    required bool isPending,
+    required bool isRead,
     required VoidCallback onAction,
   }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final receivedTextColor = colorScheme.onSurface;
+    final receivedMetaColor = colorScheme.onSurfaceVariant;
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
           _iconForMime(mimeType),
-          color: isMe ? Colors.white : Colors.black87,
+          color: isMe ? colorScheme.onPrimary : receivedTextColor,
         ),
         const SizedBox(width: 8),
         Flexible(
@@ -1426,7 +2043,7 @@ class _MessagesListState extends State<_MessagesList>
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: isMe ? Colors.white : Colors.black87,
+                  color: isMe ? colorScheme.onPrimary : receivedTextColor,
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                 ),
@@ -1435,7 +2052,9 @@ class _MessagesListState extends State<_MessagesList>
               Text(
                 _formatBytes(fileSize),
                 style: TextStyle(
-                  color: isMe ? Colors.white70 : Colors.black54,
+                  color: isMe
+                      ? colorScheme.onPrimary.withValues(alpha: 0.7)
+                      : receivedMetaColor,
                   fontSize: 12,
                 ),
               ),
@@ -1443,21 +2062,44 @@ class _MessagesListState extends State<_MessagesList>
                 const SizedBox(height: 6),
                 LinearProgressIndicator(
                   value: progress,
-                  backgroundColor: isMe ? Colors.white24 : Colors.black12,
+                  backgroundColor: isMe
+                      ? colorScheme.onPrimary.withValues(alpha: 0.22)
+                      : colorScheme.onSurface.withValues(alpha: 0.12),
                   valueColor: AlwaysStoppedAnimation<Color>(
-                    isMe ? Colors.white : Colors.black54,
+                    isMe ? colorScheme.onPrimary : receivedMetaColor,
                   ),
                   minHeight: 3,
                 ),
               ],
               if (timestamp != null && !isDownloading) ...[
                 const SizedBox(height: 4),
-                Text(
-                  DateFormat('HH:mm').format(timestamp.toDate()),
-                  style: TextStyle(
-                    color: isMe ? Colors.white70 : Colors.black54,
-                    fontSize: 11,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      DateFormat('HH:mm').format(timestamp.toDate()),
+                      style: TextStyle(
+                        color: isMe
+                            ? colorScheme.onPrimary.withValues(alpha: 0.7)
+                            : receivedMetaColor,
+                        fontSize: 11,
+                      ),
+                    ),
+                    if (isMe) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        isPending ? Icons.done : Icons.done_all,
+                        size: 14,
+                        color: isPending
+                            ? colorScheme.onPrimary.withValues(alpha: 0.72)
+                            : (isRead
+                                  ? colorScheme.tertiary
+                                  : colorScheme.onPrimary.withValues(
+                                      alpha: 0.72,
+                                    )),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ],
@@ -1473,14 +2115,16 @@ class _MessagesListState extends State<_MessagesList>
                     strokeWidth: 2,
                     value: progress,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      isMe ? Colors.white : Colors.black54,
+                      isMe ? colorScheme.onPrimary : receivedMetaColor,
                     ),
                   ),
                 )
               : Icon(
                   isDownloaded ? Icons.open_in_new : Icons.download,
                   size: 18,
-                  color: isMe ? Colors.white70 : Colors.black54,
+                  color: isMe
+                      ? colorScheme.onPrimary.withValues(alpha: 0.72)
+                      : receivedMetaColor,
                 ),
           onPressed: isDownloading ? null : onAction,
           tooltip: isDownloaded ? 'Open' : 'Download',
@@ -1596,6 +2240,20 @@ class _LiveStatusWidgetState extends State<_LiveStatusWidget> {
       },
     );
   }
+}
+
+class _ReplyDraft {
+  final String messageId;
+  final String senderId;
+  final String senderName;
+  final String previewText;
+
+  _ReplyDraft({
+    required this.messageId,
+    required this.senderId,
+    required this.senderName,
+    required this.previewText,
+  });
 }
 
 class _PendingTextMessage {

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -13,11 +14,7 @@ class UserProfileViewScreen extends StatefulWidget {
   final String userId;
   final Map<String, dynamic>? userData;
 
-  const UserProfileViewScreen({
-    super.key,
-    required this.userId,
-    this.userData,
-  });
+  const UserProfileViewScreen({super.key, required this.userId, this.userData});
 
   @override
   State<UserProfileViewScreen> createState() => _UserProfileViewScreenState();
@@ -47,37 +44,41 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   bool _blockedDocExists = false;
   bool _sentReqExists = false;
   bool _receivedReqExists = false;
+  late final VoidCallback _userCacheListener;
 
   @override
   void initState() {
     super.initState();
-    _userData = widget.userData ?? _userCache.getCachedUser(widget.userId);
-    _userCache.warmUsers([widget.userId], listen: false);
-    if (_userData == null) {
-      _loadUserData();
+    if (widget.userData != null) {
+      _userCache.mergeUserData(widget.userId, widget.userData!);
     }
+    _userData = _userCache.getCachedUser(widget.userId) ?? widget.userData;
+    _userCacheListener = _syncUserDataFromCache;
+    _userCache.addListener(_userCacheListener);
+    _warmUserData();
     _listenToOnlineStatus();
     _listenToFriendshipStatus();
   }
 
-  Future<void> _loadUserData() async {
-    try {
-      final doc = await _firestore.collection('users').doc(widget.userId).get();
-      if (doc.exists) {
-        setState(() {
-          _userData = doc.data();
-        });
-        _userCache.mergeUserData(widget.userId, doc.data()!);
-      }
-    } catch (e) {
-      print('Error loading user data: $e');
-    }
+  Future<void> _warmUserData() async {
+    await _userCache.warmUsers([widget.userId], listen: true);
+    _syncUserDataFromCache();
   }
+
+  void _syncUserDataFromCache() {
+    final cached = _userCache.getCachedUser(widget.userId);
+    if (cached == null || !mounted) return;
+    if (_userData != null && mapEquals(_userData, cached)) return;
+    setState(() {
+      _userData = cached;
+    });
+  }
+
   void _listenToOnlineStatus() {
     _presenceSub?.cancel();
-    _presenceSub = PresenceService()
-        .getUserStatusStream(widget.userId)
-        .listen((data) {
+    _presenceSub = PresenceService().getUserStatusStream(widget.userId).listen((
+      data,
+    ) {
       if (!mounted || data == null) return;
       setState(() {
         _isOnline = PresenceService.isUserOnline(data);
@@ -86,6 +87,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
       });
     });
   }
+
   void _listenToFriendshipStatus() {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
@@ -104,10 +106,10 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         .doc(widget.userId)
         .snapshots()
         .listen((doc) {
-      _friendChecked = true;
-      _friendDocExists = doc.exists;
-      _updateFriendState();
-    });
+          _friendChecked = true;
+          _friendDocExists = doc.exists;
+          _updateFriendState();
+        });
 
     _blockedSub = _firestore
         .collection('contacts')
@@ -116,10 +118,10 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         .doc(widget.userId)
         .snapshots()
         .listen((doc) {
-      _blockedChecked = true;
-      _blockedDocExists = doc.exists;
-      _updateFriendState();
-    });
+          _blockedChecked = true;
+          _blockedDocExists = doc.exists;
+          _updateFriendState();
+        });
 
     _sentReqSub = _firestore
         .collection('friendRequests')
@@ -128,10 +130,10 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         .where('status', isEqualTo: 'pending')
         .snapshots()
         .listen((query) {
-      _sentChecked = true;
-      _sentReqExists = query.docs.isNotEmpty;
-      _updateFriendState();
-    });
+          _sentChecked = true;
+          _sentReqExists = query.docs.isNotEmpty;
+          _updateFriendState();
+        });
 
     _receivedReqSub = _firestore
         .collection('friendRequests')
@@ -140,10 +142,10 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         .where('status', isEqualTo: 'pending')
         .snapshots()
         .listen((query) {
-      _receivedChecked = true;
-      _receivedReqExists = query.docs.isNotEmpty;
-      _updateFriendState();
-    });
+          _receivedChecked = true;
+          _receivedReqExists = query.docs.isNotEmpty;
+          _updateFriendState();
+        });
   }
 
   void _updateFriendState() {
@@ -176,7 +178,6 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
       });
     }
   }
-
 
   String _getBio() {
     final bio = _userData?['bio'] as String?;
@@ -232,15 +233,15 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend request sent!')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Friend request sent!')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
@@ -270,15 +271,15 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend removed')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Friend removed')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
@@ -295,12 +296,12 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
           .collection('blocked')
           .doc(widget.userId)
           .set({
-        'userId': widget.userId,
-        'displayName': _userData?['displayName'] ?? 'User',
-        'email': _userData?['email'] ?? '',
-        'photoUrl': _userData?['photoUrl'],
-        'blockedAt': FieldValue.serverTimestamp(),
-      });
+            'userId': widget.userId,
+            'displayName': _userData?['displayName'] ?? 'User',
+            'email': _userData?['email'] ?? '',
+            'photoUrl': _userData?['photoUrl'],
+            'blockedAt': FieldValue.serverTimestamp(),
+          });
 
       // Remove from friends if they are friends
       if (_isFriend) {
@@ -313,15 +314,15 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('User blocked')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('User blocked')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
@@ -343,22 +344,22 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('User unblocked')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('User unblocked')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
 
-
   @override
   void dispose() {
+    _userCache.removeListener(_userCacheListener);
     _friendSub?.cancel();
     _blockedSub?.cancel();
     _sentReqSub?.cancel();
@@ -370,12 +371,12 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   @override
   Widget build(BuildContext context) {
     final photoUrl = _pickPhotoUrl();
-  final displayName = _userData?['displayName'] ?? 'User';
-  final email = _userData?['email'] ?? '';
-  final bio = _getBio();
-  final location = _userData?['location'] ?? '';
-  final joinDate = _userData?['createdAt'] as Timestamp?;
-  final socialLinks = _getSocialLinks();
+    final displayName = _userData?['displayName'] ?? 'User';
+    final email = _userData?['email'] ?? '';
+    final bio = _getBio();
+    final location = _userData?['location'] ?? '';
+    final joinDate = _userData?['createdAt'] as Timestamp?;
+    final socialLinks = _getSocialLinks();
 
     return Scaffold(
       appBar: AppBar(
@@ -472,10 +473,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
           Center(
             child: Text(
               displayName,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
           ),
           const SizedBox(height: 8),
@@ -519,7 +517,10 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
             OutlinedButton.icon(
               onPressed: () {},
               icon: const Icon(Icons.check_circle, color: Colors.green),
-              label: const Text('Friends', style: TextStyle(color: Colors.green)),
+              label: const Text(
+                'Friends',
+                style: TextStyle(color: Colors.green),
+              ),
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 side: const BorderSide(color: Colors.green),
@@ -615,7 +616,9 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: () {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Shared media feature coming soon')),
+                  const SnackBar(
+                    content: Text('Shared media feature coming soon'),
+                  ),
                 );
               },
             ),
@@ -689,20 +692,14 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         final platform = map['platform']?.toString() ?? '';
         final url = map['url']?.toString() ?? '';
         if (platform.trim().isEmpty && url.trim().isEmpty) continue;
-        result.add({
-          'platform': platform.trim(),
-          'url': url.trim(),
-        });
+        result.add({'platform': platform.trim(), 'url': url.trim()});
       }
     }
 
     if (result.isEmpty) {
       final legacyWebsite = _userData?['website']?.toString() ?? '';
       if (legacyWebsite.trim().isNotEmpty) {
-        result.add({
-          'platform': 'Website',
-          'url': legacyWebsite.trim(),
-        });
+        result.add({'platform': 'Website', 'url': legacyWebsite.trim()});
       }
     }
 
@@ -803,22 +800,19 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
     final uri = Uri.tryParse(resolved);
     if (uri == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid link')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Invalid link')));
       }
       return;
     }
 
-    final launched = await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
 
     if (!launched && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open link')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not open link')));
     }
   }
 
@@ -858,22 +852,14 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
       width: radius * 2,
       height: radius * 2,
       color: Colors.grey[300],
-      child: Icon(
-        Icons.person,
-        size: radius,
-        color: Colors.grey[600],
-      ),
+      child: Icon(Icons.person, size: radius, color: Colors.grey[600]),
     );
 
     if (photoUrl == null || photoUrl.isEmpty) {
       return CircleAvatar(
         radius: radius,
         backgroundColor: Colors.grey[300],
-        child: Icon(
-          Icons.person,
-          size: radius,
-          color: Colors.grey[600],
-        ),
+        child: Icon(Icons.person, size: radius, color: Colors.grey[600]),
       );
     }
     final dpr = MediaQuery.of(context).devicePixelRatio;
@@ -920,10 +906,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   }
 
   String? _pickPhotoUrl() {
-    final candidates = [
-      _userData?['photoUrl'],
-      _userData?['photoURL'],
-    ];
+    final candidates = [_userData?['photoUrl'], _userData?['photoURL']];
 
     for (final value in candidates) {
       final text = value?.toString().trim() ?? '';

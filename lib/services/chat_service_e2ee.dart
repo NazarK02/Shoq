@@ -187,17 +187,13 @@ class ChatService {
     return _UserKeySet(legacyKey: legacyKey, deviceKeys: deviceKeys);
   }
 
-  /// Send an encrypted message
-  Future<void> sendMessage({
-    required String conversationId,
+  Future<Map<String, dynamic>> _buildEncryptedTextPayload({
     required String messageText,
     required String recipientId,
-    String? messageId,
+    bool includeTimestamps = true,
   }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) throw Exception('User not logged in');
-
-    if (messageText.trim().isEmpty) return;
 
     if (!_crypto.isEncryptionEnabled) {
       throw Exception(
@@ -205,130 +201,166 @@ class ChatService {
       );
     }
 
+    final senderKeys = await _ensureUserHasE2EE(currentUser.uid);
+    final recipientKeys = await _ensureUserHasE2EE(recipientId);
+    if (!recipientKeys.hasAnyKey) {
+      throw Exception('Recipient has no encryption keys');
+    }
+
+    final device = await _deviceInfo.getDeviceInfo();
+    final senderDeviceId = device['deviceId'] ?? 'unknown';
+    final senderDeviceKeys = Map<String, String>.from(senderKeys.deviceKeys);
+    final myPublicKey = _crypto.myPublicKeyBase64;
+    if (myPublicKey != null && !senderDeviceKeys.containsKey(senderDeviceId)) {
+      senderDeviceKeys[senderDeviceId] = myPublicKey;
+    }
+
+    final recipientCiphertexts = <String, String>{};
+    final recipientCiphertextsByKey = <String, String>{};
+    final recipientCipherCache = <String, String>{};
+    for (final entry in recipientKeys.deviceKeys.entries) {
+      final publicKey = entry.value.trim();
+      if (publicKey.isEmpty) continue;
+
+      final keyId = _publicKeyId(publicKey);
+      final ciphertext =
+          recipientCipherCache[keyId] ??
+          await _crypto.encryptMessageWithPublicKey(
+            plaintext: messageText,
+            recipientPublicKeyBase64: publicKey,
+          );
+
+      recipientCipherCache[keyId] = ciphertext;
+      recipientCiphertexts[entry.key] = ciphertext;
+      recipientCiphertextsByKey[keyId] = ciphertext;
+    }
+
+    final senderCiphertexts = <String, String>{};
+    final senderCiphertextsByKey = <String, String>{};
+    final senderCipherCache = <String, String>{};
+    for (final entry in senderDeviceKeys.entries) {
+      final publicKey = entry.value.trim();
+      if (publicKey.isEmpty) continue;
+
+      final keyId = _publicKeyId(publicKey);
+      final ciphertext =
+          senderCipherCache[keyId] ??
+          await _crypto.encryptMessageWithPublicKey(
+            plaintext: messageText,
+            recipientPublicKeyBase64: publicKey,
+          );
+
+      senderCipherCache[keyId] = ciphertext;
+      senderCiphertexts[entry.key] = ciphertext;
+      senderCiphertextsByKey[keyId] = ciphertext;
+    }
+
+    String? legacyRecipientCiphertext;
+    if (recipientKeys.legacyKey != null &&
+        recipientKeys.legacyKey!.isNotEmpty) {
+      final legacyPublicKey = recipientKeys.legacyKey!.trim();
+      final legacyKeyId = _publicKeyId(legacyPublicKey);
+      legacyRecipientCiphertext =
+          recipientCipherCache[legacyKeyId] ??
+          await _crypto.encryptMessageWithPublicKey(
+            plaintext: messageText,
+            recipientPublicKeyBase64: legacyPublicKey,
+          );
+      recipientCiphertextsByKey[legacyKeyId] = legacyRecipientCiphertext;
+    }
+
+    String? legacySenderCiphertext;
+    if (senderKeys.legacyKey != null && senderKeys.legacyKey!.isNotEmpty) {
+      final legacyPublicKey = senderKeys.legacyKey!.trim();
+      final legacyKeyId = _publicKeyId(legacyPublicKey);
+      legacySenderCiphertext =
+          senderCipherCache[legacyKeyId] ??
+          await _crypto.encryptMessageWithPublicKey(
+            plaintext: messageText,
+            recipientPublicKeyBase64: legacyPublicKey,
+          );
+      senderCiphertextsByKey[legacyKeyId] = legacySenderCiphertext;
+    }
+
+    final payload = <String, dynamic>{
+      'senderId': currentUser.uid,
+      'senderDeviceId': senderDeviceId,
+      'read': false,
+      'encrypted': true,
+      'type': 'text',
+      'encryptionVersion': 3,
+    };
+    if (includeTimestamps) {
+      payload['timestamp'] = FieldValue.serverTimestamp();
+      payload['clientTimestamp'] = Timestamp.now();
+    }
+
+    if (myPublicKey != null && myPublicKey.isNotEmpty) {
+      payload['senderPublicKey'] = myPublicKey;
+      payload['senderKeyId'] = _publicKeyId(myPublicKey);
+    }
+    if (recipientCiphertexts.isNotEmpty) {
+      payload['ciphertexts'] = recipientCiphertexts;
+    }
+    if (recipientCiphertextsByKey.isNotEmpty) {
+      payload['ciphertextsByKey'] = recipientCiphertextsByKey;
+    }
+    if (senderCiphertexts.isNotEmpty) {
+      payload['senderCiphertexts'] = senderCiphertexts;
+    }
+    if (senderCiphertextsByKey.isNotEmpty) {
+      payload['senderCiphertextsByKey'] = senderCiphertextsByKey;
+    }
+    if (legacyRecipientCiphertext != null) {
+      payload['ciphertext'] = legacyRecipientCiphertext;
+    }
+    if (legacySenderCiphertext != null) {
+      payload['senderCiphertext'] = legacySenderCiphertext;
+    }
+
+    return payload;
+  }
+
+  /// Send an encrypted message
+  Future<void> sendMessage({
+    required String conversationId,
+    required String messageText,
+    required String recipientId,
+    String? messageId,
+    String? replyToMessageId,
+    String? replyToText,
+    String? replyToSenderId,
+  }) async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) throw Exception('User not logged in');
+    if (messageText.trim().isEmpty) return;
+
     print('Sending encrypted message...');
 
     try {
-      final senderKeys = await _ensureUserHasE2EE(currentUser.uid);
-      final recipientKeys = await _ensureUserHasE2EE(recipientId);
-
-      if (!recipientKeys.hasAnyKey) {
-        throw Exception('Recipient has no encryption keys');
-      }
-
-      final device = await _deviceInfo.getDeviceInfo();
-      final senderDeviceId = device['deviceId'] ?? 'unknown';
-
-      final senderDeviceKeys = Map<String, String>.from(senderKeys.deviceKeys);
-      final myPublicKey = _crypto.myPublicKeyBase64;
-      if (myPublicKey != null &&
-          !senderDeviceKeys.containsKey(senderDeviceId)) {
-        senderDeviceKeys[senderDeviceId] = myPublicKey;
-      }
-
-      final recipientCiphertexts = <String, String>{};
-      final recipientCiphertextsByKey = <String, String>{};
-      final recipientCipherCache = <String, String>{};
-      for (final entry in recipientKeys.deviceKeys.entries) {
-        final publicKey = entry.value.trim();
-        if (publicKey.isEmpty) continue;
-
-        final keyId = _publicKeyId(publicKey);
-        final ciphertext =
-            recipientCipherCache[keyId] ??
-            await _crypto.encryptMessageWithPublicKey(
-              plaintext: messageText,
-              recipientPublicKeyBase64: publicKey,
-            );
-
-        recipientCipherCache[keyId] = ciphertext;
-        recipientCiphertexts[entry.key] = ciphertext;
-        recipientCiphertextsByKey[keyId] = ciphertext;
-      }
-
-      final senderCiphertexts = <String, String>{};
-      final senderCiphertextsByKey = <String, String>{};
-      final senderCipherCache = <String, String>{};
-      for (final entry in senderDeviceKeys.entries) {
-        final publicKey = entry.value.trim();
-        if (publicKey.isEmpty) continue;
-
-        final keyId = _publicKeyId(publicKey);
-        final ciphertext =
-            senderCipherCache[keyId] ??
-            await _crypto.encryptMessageWithPublicKey(
-              plaintext: messageText,
-              recipientPublicKeyBase64: publicKey,
-            );
-
-        senderCipherCache[keyId] = ciphertext;
-        senderCiphertexts[entry.key] = ciphertext;
-        senderCiphertextsByKey[keyId] = ciphertext;
-      }
-
-      String? legacyRecipientCiphertext;
-      if (recipientKeys.legacyKey != null &&
-          recipientKeys.legacyKey!.isNotEmpty) {
-        final legacyPublicKey = recipientKeys.legacyKey!.trim();
-        final legacyKeyId = _publicKeyId(legacyPublicKey);
-        legacyRecipientCiphertext =
-            recipientCipherCache[legacyKeyId] ??
-            await _crypto.encryptMessageWithPublicKey(
-              plaintext: messageText,
-              recipientPublicKeyBase64: legacyPublicKey,
-            );
-        recipientCiphertextsByKey[legacyKeyId] = legacyRecipientCiphertext;
-      }
-
-      String? legacySenderCiphertext;
-      if (senderKeys.legacyKey != null && senderKeys.legacyKey!.isNotEmpty) {
-        final legacyPublicKey = senderKeys.legacyKey!.trim();
-        final legacyKeyId = _publicKeyId(legacyPublicKey);
-        legacySenderCiphertext =
-            senderCipherCache[legacyKeyId] ??
-            await _crypto.encryptMessageWithPublicKey(
-              plaintext: messageText,
-              recipientPublicKeyBase64: legacyPublicKey,
-            );
-        senderCiphertextsByKey[legacyKeyId] = legacySenderCiphertext;
-      }
-
-      // Get first 50 chars of plaintext for preview (will be shown as encrypted in UI)
+      // Get first 50 chars of plaintext for preview in chat list.
       final preview = messageText.length > 50
           ? '${messageText.substring(0, 50)}...'
           : messageText;
 
-      final payload = <String, dynamic>{
-        'senderId': currentUser.uid,
-        'senderDeviceId': senderDeviceId,
-        'timestamp': FieldValue.serverTimestamp(),
-        'clientTimestamp': Timestamp.now(),
-        'read': false,
-        'encrypted': true,
-        'type': 'text',
-        'encryptionVersion': 3,
-      };
-      if (myPublicKey != null && myPublicKey.isNotEmpty) {
-        payload['senderPublicKey'] = myPublicKey;
-        payload['senderKeyId'] = _publicKeyId(myPublicKey);
-      }
+      final payload = await _buildEncryptedTextPayload(
+        messageText: messageText,
+        recipientId: recipientId,
+      );
 
-      if (recipientCiphertexts.isNotEmpty) {
-        payload['ciphertexts'] = recipientCiphertexts;
+      final trimmedReplyId = replyToMessageId?.trim();
+      final trimmedReplyText = replyToText?.trim();
+      final trimmedReplySenderId = replyToSenderId?.trim();
+      if (trimmedReplyId != null && trimmedReplyId.isNotEmpty) {
+        payload['replyToMessageId'] = trimmedReplyId;
       }
-      if (recipientCiphertextsByKey.isNotEmpty) {
-        payload['ciphertextsByKey'] = recipientCiphertextsByKey;
+      if (trimmedReplyText != null && trimmedReplyText.isNotEmpty) {
+        payload['replyToText'] = trimmedReplyText.length > 120
+            ? '${trimmedReplyText.substring(0, 120)}...'
+            : trimmedReplyText;
       }
-      if (senderCiphertexts.isNotEmpty) {
-        payload['senderCiphertexts'] = senderCiphertexts;
-      }
-      if (senderCiphertextsByKey.isNotEmpty) {
-        payload['senderCiphertextsByKey'] = senderCiphertextsByKey;
-      }
-      if (legacyRecipientCiphertext != null) {
-        payload['ciphertext'] = legacyRecipientCiphertext;
-      }
-      if (legacySenderCiphertext != null) {
-        payload['senderCiphertext'] = legacySenderCiphertext;
+      if (trimmedReplySenderId != null && trimmedReplySenderId.isNotEmpty) {
+        payload['replyToSenderId'] = trimmedReplySenderId;
       }
 
       // Store encrypted message. Allow caller-provided IDs for optimistic UI
@@ -346,7 +378,7 @@ class ChatService {
 
       // Update conversation metadata with plaintext preview for UI
       await _firestore.collection('conversations').doc(conversationId).update({
-        'lastMessage': preview, // Store plaintext preview
+        'lastMessage': preview,
         'lastMessageTime': FieldValue.serverTimestamp(),
         'lastSenderId': currentUser.uid,
         'hasMessages': true,
@@ -357,6 +389,47 @@ class ChatService {
       print('Failed to send encrypted message: $e');
       rethrow;
     }
+  }
+
+  /// Edit an existing encrypted text message.
+  Future<void> editMessage({
+    required String conversationId,
+    required String messageId,
+    required String recipientId,
+    required String messageText,
+  }) async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) throw Exception('User not logged in');
+
+    final trimmed = messageText.trim();
+    if (trimmed.isEmpty) return;
+
+    final payload = await _buildEncryptedTextPayload(
+      messageText: trimmed,
+      recipientId: recipientId,
+      includeTimestamps: false,
+    );
+    payload['edited'] = true;
+    payload['editedAt'] = FieldValue.serverTimestamp();
+    payload['read'] = false;
+    payload['readAt'] = FieldValue.delete();
+
+    await _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .doc(messageId)
+        .update(payload);
+
+    final preview = trimmed.length > 50
+        ? '${trimmed.substring(0, 50)}...'
+        : trimmed;
+    await _firestore.collection('conversations').doc(conversationId).set({
+      'lastMessage': preview,
+      'lastMessageTime': FieldValue.serverTimestamp(),
+      'lastSenderId': currentUser.uid,
+      'hasMessages': true,
+    }, SetOptions(merge: true));
   }
 
   /// Send a file message (non-encrypted file contents).
@@ -784,20 +857,32 @@ class ChatService {
   }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
+    try {
+      final unreadMessages = await _firestore
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages')
+          .where('senderId', isEqualTo: otherUserId)
+          .where('read', isEqualTo: false)
+          .get();
 
-    final unreadMessages = await _firestore
-        .collection('conversations')
-        .doc(conversationId)
-        .collection('messages')
-        .where('senderId', isEqualTo: otherUserId)
-        .where('read', isEqualTo: false)
-        .get();
+      if (unreadMessages.docs.isEmpty) return;
 
-    final batch = _firestore.batch();
-    for (var doc in unreadMessages.docs) {
-      batch.update(doc.reference, {'read': true});
+      final batch = _firestore.batch();
+      for (var doc in unreadMessages.docs) {
+        batch.update(doc.reference, {
+          'read': true,
+          'readAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        print('markMessagesAsRead permission denied for $conversationId');
+        return;
+      }
+      rethrow;
     }
-    await batch.commit();
   }
 
   /// Get user conversations

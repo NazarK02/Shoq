@@ -18,20 +18,41 @@ exports.sendPushNotification = onDocumentCreated(
       // Prevent double processing
       if (notification.processed) return;
 
-      const {fcmToken, title, body, data} = notification;
+      const {fcmToken, fcmTokens, title, body, data} = notification;
 
-      if (!fcmToken) {
-        console.log("No FCM token available");
+      const tokens = new Set();
+      if (typeof fcmToken === "string" && fcmToken.trim()) {
+        tokens.add(fcmToken.trim());
+      }
+      if (Array.isArray(fcmTokens)) {
+        for (const token of fcmTokens) {
+          if (typeof token === "string" && token.trim()) {
+            tokens.add(token.trim());
+          }
+        }
+      }
+
+      const targetTokens = Array.from(tokens);
+      if (targetTokens.length === 0) {
+        console.log("No FCM tokens available");
         return;
       }
 
+      const normalizedData = {};
+      if (data && typeof data === "object") {
+        for (const [key, value] of Object.entries(data)) {
+          if (value === null || value === undefined) continue;
+          normalizedData[key] =
+            typeof value === "string" ? value : JSON.stringify(value);
+        }
+      }
+
       const message = {
-        token: fcmToken,
         notification: {
           title,
           body,
         },
-        data: data || {},
+        data: normalizedData,
         android: {
           priority: "high",
           notification: {
@@ -49,15 +70,47 @@ exports.sendPushNotification = onDocumentCreated(
         },
       };
 
+      let successCount = 0;
+      let failureCount = 0;
+      const failedTokens = [];
+
       try {
-        await admin.messaging().send(message);
+        if (targetTokens.length === 1) {
+          await admin.messaging().send({
+            ...message,
+            token: targetTokens[0],
+          });
+          successCount = 1;
+        } else {
+          const multicastResponse = await admin
+              .messaging()
+              .sendEachForMulticast({
+                ...message,
+                tokens: targetTokens,
+              });
+          successCount = multicastResponse.successCount;
+          failureCount = multicastResponse.failureCount;
+
+          multicastResponse.responses.forEach((response, index) => {
+            if (!response.success) {
+              failedTokens.push(targetTokens[index]);
+            }
+          });
+        }
 
         await snap.ref.update({
           processed: true,
+          successCount,
+          failureCount,
+          failedTokens,
           processedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
-        console.log("Notification sent successfully");
+        console.log(
+            "Notification sent: success=%s, failed=%s",
+            successCount,
+            failureCount,
+        );
       } catch (error) {
         console.error("Error sending notification:", error);
 

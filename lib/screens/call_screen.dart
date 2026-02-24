@@ -13,6 +13,7 @@ import '../services/signaling_service.dart';
 class CallInvite {
   final String callId;
   final String fromId;
+  final String? fromClientId;
   final String callerName;
   final String? callerPhotoUrl;
   final bool isVideo;
@@ -21,6 +22,7 @@ class CallInvite {
   const CallInvite({
     required this.callId,
     required this.fromId,
+    this.fromClientId,
     required this.callerName,
     required this.callerPhotoUrl,
     required this.isVideo,
@@ -92,6 +94,7 @@ class _CallScreenState extends State<CallScreen> {
   String? _callId;
   String? _selfId;
   String? _peerId;
+  String? _peerClientId;
   String _peerDisplayName = 'User';
   String? _peerPhotoUrl;
   String _callerName = 'User';
@@ -113,6 +116,7 @@ class _CallScreenState extends State<CallScreen> {
 
     _isVideo = widget.isVideo;
     _peerId = widget.peerId;
+    _peerClientId = widget.invite?.fromClientId;
     _peerDisplayName = widget.peerName ?? 'User';
     _peerPhotoUrl = widget.peerPhotoUrl;
     _remoteOffer = widget.invite?.offer;
@@ -346,6 +350,25 @@ class _CallScreenState extends State<CallScreen> {
         return;
       }
 
+      if (type == 'call_taken') {
+        final fromUserId = message['from']?.toString();
+        final fromClientId = message['fromClientId']?.toString();
+        if (fromUserId == _selfId &&
+            fromClientId != null &&
+            fromClientId != _signaling.clientId) {
+          final reason = message['reason']?.toString() ?? 'answered';
+          print('Call handled on another device: $reason');
+          if (_callId != null) {
+            await NotificationService().clearCallNotification(_callId!);
+          }
+          _offerRetry?.cancel();
+          _ringTimeout?.cancel();
+          _callEndReason = reason == 'declined' ? 'declined' : 'ended';
+          _endCallLocal(sendSummary: false);
+        }
+        return;
+      }
+
       if (type == 'call_end' ||
           type == 'call_decline' ||
           type == 'call_missed') {
@@ -369,8 +392,22 @@ class _CallScreenState extends State<CallScreen> {
       'type': type,
       'callId': _callId,
       'from': _selfId,
+      'fromClientId': _signaling.clientId,
       'to': _peerId,
+      if (_peerClientId != null) 'toClientId': _peerClientId,
       ...?data,
+    });
+  }
+
+  Future<void> _broadcastCallHandledToOwnDevices(String reason) async {
+    if (_callId == null || _selfId == null) return;
+    await _signaling.send({
+      'type': 'call_taken',
+      'callId': _callId,
+      'from': _selfId,
+      'fromClientId': _signaling.clientId,
+      'to': _selfId,
+      'reason': reason,
     });
   }
 
@@ -647,6 +684,7 @@ class _CallScreenState extends State<CallScreen> {
       'call_answer',
       data: {'sdp': answer.sdp, 'sdpType': answer.type},
     );
+    await _broadcastCallHandledToOwnDevices('answered');
 
     _markCallConnected();
     await NotificationService().clearCallNotification(_callId!);
@@ -659,6 +697,7 @@ class _CallScreenState extends State<CallScreen> {
     print('❌ Declining call');
     _callEndReason = 'declined';
     await _sendSignal('call_decline');
+    await _broadcastCallHandledToOwnDevices('declined');
     if (_callId != null) {
       await NotificationService().clearCallNotification(_callId!);
     }
@@ -675,9 +714,11 @@ class _CallScreenState extends State<CallScreen> {
     _endCallLocal();
   }
 
-  void _endCallLocal() {
+  void _endCallLocal({bool sendSummary = true}) {
     print('🛑 Ending call locally');
-    unawaited(_sendCallSummaryMessage());
+    if (sendSummary) {
+      unawaited(_sendCallSummaryMessage());
+    }
     if (!mounted) return;
 
     setState(() => _phase = _CallPhase.ended);
@@ -705,6 +746,7 @@ class _CallScreenState extends State<CallScreen> {
       'type': 'call_offer',
       'callId': _callId,
       'from': _selfId,
+      'fromClientId': _signaling.clientId,
       'to': _peerId,
       'sdp': _localOffer!['sdp'],
       'sdpType': _localOffer!['sdpType'],
@@ -870,20 +912,44 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   void _toggleCamera() {
+    final videoTracks = _localStream?.getVideoTracks() ?? [];
+    if (videoTracks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No video track in this call. Start a video call to use camera controls.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     _isCameraOff = !_isCameraOff;
-    for (final track in _localStream?.getVideoTracks() ?? []) {
+    for (final track in videoTracks) {
       track.enabled = !_isCameraOff;
     }
-    print('📹 Camera off: $_isCameraOff');
+    print('Camera off: $_isCameraOff');
     if (mounted) setState(() {});
   }
 
   Future<void> _switchCamera() async {
-    if (!_isVideo) return;
     final tracks = _localStream?.getVideoTracks();
-    if (tracks == null || tracks.isEmpty) return;
+    if (tracks == null || tracks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No camera to switch in this call. Start a video call first.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
     await Helper.switchCamera(tracks.first);
-    print('🔄 Camera switched');
+    print('Camera switched');
   }
 
   String _statusText() {
@@ -1070,18 +1136,16 @@ class _CallScreenState extends State<CallScreen> {
             color: _isMuted ? Colors.red : Colors.white24,
             onPressed: _toggleMute,
           ),
-          if (_isVideo)
-            _buildCircleButton(
-              icon: _isCameraOff ? Icons.videocam_off : Icons.videocam,
-              color: _isCameraOff ? Colors.red : Colors.white24,
-              onPressed: _toggleCamera,
-            ),
-          if (_isVideo)
-            _buildCircleButton(
-              icon: Icons.cameraswitch,
-              color: Colors.white24,
-              onPressed: _switchCamera,
-            ),
+          _buildCircleButton(
+            icon: _isCameraOff ? Icons.videocam_off : Icons.videocam,
+            color: _isCameraOff ? Colors.red : Colors.white24,
+            onPressed: _toggleCamera,
+          ),
+          _buildCircleButton(
+            icon: Icons.cameraswitch,
+            color: Colors.white24,
+            onPressed: _switchCamera,
+          ),
           _buildCircleButton(
             icon: _isSpeakerOn ? Icons.volume_up : Icons.volume_down,
             color: Colors.white24,

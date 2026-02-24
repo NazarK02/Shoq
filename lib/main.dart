@@ -181,7 +181,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   void _startIncomingCallListener(String uid) {
     _incomingCallSub?.cancel();
-    SignalingService().ensureConnected(userId: uid);
+    unawaited(
+      SignalingService().ensureConnected(userId: uid).catchError((error) {
+        debugPrint('Incoming call signaling connection failed: $error');
+      }),
+    );
 
     _incomingCallSub = SignalingService().messages.listen((message) {
       if (!mounted) return;
@@ -210,6 +214,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       final invite = CallInvite(
         callId: callId,
         fromId: message['from']?.toString() ?? '',
+        fromClientId: message['fromClientId']?.toString(),
         callerName: callerName,
         callerPhotoUrl: message['callerPhotoUrl']?.toString(),
         isVideo: isVideo,

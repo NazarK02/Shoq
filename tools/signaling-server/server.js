@@ -24,12 +24,13 @@ function unregisterSocket(ws) {
   }
 }
 
-function registerSocket(userId, ws) {
+function registerSocket(userId, clientId, ws) {
   const prevUserId = socketToUser.get(ws);
   if (prevUserId && prevUserId !== userId) {
     unregisterSocket(ws);
   }
 
+  ws.clientId = clientId || null;
   socketToUser.set(ws, userId);
   if (!clients.has(userId)) {
     clients.set(userId, new Set());
@@ -49,7 +50,11 @@ wss.on("connection", (ws) => {
     if (!data || typeof data !== "object") return;
 
     if (data.type === "register" && data.userId) {
-      registerSocket(String(data.userId), ws);
+      registerSocket(
+        String(data.userId),
+        data.clientId ? String(data.clientId) : null,
+        ws
+      );
       return;
     }
 
@@ -58,8 +63,28 @@ wss.on("connection", (ws) => {
       const targetId = String(data.to);
       const targets = clients.get(targetId);
       if (!targets) return;
+
+      const targetClientId = data.toClientId ? String(data.toClientId) : null;
+      if (!targetClientId) {
+        for (const target of targets) {
+          safeSend(target, data);
+        }
+        return;
+      }
+
+      let delivered = false;
       for (const target of targets) {
-        safeSend(target, data);
+        if (target.clientId === targetClientId) {
+          safeSend(target, data);
+          delivered = true;
+        }
+      }
+
+      // Fallback for older clients that don't send/register clientId yet.
+      if (!delivered) {
+        for (const target of targets) {
+          safeSend(target, data);
+        }
       }
     }
   });
