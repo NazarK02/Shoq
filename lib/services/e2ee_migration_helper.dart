@@ -55,10 +55,8 @@ class E2EEMigrationHelper {
 
     final device = await _deviceInfo.getDeviceInfo();
     final deviceId = device['deviceId'] ?? 'unknown';
-    final deviceType = device['deviceType'] ?? 'unknown';
 
     final updates = <String, dynamic>{
-      'devices.$deviceId.deviceType': deviceType,
       'devices.$deviceId.publicKey': publicKey,
       'devices.$deviceId.publicKeyUpdatedAt': FieldValue.serverTimestamp(),
     };
@@ -79,10 +77,10 @@ class E2EEMigrationHelper {
   /// Run migration on app startup
   static Future<void> runMigrationIfNeeded() async {
     final helper = E2EEMigrationHelper();
-    
+
     try {
       final hasEncryption = await helper.currentUserHasEncryption();
-      
+
       if (!hasEncryption) {
         print('⚠️  User does not have E2EE enabled. Running migration...');
         await helper.ensureCurrentUserHasEncryption();

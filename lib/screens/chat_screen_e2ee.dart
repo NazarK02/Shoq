@@ -33,7 +33,8 @@ class ImprovedChatScreen extends StatefulWidget {
   State<ImprovedChatScreen> createState() => _ImprovedChatScreenState();
 }
 
-class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBindingObserver {
+class _ImprovedChatScreenState extends State<ImprovedChatScreen>
+    with WidgetsBindingObserver {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final ChatService _chatService = ChatService();
@@ -42,7 +43,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
   final FileDownloadService _downloadService = FileDownloadService();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  
+
   String? _conversationId;
   Map<String, dynamic>? _recipientData;
   bool _hasMessages = false;
@@ -52,7 +53,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
   @override
   void initState() {
     super.initState();
-    
+
     WidgetsBinding.instance.addObserver(this);
     _notificationService.setActiveChat(widget.recipientId);
     _recipientData = _userCache.getCachedUser(widget.recipientId);
@@ -66,20 +67,25 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
         widget.recipientId,
       );
     }
-    
+
     _initializeQuietly();
   }
 
   Future<void> _initializeQuietly() async {
     try {
       await _chatService.initializeEncryption();
-      _conversationId = await _chatService.initializeConversation(widget.recipientId);
+      _conversationId = await _chatService.initializeConversation(
+        widget.recipientId,
+      );
       _listenToRecipientData();
-      
+
       if (_conversationId != null) {
+        unawaited(
+          _chatService.backfillSenderPublicKeyForConversation(_conversationId!),
+        );
         _listenToConversationMetadata();
       }
-      
+
       if (mounted) {
         setState(() {});
       }
@@ -97,14 +103,18 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
   }
 
   void _listenToConversationMetadata() {
-    _firestore.collection('conversations').doc(_conversationId).snapshots().listen((snapshot) {
-      if (snapshot.exists && mounted) {
-        final data = snapshot.data();
-        setState(() {
-          _hasMessages = data?['hasMessages'] ?? false;
+    _firestore
+        .collection('conversations')
+        .doc(_conversationId)
+        .snapshots()
+        .listen((snapshot) {
+          if (snapshot.exists && mounted) {
+            final data = snapshot.data();
+            setState(() {
+              _hasMessages = data?['hasMessages'] ?? false;
+            });
+          }
         });
-      }
-    });
   }
 
   @override
@@ -138,7 +148,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
   }
 
   void _listenToRecipientData() {
-    _firestore.collection('users').doc(widget.recipientId).snapshots().listen((snapshot) {
+    _firestore.collection('users').doc(widget.recipientId).snapshots().listen((
+      snapshot,
+    ) {
       if (snapshot.exists && mounted) {
         setState(() {
           _recipientData = snapshot.data()!;
@@ -189,9 +201,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
     if (_scrollController.hasClients) {
       Future.delayed(const Duration(milliseconds: 100), () {
         if (_scrollController.hasClients) {
-          _scrollController.jumpTo(
-            _scrollController.position.maxScrollExtent,
-          );
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         }
       });
     }
@@ -208,7 +218,10 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
             children: [
               const Icon(Icons.error_outline, size: 64, color: Colors.red),
               const SizedBox(height: 16),
-              Text('Encryption Error', style: Theme.of(context).textTheme.headlineSmall),
+              Text(
+                'Encryption Error',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
               const SizedBox(height: 8),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -269,13 +282,17 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
               children: [
                 _buildAvatar(photoUrl, 18),
                 StreamBuilder<Map<String, dynamic>?>(
-                  stream: PresenceService().getUserStatusStream(widget.recipientId),
+                  stream: PresenceService().getUserStatusStream(
+                    widget.recipientId,
+                  ),
                   builder: (context, snapshot) {
                     if (!snapshot.hasData) return const SizedBox.shrink();
-                    final isOnline = PresenceService.isUserOnline(snapshot.data ?? {});
-                    
+                    final isOnline = PresenceService.isUserOnline(
+                      snapshot.data ?? {},
+                    );
+
                     if (!isOnline) return const SizedBox.shrink();
-                    
+
                     return Positioned(
                       right: 0,
                       bottom: 0,
@@ -356,10 +373,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
             }
           },
           itemBuilder: (context) => [
-            const PopupMenuItem(
-              value: 'clear',
-              child: Text('Clear chat'),
-            ),
+            const PopupMenuItem(value: 'clear', child: Text('Clear chat')),
           ],
         ),
       ],
@@ -370,11 +384,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
     final placeholder = CircleAvatar(
       radius: radius,
       backgroundColor: Colors.grey[300],
-      child: Icon(
-        Icons.person,
-        size: radius,
-        color: Colors.grey[600],
-      ),
+      child: Icon(Icons.person, size: radius, color: Colors.grey[600]),
     );
 
     if (photoUrl == null || photoUrl.isEmpty) {
@@ -529,7 +539,8 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen> with WidgetsBin
         return;
       }
 
-      final detectedMime = lookupMimeType(file.path!) ?? 'application/octet-stream';
+      final detectedMime =
+          lookupMimeType(file.path!) ?? 'application/octet-stream';
       final upload = _chatService.startFileUpload(
         conversationId: _conversationId!,
         filePath: file.path!,
@@ -683,12 +694,40 @@ class _MessagesList extends StatefulWidget {
   State<_MessagesList> createState() => _MessagesListState();
 }
 
-class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveClientMixin {
+class _MessagesListState extends State<_MessagesList>
+    with AutomaticKeepAliveClientMixin {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final Map<String, String> _decryptedCache = {};
+  final Map<String, Future<String>> _decryptFutureCache = {};
+  final Map<String, String> _decryptInputSignature = {};
 
   @override
   bool get wantKeepAlive => true;
+
+  String _mapSignature(dynamic value) {
+    if (value is! Map) return '';
+    final parts = <String>[];
+    value.forEach((key, val) {
+      parts.add('${key.toString()}:${val?.toString() ?? ''}');
+    });
+    parts.sort();
+    return parts.join('|');
+  }
+
+  String _decryptSignature(Map<String, dynamic> message) {
+    return [
+      message['senderId']?.toString() ?? '',
+      message['senderDeviceId']?.toString() ?? '',
+      message['senderPublicKey']?.toString() ?? '',
+      message['senderKeyId']?.toString() ?? '',
+      message['ciphertext']?.toString() ?? '',
+      message['senderCiphertext']?.toString() ?? '',
+      _mapSignature(message['ciphertexts']),
+      _mapSignature(message['senderCiphertexts']),
+      _mapSignature(message['ciphertextsByKey']),
+      _mapSignature(message['senderCiphertextsByKey']),
+    ].join('||');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -717,6 +756,16 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
         }
 
         final messages = snapshot.data?.docs ?? [];
+        final visibleMessageIds = messages.map((doc) => doc.id).toSet();
+        _decryptedCache.removeWhere(
+          (key, _) => !visibleMessageIds.contains(key),
+        );
+        _decryptFutureCache.removeWhere(
+          (key, _) => !visibleMessageIds.contains(key),
+        );
+        _decryptInputSignature.removeWhere(
+          (key, _) => !visibleMessageIds.contains(key),
+        );
 
         if (messages.isEmpty && widget.pendingUploads.isEmpty) {
           return _buildEmptyState();
@@ -741,7 +790,8 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
             final message = messageDoc.data() as Map<String, dynamic>;
             final messageId = messageDoc.id;
             final isMe = message['senderId'] == currentUser.uid;
-            final timestamp = (message['timestamp'] as Timestamp?) ??
+            final timestamp =
+                (message['timestamp'] as Timestamp?) ??
                 (message['clientTimestamp'] as Timestamp?);
             final type = message['type']?.toString() ?? 'text';
 
@@ -764,35 +814,52 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
               );
             }
 
-            final decryptFuture = widget.chatService.isEncryptionReady
-                ? widget.chatService.decryptMessage(messageData: message)
-                : Future.value('');
+            final signature = _decryptSignature(message);
+            if (_decryptInputSignature[messageId] != signature) {
+              _decryptInputSignature[messageId] = signature;
+              _decryptFutureCache.remove(messageId);
+              _decryptedCache.remove(messageId);
+            }
+
+            final decryptFuture = _decryptFutureCache.putIfAbsent(
+              messageId,
+              () {
+                final future = widget.chatService.isEncryptionReady
+                    ? widget.chatService.decryptMessage(messageData: message)
+                    : Future.value('');
+
+                return future.then((decrypted) {
+                  if (widget.chatService.isEncryptionReady &&
+                      decrypted.isNotEmpty) {
+                    _decryptedCache[messageId] = decrypted;
+                  }
+                  return decrypted;
+                });
+              },
+            );
 
             return FutureBuilder<String>(
-              future: decryptFuture.then((decrypted) {
-                if (widget.chatService.isEncryptionReady &&
-                    decrypted.isNotEmpty &&
-                    !decrypted.startsWith('[')) {
-                  _decryptedCache[messageId] = decrypted;
-                }
-                return decrypted;
-              }),
+              future: decryptFuture,
               builder: (context, decryptSnapshot) {
                 String displayText;
 
                 if (!widget.chatService.isEncryptionReady) {
                   displayText = _decryptedCache[messageId] ?? '';
-                } else if (decryptSnapshot.connectionState == ConnectionState.waiting) {
+                } else if (decryptSnapshot.connectionState ==
+                    ConnectionState.waiting) {
                   displayText = _decryptedCache[messageId] ?? '';
                 } else if (decryptSnapshot.hasError) {
                   displayText = _decryptedCache[messageId] ?? '';
-                  if (displayText.startsWith('[') && displayText != '[Sent]') {
-                    displayText = '';
+                  if (displayText.isEmpty) {
+                    displayText = 'Unable to decrypt this message';
                   }
                 } else {
                   displayText = decryptSnapshot.data ?? '';
-                  if (displayText.startsWith('[') && displayText != '[Sent]') {
-                    displayText = '';
+                  if (displayText.isEmpty) {
+                    displayText = _decryptedCache[messageId] ?? '';
+                  }
+                  if (displayText.isEmpty) {
+                    displayText = 'Unable to decrypt this message';
                   }
                 }
 
@@ -886,10 +953,7 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     );
   }
 
-  Widget _buildPendingUploadBubble(
-    _PendingUpload upload, {
-    Key? key,
-  }) {
+  Widget _buildPendingUploadBubble(_PendingUpload upload, {Key? key}) {
     return Align(
       key: key,
       alignment: Alignment.centerRight,
@@ -931,7 +995,9 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
                   LinearProgressIndicator(
                     value: upload.progress,
                     backgroundColor: Colors.white24,
-                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Colors.white,
+                    ),
                     minHeight: 3,
                   ),
                   const SizedBox(height: 4),
@@ -961,14 +1027,17 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     Key? key,
   }) {
     final fileName = message['fileName']?.toString() ?? 'File';
-    final fileSize = message['fileSize'] is int ? message['fileSize'] as int : 0;
+    final fileSize = message['fileSize'] is int
+        ? message['fileSize'] as int
+        : 0;
     final fileUrl = message['fileUrl']?.toString() ?? '';
     final mimeType = message['mimeType']?.toString() ?? '';
     final isImage = mimeType.toLowerCase().startsWith('image/');
 
     // Check download status
     final downloadProgress = widget.downloadService.getProgress(messageId);
-    final isDownloading = downloadProgress?.status == DownloadStatus.downloading;
+    final isDownloading =
+        downloadProgress?.status == DownloadStatus.downloading;
     final isDownloaded = downloadProgress?.status == DownloadStatus.completed;
     final localPath = downloadProgress?.localPath;
     final progress = downloadProgress?.progress ?? 0;
@@ -983,35 +1052,39 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
         decoration: BoxDecoration(
-          color: isImage ? Colors.transparent : (isMe ? Theme.of(context).primaryColor : Colors.grey[300]),
+          color: isImage
+              ? Colors.transparent
+              : (isMe ? Theme.of(context).primaryColor : Colors.grey[300]),
           borderRadius: BorderRadius.circular(isImage ? 12 : 16),
         ),
-        child: isImage ? _buildImagePreview(
-          fileUrl: fileUrl,
-          fileName: fileName,
-          fileSize: fileSize,
-          localPath: localPath,
-          timestamp: timestamp,
-          isMe: isMe,
-        ) : _buildFileInfo(
-          fileName: fileName,
-          fileSize: fileSize,
-          mimeType: mimeType,
-          isDownloading: isDownloading,
-          isDownloaded: isDownloaded,
-          progress: progress,
-          timestamp: timestamp,
-          isMe: isMe,
-          onAction: () => _handleFileAction(
-            messageId: messageId,
-            url: fileUrl,
-            fileName: fileName,
-            mimeType: mimeType,
-            fileSize: fileSize,
-            isDownloaded: isDownloaded,
-            localPath: localPath,
-          ),
-        ),
+        child: isImage
+            ? _buildImagePreview(
+                fileUrl: fileUrl,
+                fileName: fileName,
+                fileSize: fileSize,
+                localPath: localPath,
+                timestamp: timestamp,
+                isMe: isMe,
+              )
+            : _buildFileInfo(
+                fileName: fileName,
+                fileSize: fileSize,
+                mimeType: mimeType,
+                isDownloading: isDownloading,
+                isDownloaded: isDownloaded,
+                progress: progress,
+                timestamp: timestamp,
+                isMe: isMe,
+                onAction: () => _handleFileAction(
+                  messageId: messageId,
+                  url: fileUrl,
+                  fileName: fileName,
+                  mimeType: mimeType,
+                  fileSize: fileSize,
+                  isDownloaded: isDownloaded,
+                  localPath: localPath,
+                ),
+              ),
       ),
     );
   }
@@ -1053,15 +1126,17 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
                 placeholder: (_, __) => Container(
                   height: 200,
                   color: Colors.grey[800],
-                  child: const Center(
-                    child: CircularProgressIndicator(),
-                  ),
+                  child: const Center(child: CircularProgressIndicator()),
                 ),
                 errorWidget: (_, __, ___) => Container(
                   height: 200,
                   color: Colors.grey[800],
                   child: const Center(
-                    child: Icon(Icons.broken_image, size: 48, color: Colors.white54),
+                    child: Icon(
+                      Icons.broken_image,
+                      size: 48,
+                      color: Colors.white54,
+                    ),
                   ),
                 ),
               ),
@@ -1196,9 +1271,9 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
     if (isDownloaded && localPath != null) {
       final result = await OpenFilex.open(localPath);
       if (result.type != ResultType.done && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result.message)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(result.message)));
       }
     } else {
       try {
@@ -1240,7 +1315,9 @@ class _MessagesListState extends State<_MessagesList> with AutomaticKeepAliveCli
       size /= 1024;
       unit++;
     }
-    final value = size < 10 && unit > 0 ? size.toStringAsFixed(1) : size.toStringAsFixed(0);
+    final value = size < 10 && unit > 0
+        ? size.toStringAsFixed(1)
+        : size.toStringAsFixed(0);
     return '$value ${units[unit]}';
   }
 }
@@ -1276,10 +1353,7 @@ class _LiveStatusWidgetState extends State<_LiveStatusWidget> {
       stream: PresenceService().getUserStatusStream(widget.userId),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
-          return const Text(
-            'Loading...',
-            style: TextStyle(fontSize: 12),
-          );
+          return const Text('Loading...', style: TextStyle(fontSize: 12));
         }
 
         final statusText = PresenceService.getStatusText(snapshot.data);

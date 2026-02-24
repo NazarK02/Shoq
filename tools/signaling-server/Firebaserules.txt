@@ -62,7 +62,22 @@ service cloud.firestore {
             // Encrypted text
             (request.resource.data.type == 'text' &&
              request.resource.data.encrypted == true &&
-             request.resource.data.ciphertext is string)
+             (
+               request.resource.data.ciphertext is string ||
+               request.resource.data.ciphertexts is map
+             ) &&
+             (
+               !('senderCiphertext' in request.resource.data) ||
+               request.resource.data.senderCiphertext is string
+             ) &&
+             (
+               !('senderCiphertexts' in request.resource.data) ||
+               request.resource.data.senderCiphertexts is map
+             ) &&
+             (
+               !('senderPublicKey' in request.resource.data) ||
+               request.resource.data.senderPublicKey is string
+             ))
 
             ||
 

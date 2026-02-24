@@ -3,8 +3,10 @@ import 'dart:io';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/call_config.dart';
+import '../services/chat_service_e2ee.dart';
 import '../services/notification_service.dart';
 import '../services/signaling_service.dart';
 
@@ -40,18 +42,16 @@ class CallScreen extends StatefulWidget {
     required this.peerName,
     this.peerPhotoUrl,
     this.isVideo = false,
-  })  : invite = null,
-        isIncoming = false;
+  }) : invite = null,
+       isIncoming = false;
 
-  CallScreen.incoming({
-    super.key,
-    required CallInvite incomingInvite,
-  })  : invite = incomingInvite,
-        peerId = incomingInvite.fromId,
-        peerName = incomingInvite.callerName,
-        peerPhotoUrl = incomingInvite.callerPhotoUrl,
-        isVideo = incomingInvite.isVideo,
-        isIncoming = true;
+  CallScreen.incoming({super.key, required CallInvite incomingInvite})
+    : invite = incomingInvite,
+      peerId = incomingInvite.fromId,
+      peerName = incomingInvite.callerName,
+      peerPhotoUrl = incomingInvite.callerPhotoUrl,
+      isVideo = incomingInvite.isVideo,
+      isIncoming = true;
 
   @override
   State<CallScreen> createState() => _CallScreenState();
@@ -62,7 +62,8 @@ enum _CallPhase { ringing, connecting, inCall, ended }
 class _CallScreenState extends State<CallScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final SignalingService _signaling = SignalingService();
-  
+  final ChatService _chatService = ChatService();
+
   // Only initialize video renderers for video calls
   RTCVideoRenderer? _localRenderer;
   RTCVideoRenderer? _remoteRenderer;
@@ -98,12 +99,18 @@ class _CallScreenState extends State<CallScreen> {
   Map<String, dynamic>? _remoteOffer;
   Map<String, dynamic>? _localOffer;
   _CallPhase _phase = _CallPhase.ringing;
+  final DateTime _callOpenedAt = DateTime.now();
+  DateTime? _callConnectedAt;
+  String _callEndReason = 'ended';
+  bool _callSummarySent = false;
 
   @override
   void initState() {
     super.initState();
-    print('🎬 CallScreen initState - isVideo: ${widget.isVideo}, isIncoming: ${widget.isIncoming}');
-    
+    print(
+      '🎬 CallScreen initState - isVideo: ${widget.isVideo}, isIncoming: ${widget.isIncoming}',
+    );
+
     _isVideo = widget.isVideo;
     _peerId = widget.peerId;
     _peerDisplayName = widget.peerName ?? 'User';
@@ -188,7 +195,7 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _initOutgoingCall() async {
     print('📱 Starting outgoing call initialization');
-    
+
     final allowed = await _ensurePermissions();
     if (!allowed) {
       print('❌ Permissions denied');
@@ -202,14 +209,16 @@ class _CallScreenState extends State<CallScreen> {
       print('❌ No user or peerId');
       return;
     }
-    
+
     // Prevent calling yourself
     if (_peerId == currentUser.uid) {
       print('❌ Cannot call yourself');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('You cannot call yourself. Please test with another user.'),
+            content: Text(
+              'You cannot call yourself. Please test with another user.',
+            ),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 3),
           ),
@@ -222,7 +231,7 @@ class _CallScreenState extends State<CallScreen> {
     _selfId = currentUser.uid;
     _callerName = currentUser.displayName ?? 'User';
     _callerPhotoUrl = currentUser.photoURL ?? '';
-    
+
     print('🔌 Connecting to signaling server');
     try {
       await _signaling.ensureConnected(userId: currentUser.uid);
@@ -234,7 +243,7 @@ class _CallScreenState extends State<CallScreen> {
             content: Text(
               'Cannot connect to call server. '
               'Please check your internet connection and try again.\n'
-              'Error: $e'
+              'Error: $e',
             ),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 5),
@@ -248,10 +257,10 @@ class _CallScreenState extends State<CallScreen> {
     try {
       print('🔗 Creating peer connection');
       await _createPeerConnection();
-      
+
       print('🎤 Starting local media stream');
       await _startLocalStream();
-      
+
       print('✅ Local stream started successfully');
     } catch (e, stack) {
       print('❌ Error in call setup: $e');
@@ -264,16 +273,13 @@ class _CallScreenState extends State<CallScreen> {
 
     _callId = '${currentUser.uid}_${DateTime.now().microsecondsSinceEpoch}';
     print('📱 Call ID: $_callId');
-    
+
     _listenToSignaling();
 
     print('📝 Creating offer');
     final offer = await _peerConnection!.createOffer(_rtcOfferConstraints());
     await _peerConnection!.setLocalDescription(offer);
-    _localOffer = {
-      'sdp': offer.sdp,
-      'sdpType': offer.type,
-    };
+    _localOffer = {'sdp': offer.sdp, 'sdpType': offer.type};
 
     print('📤 Sending offer');
     await _sendOffer();
@@ -282,6 +288,7 @@ class _CallScreenState extends State<CallScreen> {
     _ringTimeout = Timer(const Duration(seconds: 35), () async {
       print('⏰ Call timeout');
       if (_phase != _CallPhase.ringing || _callId == null) return;
+      _callEndReason = 'missed';
       await _sendSignal('call_missed');
       _endCallLocal();
     });
@@ -289,18 +296,18 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _initIncomingCall() async {
     print('📞 Initializing incoming call');
-    
+
     final currentUser = _auth.currentUser;
     if (currentUser == null || _callId == null) {
       print('❌ No user or callId');
       return;
     }
-    
+
     _selfId = currentUser.uid;
     await _signaling.ensureConnected(userId: currentUser.uid);
     _listenToSignaling();
     await NotificationService().clearCallNotification(_callId!);
-    
+
     print('✅ Incoming call initialized');
   }
 
@@ -312,15 +319,13 @@ class _CallScreenState extends State<CallScreen> {
       print('📨 Received signal: $type');
 
       if (type == 'call_answer') {
-        final answer = {
-          'sdp': message['sdp'],
-          'type': message['sdpType'],
-        };
+        final answer = {'sdp': message['sdp'], 'type': message['sdpType']};
         if (!_remoteDescriptionSet) {
           print('📥 Setting remote description (answer)');
           await _setRemoteDescription(answer);
           _offerRetry?.cancel();
           _ringTimeout?.cancel();
+          _markCallConnected();
           if (mounted) setState(() => _phase = _CallPhase.inCall);
         }
         return;
@@ -344,6 +349,9 @@ class _CallScreenState extends State<CallScreen> {
       if (type == 'call_end' ||
           type == 'call_decline' ||
           type == 'call_missed') {
+        _callEndReason = type == 'call_decline'
+            ? 'declined'
+            : (type == 'call_missed' ? 'missed' : 'ended');
         print('☎️ Call ended by peer: $type');
         if (_callId != null) {
           await NotificationService().clearCallNotification(_callId!);
@@ -368,7 +376,7 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<bool> _ensurePermissions() async {
     print('🔐 Checking permissions - isVideo: $_isVideo');
-    
+
     if (!Platform.isAndroid && !Platform.isIOS) {
       print('✅ Non-mobile platform, skipping permission check');
       return true;
@@ -377,14 +385,16 @@ class _CallScreenState extends State<CallScreen> {
     final permissions = <Permission>[Permission.microphone];
     if (_isVideo) permissions.add(Permission.camera);
 
-    print('📋 Requesting permissions: ${permissions.map((p) => p.toString()).join(", ")}');
-    
+    print(
+      '📋 Requesting permissions: ${permissions.map((p) => p.toString()).join(", ")}',
+    );
+
     final results = await permissions.request();
-    
+
     for (var entry in results.entries) {
       print('   ${entry.key}: ${entry.value}');
     }
-    
+
     final granted = results.values.every((status) => status.isGranted);
 
     if (!granted && mounted) {
@@ -437,11 +447,14 @@ class _CallScreenState extends State<CallScreen> {
     _peerConnection!.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
       print('🧊 ICE candidate generated');
-      _sendSignal('call_ice', data: {
-        'candidate': candidate.candidate,
-        'sdpMid': candidate.sdpMid,
-        'sdpMLineIndex': candidate.sdpMLineIndex,
-      });
+      _sendSignal(
+        'call_ice',
+        data: {
+          'candidate': candidate.candidate,
+          'sdpMid': candidate.sdpMid,
+          'sdpMLineIndex': candidate.sdpMLineIndex,
+        },
+      );
     };
 
     _peerConnection!.onTrack = (event) async {
@@ -476,10 +489,11 @@ class _CallScreenState extends State<CallScreen> {
 
     _peerConnection!.onConnectionState = (state) {
       print('🔗 Connection state: $state');
-      
+
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         print('✅ Call connected!');
         _connectionTimeout?.cancel(); // Cancel timeout on successful connection
+        _markCallConnected();
         if (mounted) setState(() => _phase = _CallPhase.inCall);
       }
 
@@ -487,6 +501,9 @@ class _CallScreenState extends State<CallScreen> {
           state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
         print('❌ Connection failed/disconnected: $state');
+        if (_callConnectedAt == null) {
+          _callEndReason = 'failed';
+        }
         _connectionTimeout?.cancel();
         _endCallLocal();
       }
@@ -499,7 +516,7 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _startLocalStream() async {
     print('🎤 Getting user media - audio: true, video: $_isVideo');
-    
+
     final mediaConstraints = {
       'audio': {
         'echoCancellation': true,
@@ -516,28 +533,33 @@ class _CallScreenState extends State<CallScreen> {
     };
 
     try {
-      _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
-      
+      _localStream = await navigator.mediaDevices.getUserMedia(
+        mediaConstraints,
+      );
+
       final audioTracks = _localStream!.getAudioTracks();
       final videoTracks = _localStream!.getVideoTracks();
-      
-      print('✅ Got local stream - audio: ${audioTracks.length}, video: ${videoTracks.length}');
-      
+
+      print(
+        '✅ Got local stream - audio: ${audioTracks.length}, video: ${videoTracks.length}',
+      );
+
       for (var track in audioTracks) {
         print('   Audio track: ${track.label} (enabled: ${track.enabled})');
       }
       for (var track in videoTracks) {
         print('   Video track: ${track.label} (enabled: ${track.enabled})');
       }
-      
     } catch (e, stack) {
       print('❌ Failed to get media: $e');
       print('Stack trace: $stack');
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to access ${_isVideo ? "camera/microphone" : "microphone"}: $e'),
+            content: Text(
+              'Failed to access ${_isVideo ? "camera/microphone" : "microphone"}: $e',
+            ),
             duration: const Duration(seconds: 4),
           ),
         );
@@ -558,22 +580,21 @@ class _CallScreenState extends State<CallScreen> {
       await Helper.setSpeakerphoneOn(_isVideo);
       _isSpeakerOn = _isVideo;
     }
-    
+
     if (mounted) setState(() {});
   }
 
   Future<void> _setRemoteDescription(Map<String, dynamic> data) async {
     if (_peerConnection == null) return;
     print('📥 Setting remote description');
-    
-    final description = RTCSessionDescription(
-      data['sdp'],
-      data['type'],
-    );
+
+    final description = RTCSessionDescription(data['sdp'], data['type']);
     await _peerConnection!.setRemoteDescription(description);
     _remoteDescriptionSet = true;
 
-    print('🧊 Adding ${_pendingRemoteCandidates.length} pending ICE candidates');
+    print(
+      '🧊 Adding ${_pendingRemoteCandidates.length} pending ICE candidates',
+    );
     for (final candidate in _pendingRemoteCandidates) {
       await _peerConnection!.addCandidate(candidate);
     }
@@ -592,7 +613,7 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _answerCall() async {
     print('📞 Answering call');
-    
+
     final allowed = await _ensurePermissions();
     if (!allowed) {
       print('❌ Permissions denied for answer');
@@ -612,6 +633,7 @@ class _CallScreenState extends State<CallScreen> {
     } catch (e, stack) {
       print('❌ Error answering call: $e');
       print('Stack trace: $stack');
+      _callEndReason = 'failed';
       _endCallLocal();
       return;
     }
@@ -621,19 +643,21 @@ class _CallScreenState extends State<CallScreen> {
     final answer = await _peerConnection!.createAnswer(_rtcOfferConstraints());
     await _peerConnection!.setLocalDescription(answer);
 
-    await _sendSignal('call_answer', data: {
-      'sdp': answer.sdp,
-      'sdpType': answer.type,
-    });
+    await _sendSignal(
+      'call_answer',
+      data: {'sdp': answer.sdp, 'sdpType': answer.type},
+    );
 
+    _markCallConnected();
     await NotificationService().clearCallNotification(_callId!);
     if (mounted) setState(() => _phase = _CallPhase.inCall);
-    
+
     print('✅ Call answered');
   }
 
   Future<void> _declineCall() async {
     print('❌ Declining call');
+    _callEndReason = 'declined';
     await _sendSignal('call_decline');
     if (_callId != null) {
       await NotificationService().clearCallNotification(_callId!);
@@ -643,6 +667,7 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _hangUp() async {
     print('📵 Hanging up');
+    _callEndReason = 'ended';
     await _sendSignal('call_end');
     if (_callId != null) {
       await NotificationService().clearCallNotification(_callId!);
@@ -652,13 +677,14 @@ class _CallScreenState extends State<CallScreen> {
 
   void _endCallLocal() {
     print('🛑 Ending call locally');
+    unawaited(_sendCallSummaryMessage());
     if (!mounted) return;
-    
+
     setState(() => _phase = _CallPhase.ended);
     _offerRetry?.cancel();
     _ringTimeout?.cancel();
     _cleanupRtc();
-    
+
     Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) {
         print('👋 Popping call screen');
@@ -696,7 +722,7 @@ class _CallScreenState extends State<CallScreen> {
         _offerRetry?.cancel();
         return;
       }
-      
+
       _offerRetryCount++;
       print('🔄 Retrying offer (attempt $_offerRetryCount/$_maxOfferRetries)');
 
@@ -721,7 +747,7 @@ class _CallScreenState extends State<CallScreen> {
 
   void _cleanupRtc() {
     print('🧹 Cleaning up RTC resources');
-    
+
     for (final track in _localStream?.getTracks() ?? []) {
       track.stop();
     }
@@ -733,6 +759,93 @@ class _CallScreenState extends State<CallScreen> {
     _peerConnection = null;
     _localStream = null;
     _remoteStream = null;
+  }
+
+  void _markCallConnected() {
+    _callConnectedAt ??= DateTime.now();
+    _callEndReason = 'ended';
+  }
+
+  String _formatDuration(Duration duration) {
+    var seconds = duration.inSeconds;
+    if (seconds < 0) seconds = 0;
+
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    final secs = seconds % 60;
+
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:'
+          '${minutes.toString().padLeft(2, '0')}:'
+          '${secs.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:'
+        '${secs.toString().padLeft(2, '0')}';
+  }
+
+  String _buildCallSummaryText({
+    required DateTime startedAt,
+    required bool wasAccepted,
+    required Duration duration,
+  }) {
+    final callType = _isVideo ? 'Video call' : 'Audio call';
+    final when = DateFormat('MMM d, HH:mm').format(startedAt);
+
+    if (wasAccepted) {
+      return '$callType accepted at $when - Duration ${_formatDuration(duration)}';
+    }
+
+    switch (_callEndReason) {
+      case 'declined':
+        return '$callType declined at $when';
+      case 'missed':
+        return '$callType missed at $when';
+      case 'failed':
+        return '$callType failed at $when';
+      default:
+        return '$callType ended at $when';
+    }
+  }
+
+  Future<void> _sendCallSummaryMessage() async {
+    if (_callSummarySent) return;
+    _callSummarySent = true;
+
+    try {
+      // Only caller writes summary to avoid duplicate log entries.
+      if (widget.isIncoming) return;
+
+      final currentUser = _auth.currentUser;
+      final peerId = _peerId;
+      if (currentUser == null || peerId == null || peerId.trim().isEmpty) {
+        return;
+      }
+
+      final endedAt = DateTime.now();
+      final startedAt = _callConnectedAt ?? _callOpenedAt;
+      final wasAccepted = _callConnectedAt != null;
+      final duration = wasAccepted
+          ? endedAt.difference(_callConnectedAt!)
+          : Duration.zero;
+
+      final summaryText = _buildCallSummaryText(
+        startedAt: startedAt,
+        wasAccepted: wasAccepted,
+        duration: duration,
+      );
+
+      await _chatService.initializeEncryption();
+      final conversationId = await _chatService.initializeConversation(peerId);
+      if (conversationId == null) return;
+
+      await _chatService.sendMessage(
+        conversationId: conversationId,
+        messageText: summaryText,
+        recipientId: peerId,
+      );
+    } catch (e) {
+      print('Failed to send call summary message: $e');
+    }
   }
 
   void _toggleMute() {
@@ -823,10 +936,7 @@ class _CallScreenState extends State<CallScreen> {
             const SizedBox(height: 24),
             Text(
               'Initializing ${_isVideo ? 'video' : 'audio'} call...',
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 16,
-              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 16),
             ),
           ],
         ),
@@ -852,10 +962,7 @@ class _CallScreenState extends State<CallScreen> {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            const Color(0xFF1a1a1a),
-            const Color(0xFF2d2d2d),
-          ],
+          colors: [const Color(0xFF1a1a1a), const Color(0xFF2d2d2d)],
         ),
       ),
       child: Center(
@@ -875,10 +982,7 @@ class _CallScreenState extends State<CallScreen> {
             const SizedBox(height: 12),
             Text(
               _statusText(),
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 16,
-              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 16),
             ),
           ],
         ),
@@ -887,7 +991,9 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Widget _buildLocalPreview() {
-    if (!_isVideo || _localRenderer == null || _localRenderer!.srcObject == null) {
+    if (!_isVideo ||
+        _localRenderer == null ||
+        _localRenderer!.srcObject == null) {
       return const Positioned.fill(child: SizedBox.shrink());
     }
 
@@ -921,10 +1027,7 @@ class _CallScreenState extends State<CallScreen> {
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
-            colors: [
-              Colors.black.withOpacity(0.7),
-              Colors.transparent,
-            ],
+            colors: [Colors.black.withOpacity(0.7), Colors.transparent],
           ),
         ),
         child: Row(
@@ -953,10 +1056,7 @@ class _CallScreenState extends State<CallScreen> {
         gradient: LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
-          colors: [
-            Colors.black.withOpacity(0.7),
-            Colors.transparent,
-          ],
+          colors: [Colors.black.withOpacity(0.7), Colors.transparent],
         ),
       ),
       child: Row(
@@ -1003,10 +1103,7 @@ class _CallScreenState extends State<CallScreen> {
     final button = Container(
       width: 60,
       height: 60,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-      ),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       child: IconButton(
         icon: Icon(icon, color: Colors.white, size: 28),
         onPressed: onPressed,
@@ -1040,9 +1137,7 @@ class _CallScreenState extends State<CallScreen> {
     if (_isInitializing || (needsRenderers && !_renderersReady)) {
       return Scaffold(
         backgroundColor: const Color(0xFF1a1a1a),
-        body: SafeArea(
-          child: _buildLoadingIndicator(),
-        ),
+        body: SafeArea(child: _buildLoadingIndicator()),
       );
     }
 
@@ -1053,12 +1148,7 @@ class _CallScreenState extends State<CallScreen> {
           children: [
             Positioned.fill(child: _buildRemoteView()),
             _buildLocalPreview(),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: _buildControls(),
-            ),
+            Positioned(left: 0, right: 0, bottom: 0, child: _buildControls()),
           ],
         ),
       ),

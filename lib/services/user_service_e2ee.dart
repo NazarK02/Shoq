@@ -22,14 +22,8 @@ class UserService {
   }
 
   /// Create or update user document (basic info only, no E2EE yet)
-  Future<void> saveUserToFirestore({
-    required User user,
-  }) async {
+  Future<void> saveUserToFirestore({required User user}) async {
     try {
-      final device = await _getDeviceInfo();
-      final deviceId = device['deviceId']!;
-      final deviceType = device['deviceType']!;
-
       final userRef = _firestore.collection('users').doc(user.uid);
 
       print('💾 Saving user document for: ${user.uid}');
@@ -44,15 +38,47 @@ class UserService {
         'lastSeen': FieldValue.serverTimestamp(),
         'lastHeartbeat': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
-        'devices.$deviceId.deviceType': deviceType,
-        'devices.$deviceId.lastActive': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      print('✅ User document saved successfully');
+      await _cleanupLegacyDeviceMetadata(user.uid);
 
+      print('✅ User document saved successfully');
     } catch (e) {
       print('❌ Error saving user: $e');
       rethrow;
+    }
+  }
+
+  Future<void> _cleanupLegacyDeviceMetadata(String uid) async {
+    final doc = await _firestore.collection('users').doc(uid).get();
+    final data = doc.data();
+    if (data == null) return;
+
+    final devices = data['devices'];
+    if (devices is! Map) return;
+
+    final deletes = <String, dynamic>{};
+
+    void walk(dynamic node, String path) {
+      if (node is! Map) return;
+
+      for (final entry in node.entries) {
+        final key = entry.key.toString();
+        final nextPath = path.isEmpty ? key : '$path.$key';
+
+        if (key == 'deviceType' || key == 'lastActive') {
+          deletes['devices.$nextPath'] = FieldValue.delete();
+          continue;
+        }
+
+        walk(entry.value, nextPath);
+      }
+    }
+
+    walk(devices, '');
+
+    if (deletes.isNotEmpty) {
+      await _firestore.collection('users').doc(uid).update(deletes);
     }
   }
 
@@ -67,14 +93,14 @@ class UserService {
         .doc(user.uid)
         .snapshots()
         .listen((snapshot) {
-      if (snapshot.exists) {
-        final data = snapshot.data();
-        _cachedUserData = data;
-        if (data != null) {
-          _persistProfileCache(user.uid, data);
-        }
-      }
-    });
+          if (snapshot.exists) {
+            final data = snapshot.data();
+            _cachedUserData = data;
+            if (data != null) {
+              _persistProfileCache(user.uid, data);
+            }
+          }
+        });
   }
 
   void stopUserDocListener() {
@@ -96,10 +122,7 @@ class UserService {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) {
-        _cachedUserData = {
-          ..._cachedUserData ?? {},
-          ...decoded,
-        };
+        _cachedUserData = {..._cachedUserData ?? {}, ...decoded};
         return decoded;
       }
     } catch (_) {}
@@ -107,7 +130,10 @@ class UserService {
     return null;
   }
 
-  Future<void> _persistProfileCache(String uid, Map<String, dynamic> data) async {
+  Future<void> _persistProfileCache(
+    String uid,
+    Map<String, dynamic> data,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
     final cache = <String, dynamic>{
       'displayName': data['displayName'] ?? '',
@@ -142,10 +168,8 @@ class UserService {
 
       final device = await _getDeviceInfo();
       final deviceId = device['deviceId'] ?? 'unknown';
-      final deviceType = device['deviceType'] ?? 'unknown';
 
       final updates = <String, dynamic>{
-        'devices.$deviceId.deviceType': deviceType,
         'devices.$deviceId.publicKey': publicKey,
         'devices.$deviceId.publicKeyUpdatedAt': FieldValue.serverTimestamp(),
       };
@@ -155,10 +179,10 @@ class UserService {
         updates['publicKeyUpdatedAt'] = FieldValue.serverTimestamp();
       }
 
-      await _firestore.collection('users').doc(user.uid).set(
-        updates,
-        SetOptions(merge: true),
-      );
+      await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .set(updates, SetOptions(merge: true));
 
       print('Public key saved to Firestore');
     } catch (e) {
@@ -183,13 +207,9 @@ class UserService {
     final user = _auth.currentUser;
     if (user == null) return;
 
-    final device = await _getDeviceInfo();
-    final deviceId = device['deviceId']!;
-
     await _firestore.collection('users').doc(user.uid).update({
       'lastSeen': FieldValue.serverTimestamp(),
       'lastHeartbeat': FieldValue.serverTimestamp(),
-      'devices.$deviceId.lastActive': FieldValue.serverTimestamp(),
     });
   }
 
