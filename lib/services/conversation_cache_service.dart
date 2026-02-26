@@ -25,7 +25,7 @@ class ConversationCacheService {
       final result = <Map<String, dynamic>>[];
       for (final item in decoded) {
         if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item as Map);
+        final map = Map<String, dynamic>.from(item);
         final normalized = _fromCacheItem(map);
         if (normalized.isNotEmpty) result.add(normalized);
       }
@@ -65,10 +65,7 @@ class ConversationCacheService {
     final items = <Map<String, dynamic>>[];
     for (final doc in docs) {
       final data = doc.data();
-      items.add({
-        ...data,
-        'id': doc.id,
-      });
+      items.add({...data, 'id': doc.id});
     }
     return items;
   }
@@ -101,10 +98,20 @@ class ConversationCacheService {
         : <String>[];
     if (participantsList.isEmpty) return {};
 
-    final item = <String, dynamic>{
-      'id': id,
-      'participants': participantsList,
-    };
+    final item = <String, dynamic>{'id': id, 'participants': participantsList};
+
+    final type = data['type']?.toString().trim() ?? '';
+    if (type.isNotEmpty) {
+      item['type'] = type;
+    }
+    final title = data['title']?.toString().trim() ?? '';
+    if (title.isNotEmpty) {
+      item['title'] = title;
+    }
+    final avatarUrl = data['avatarUrl']?.toString().trim() ?? '';
+    if (avatarUrl.isNotEmpty) {
+      item['avatarUrl'] = avatarUrl;
+    }
 
     if (data['lastMessage'] != null) {
       item['lastMessage'] = data['lastMessage'];
@@ -136,10 +143,16 @@ class ConversationCacheService {
         : <String>[];
     if (participantsList.isEmpty) return {};
 
-    final item = <String, dynamic>{
-      'id': id,
-      'participants': participantsList,
-    };
+    final item = <String, dynamic>{'id': id, 'participants': participantsList};
+
+    final type = data['type']?.toString().trim() ?? '';
+    if (type.isNotEmpty) item['type'] = type;
+
+    final title = data['title']?.toString().trim() ?? '';
+    if (title.isNotEmpty) item['title'] = title;
+
+    final avatarUrl = data['avatarUrl']?.toString().trim() ?? '';
+    if (avatarUrl.isNotEmpty) item['avatarUrl'] = avatarUrl;
 
     if (data['lastMessage'] != null) item['lastMessage'] = data['lastMessage'];
     if (data['lastSenderId'] != null) {
@@ -149,8 +162,9 @@ class ConversationCacheService {
 
     final lastMessageTime = data['lastMessageTime'];
     if (lastMessageTime is int) {
-      item['lastMessageTime'] =
-          Timestamp.fromMillisecondsSinceEpoch(lastMessageTime);
+      item['lastMessageTime'] = Timestamp.fromMillisecondsSinceEpoch(
+        lastMessageTime,
+      );
     } else if (lastMessageTime is Timestamp) {
       item['lastMessageTime'] = lastMessageTime;
     }

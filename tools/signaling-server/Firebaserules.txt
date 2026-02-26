@@ -15,6 +15,15 @@ service cloud.firestore {
       allow update, delete: if request.auth != null;
     }
 
+    // Public Friend ID registry (helps guarantee uniqueness)
+    match /friendIdRegistry/{friendIdLower} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null &&
+        request.resource.data.uid == request.auth.uid &&
+        !exists(/databases/$(database)/documents/friendIdRegistry/$(friendIdLower));
+      allow update, delete: if false;
+    }
+
     // Contacts collection (friends)
     match /contacts/{userId}/friends/{friendId} {
       allow read: if request.auth != null && request.auth.uid == userId;

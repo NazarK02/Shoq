@@ -66,7 +66,8 @@ class _CallScreenState extends State<CallScreen> {
   final SignalingService _signaling = SignalingService();
   final ChatService _chatService = ChatService();
 
-  // Only initialize video renderers for video calls
+  // Video renderers are initialized lazily. This allows audio calls to
+  // upgrade to video later without rebuilding the entire call flow.
   RTCVideoRenderer? _localRenderer;
   RTCVideoRenderer? _remoteRenderer;
 
@@ -87,6 +88,7 @@ class _CallScreenState extends State<CallScreen> {
   bool _isVideo = false;
   bool _isInitializing = true;
   bool _renderersReady = false;
+  bool _isRenegotiating = false;
 
   int _offerRetryCount = 0;
   static const int _maxOfferRetries = 10;
@@ -107,6 +109,17 @@ class _CallScreenState extends State<CallScreen> {
   String _callEndReason = 'ended';
   bool _callSummarySent = false;
 
+  bool get _isWindowsVideoUnsupported => Platform.isWindows;
+
+  Map<String, dynamic> _videoCallConstraints() {
+    return {
+      'facingMode': 'user',
+      'width': {'ideal': 960},
+      'height': {'ideal': 540},
+      'frameRate': {'ideal': 24, 'max': 30},
+    };
+  }
+
   @override
   void initState() {
     super.initState();
@@ -114,7 +127,8 @@ class _CallScreenState extends State<CallScreen> {
       '🎬 CallScreen initState - isVideo: ${widget.isVideo}, isIncoming: ${widget.isIncoming}',
     );
 
-    _isVideo = widget.isVideo;
+    _isVideo = widget.isVideo && !_isWindowsVideoUnsupported;
+    _isCameraOff = !_isVideo;
     _peerId = widget.peerId;
     _peerClientId = widget.invite?.fromClientId;
     _peerDisplayName = widget.peerName ?? 'User';
@@ -126,16 +140,23 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _initialize() async {
+    if (_isWindowsVideoUnsupported && widget.isVideo && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Video calls are disabled on Windows. Switched to audio.',
+          ),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+
     try {
       print('Initializing renderers - isVideo: $_isVideo');
 
-      // Only initialize renderers for video calls
+      // Keep startup light for audio calls, but eagerly initialize for video.
       if (_isVideo) {
-        _localRenderer = RTCVideoRenderer();
-        _remoteRenderer = RTCVideoRenderer();
-
-        await _localRenderer!.initialize();
-        await _remoteRenderer!.initialize();
+        await _ensureVideoRenderers();
         print('Video renderers initialized');
       } else {
         print('Audio-only call - skipping video renderer initialization');
@@ -159,7 +180,7 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     setState(() {
-      _renderersReady = true;
+      _renderersReady = _isVideo;
       _isInitializing = false;
     });
 
@@ -181,6 +202,23 @@ class _CallScreenState extends State<CallScreen> {
         );
         Navigator.pop(context);
       }
+    }
+  }
+
+  Future<void> _ensureVideoRenderers() async {
+    if (_renderersReady && _localRenderer != null && _remoteRenderer != null) {
+      return;
+    }
+
+    _localRenderer ??= RTCVideoRenderer();
+    _remoteRenderer ??= RTCVideoRenderer();
+
+    await _localRenderer!.initialize();
+    await _remoteRenderer!.initialize();
+
+    _renderersReady = true;
+    if (mounted) {
+      setState(() {});
     }
   }
 
@@ -335,6 +373,43 @@ class _CallScreenState extends State<CallScreen> {
         return;
       }
 
+      if (type == 'call_reoffer') {
+        if (_peerConnection == null) return;
+        final offer = {'sdp': message['sdp'], 'type': message['sdpType']};
+        final remoteHasVideo = message['isVideo'] == true;
+        if (remoteHasVideo && !_isWindowsVideoUnsupported) {
+          _isVideo = true;
+          await _ensureVideoRenderers();
+        }
+        try {
+          print('📥 Applying re-offer');
+          await _setRemoteDescription(offer);
+          final answer = await _peerConnection!.createAnswer(
+            _rtcOfferConstraints(),
+          );
+          await _peerConnection!.setLocalDescription(answer);
+          await _sendSignal(
+            'call_reanswer',
+            data: {'sdp': answer.sdp, 'sdpType': answer.type},
+          );
+        } catch (e) {
+          print('Failed to handle call_reoffer: $e');
+        }
+        return;
+      }
+
+      if (type == 'call_reanswer') {
+        if (_peerConnection == null) return;
+        final answer = {'sdp': message['sdp'], 'type': message['sdpType']};
+        try {
+          print('📥 Applying re-answer');
+          await _setRemoteDescription(answer);
+        } catch (e) {
+          print('Failed to handle call_reanswer: $e');
+        }
+        return;
+      }
+
       if (type == 'call_ice') {
         final candidate = RTCIceCandidate(
           message['candidate'],
@@ -446,6 +521,25 @@ class _CallScreenState extends State<CallScreen> {
     return granted;
   }
 
+  Future<bool> _ensureCameraPermission() async {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return true;
+    }
+
+    final result = await Permission.camera.request();
+    if (result.isGranted) return true;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Camera permission is required to turn camera on'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+    return false;
+  }
+
   Future<void> _createPeerConnection() async {
     print('🔗 Creating RTCPeerConnection');
 
@@ -509,8 +603,16 @@ class _CallScreenState extends State<CallScreen> {
       }
 
       _remoteStream = stream;
-      if (_isVideo && track.kind == 'video' && _remoteRenderer != null) {
-        _remoteRenderer!.srcObject = _remoteStream;
+      if (track.kind == 'video') {
+        if (_isWindowsVideoUnsupported) {
+          if (mounted) setState(() {});
+          return;
+        }
+        _isVideo = true;
+        await _ensureVideoRenderers();
+        if (_remoteRenderer != null) {
+          _remoteRenderer!.srcObject = _remoteStream;
+        }
       }
       if (mounted) setState(() {});
     };
@@ -518,8 +620,20 @@ class _CallScreenState extends State<CallScreen> {
     _peerConnection!.onAddStream = (stream) {
       print('📺 Remote stream added');
       _remoteStream = stream;
-      if (_isVideo && _remoteRenderer != null && _hasRemoteVideo()) {
-        _remoteRenderer!.srcObject = _remoteStream;
+      if (stream.getVideoTracks().isNotEmpty) {
+        if (_isWindowsVideoUnsupported) {
+          if (mounted) setState(() {});
+          return;
+        }
+        _isVideo = true;
+        unawaited(
+          _ensureVideoRenderers().then((_) {
+            if (_remoteRenderer != null && _hasRemoteVideo()) {
+              _remoteRenderer!.srcObject = _remoteStream;
+            }
+            if (mounted) setState(() {});
+          }),
+        );
       }
       if (mounted) setState(() {});
     };
@@ -560,13 +674,7 @@ class _CallScreenState extends State<CallScreen> {
         'noiseSuppression': true,
         'autoGainControl': true,
       },
-      'video': _isVideo
-          ? {
-              'facingMode': 'user',
-              'width': {'ideal': 1280},
-              'height': {'ideal': 720},
-            }
-          : false,
+      'video': _isVideo ? _videoCallConstraints() : false,
     };
 
     try {
@@ -604,8 +712,14 @@ class _CallScreenState extends State<CallScreen> {
       rethrow;
     }
 
-    if (_isVideo && _localRenderer != null) {
-      _localRenderer!.srcObject = _localStream;
+    final hasLocalVideo = _localStream!.getVideoTracks().isNotEmpty;
+    if (hasLocalVideo) {
+      _isVideo = true;
+      _isCameraOff = _localStream!.getVideoTracks().every((track) {
+        return !track.enabled;
+      });
+      await _ensureVideoRenderers();
+      _localRenderer?.srcObject = _localStream;
     }
 
     for (final track in _localStream!.getTracks()) {
@@ -642,7 +756,8 @@ class _CallScreenState extends State<CallScreen> {
     return {
       'mandatory': {
         'OfferToReceiveAudio': true,
-        'OfferToReceiveVideo': _isVideo,
+        // Keep receiving capability enabled so audio calls can upgrade to video.
+        'OfferToReceiveVideo': true,
       },
       'optional': [],
     };
@@ -756,6 +871,26 @@ class _CallScreenState extends State<CallScreen> {
     });
   }
 
+  Future<void> _renegotiateCall() async {
+    if (_isRenegotiating) return;
+    if (_phase != _CallPhase.inCall) return;
+    if (_peerConnection == null) return;
+
+    _isRenegotiating = true;
+    try {
+      final offer = await _peerConnection!.createOffer(_rtcOfferConstraints());
+      await _peerConnection!.setLocalDescription(offer);
+      await _sendSignal(
+        'call_reoffer',
+        data: {'sdp': offer.sdp, 'sdpType': offer.type, 'isVideo': _isVideo},
+      );
+    } catch (e) {
+      print('Failed to renegotiate call: $e');
+    } finally {
+      _isRenegotiating = false;
+    }
+  }
+
   void _startOfferRetry() {
     _offerRetry?.cancel();
     _offerRetryCount = 0;
@@ -834,7 +969,7 @@ class _CallScreenState extends State<CallScreen> {
     final when = DateFormat('MMM d, h:mm a').format(startedAt);
 
     if (wasAccepted) {
-      return '$callType completed - Duration ${_formatDuration(duration)} - $when';
+      return '$callType ${_formatDuration(duration)} - $when';
     }
 
     switch (_callEndReason) {
@@ -843,7 +978,7 @@ class _CallScreenState extends State<CallScreen> {
       case 'missed':
         return '$callType missed - $when';
       case 'failed':
-        return '$callType failed to connect - $when';
+        return '$callType failed - $when';
       default:
         return '$callType ended - $when';
     }
@@ -866,6 +1001,7 @@ class _CallScreenState extends State<CallScreen> {
       final duration = wasAccepted
           ? endedAt.difference(_callConnectedAt!)
           : Duration.zero;
+      final result = wasAccepted ? 'completed' : _callEndReason;
 
       final summaryText = _buildCallSummaryText(
         startedAt: startedAt,
@@ -887,6 +1023,12 @@ class _CallScreenState extends State<CallScreen> {
         messageText: summaryText,
         recipientId: peerId,
         messageId: summaryMessageId,
+        callSummary: {
+          'kind': _isVideo ? 'video' : 'audio',
+          'result': result,
+          'durationSeconds': duration.inSeconds,
+          'startedAtMs': startedAt.millisecondsSinceEpoch,
+        },
       );
     } catch (e) {
       print('Failed to send call summary message: $e');
@@ -911,18 +1053,22 @@ class _CallScreenState extends State<CallScreen> {
     if (mounted) setState(() {});
   }
 
-  void _toggleCamera() {
-    final videoTracks = _localStream?.getVideoTracks() ?? [];
-    if (videoTracks.isEmpty) {
+  Future<void> _toggleCamera() async {
+    if (_isWindowsVideoUnsupported) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'No video track in this call. Start a video call to use camera controls.',
-            ),
+            content: Text('Camera/video is disabled on Windows'),
+            duration: Duration(seconds: 2),
           ),
         );
       }
+      return;
+    }
+
+    final videoTracks = _localStream?.getVideoTracks() ?? [];
+    if (videoTracks.isEmpty) {
+      await _startCameraDuringAudioCall();
       return;
     }
 
@@ -930,19 +1076,85 @@ class _CallScreenState extends State<CallScreen> {
     for (final track in videoTracks) {
       track.enabled = !_isCameraOff;
     }
+    if (!_isCameraOff) {
+      _isVideo = true;
+      await _ensureVideoRenderers();
+      _localRenderer?.srcObject = _localStream;
+    }
     print('Camera off: $_isCameraOff');
     if (mounted) setState(() {});
   }
 
+  Future<void> _startCameraDuringAudioCall() async {
+    if (_isWindowsVideoUnsupported) {
+      return;
+    }
+
+    if (_localStream == null || _peerConnection == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Call is not ready yet')));
+      }
+      return;
+    }
+
+    final cameraAllowed = await _ensureCameraPermission();
+    if (!cameraAllowed) return;
+
+    try {
+      final cameraStream = await navigator.mediaDevices.getUserMedia({
+        'audio': false,
+        'video': _videoCallConstraints(),
+      });
+      final tracks = cameraStream.getVideoTracks();
+      if (tracks.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No camera track available')),
+          );
+        }
+        return;
+      }
+
+      final videoTrack = tracks.first;
+      _localStream!.addTrack(videoTrack);
+      await _peerConnection!.addTrack(videoTrack, _localStream!);
+
+      _isVideo = true;
+      _isCameraOff = false;
+      await _ensureVideoRenderers();
+      _localRenderer?.srcObject = _localStream;
+
+      await _renegotiateCall();
+
+      if (Platform.isAndroid) {
+        await Helper.setSpeakerphoneOn(true);
+        _isSpeakerOn = true;
+      }
+
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not enable camera: $e')));
+      }
+      print('Failed to start camera during audio call: $e');
+    }
+  }
+
   Future<void> _switchCamera() async {
+    if (_isWindowsVideoUnsupported) {
+      return;
+    }
+
     final tracks = _localStream?.getVideoTracks();
     if (tracks == null || tracks.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'No camera to switch in this call. Start a video call first.',
-            ),
+            content: Text('Turn camera on first to switch camera'),
           ),
         );
       }
@@ -973,7 +1185,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   bool _hasRemoteVideo() {
-    if (!_isVideo || _remoteStream == null) return false;
+    if (_remoteStream == null) return false;
     final tracks = _remoteStream!.getVideoTracks();
     return tracks.isNotEmpty && tracks.any((t) => t.enabled);
   }
@@ -1014,18 +1226,17 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Widget _buildRemoteView() {
-    // For video calls with active remote stream
-    if (_isVideo &&
-        _remoteRenderer != null &&
+    // Show remote video whenever a remote video track is active.
+    if (_remoteRenderer != null &&
         _remoteRenderer!.srcObject != null &&
         _hasRemoteVideo()) {
       return RTCVideoView(
         _remoteRenderer!,
-        objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+        objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
       );
     }
 
-    // For audio calls or video calls without remote stream yet
+    // Fallback avatar/background for audio calls or before remote video starts.
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -1060,7 +1271,9 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Widget _buildLocalPreview() {
-    if (!_isVideo ||
+    final hasLocalVideo = (_localStream?.getVideoTracks().isNotEmpty ?? false);
+    if (!hasLocalVideo ||
+        _isCameraOff ||
         _localRenderer == null ||
         _localRenderer!.srcObject == null) {
       return const Positioned.fill(child: SizedBox.shrink());
@@ -1081,7 +1294,7 @@ class _CallScreenState extends State<CallScreen> {
           child: RTCVideoView(
             _localRenderer!,
             mirror: true,
-            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
           ),
         ),
       ),
@@ -1096,7 +1309,7 @@ class _CallScreenState extends State<CallScreen> {
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
-            colors: [Colors.black.withOpacity(0.7), Colors.transparent],
+            colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
           ),
         ),
         child: Row(
@@ -1119,13 +1332,17 @@ class _CallScreenState extends State<CallScreen> {
       );
     }
 
+    final hasLocalVideoTrack =
+        _localStream?.getVideoTracks().isNotEmpty ?? false;
+    final canUseVideoControls = !_isWindowsVideoUnsupported;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
-          colors: [Colors.black.withOpacity(0.7), Colors.transparent],
+          colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
         ),
       ),
       child: Row(
@@ -1136,16 +1353,18 @@ class _CallScreenState extends State<CallScreen> {
             color: _isMuted ? Colors.red : Colors.white24,
             onPressed: _toggleMute,
           ),
-          _buildCircleButton(
-            icon: _isCameraOff ? Icons.videocam_off : Icons.videocam,
-            color: _isCameraOff ? Colors.red : Colors.white24,
-            onPressed: _toggleCamera,
-          ),
-          _buildCircleButton(
-            icon: Icons.cameraswitch,
-            color: Colors.white24,
-            onPressed: _switchCamera,
-          ),
+          if (canUseVideoControls)
+            _buildCircleButton(
+              icon: _isCameraOff ? Icons.videocam_off : Icons.videocam,
+              color: _isCameraOff ? Colors.red : Colors.white24,
+              onPressed: _toggleCamera,
+            ),
+          if (canUseVideoControls)
+            _buildCircleButton(
+              icon: Icons.cameraswitch,
+              color: hasLocalVideoTrack ? Colors.white24 : Colors.white10,
+              onPressed: _switchCamera,
+            ),
           _buildCircleButton(
             icon: _isSpeakerOn ? Icons.volume_up : Icons.volume_down,
             color: Colors.white24,

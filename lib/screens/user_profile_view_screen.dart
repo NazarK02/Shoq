@@ -373,6 +373,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
     final photoUrl = _pickPhotoUrl();
     final displayName = _userData?['displayName'] ?? 'User';
     final email = _userData?['email'] ?? '';
+    final friendId = _userData?['friendId']?.toString().trim() ?? '';
     final bio = _getBio();
     final location = _userData?['location'] ?? '';
     final joinDate = _userData?['createdAt'] as Timestamp?;
@@ -569,6 +570,14 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
                   title: const Text('Email'),
                   subtitle: Text(email),
                 ),
+                if (friendId.isNotEmpty) ...[
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.alternate_email),
+                    title: const Text('Friend ID'),
+                    subtitle: Text('@$friendId'),
+                  ),
+                ],
                 if (location.isNotEmpty) ...[
                   const Divider(height: 1),
                   ListTile(

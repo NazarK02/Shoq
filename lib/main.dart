@@ -40,8 +40,10 @@ Future<void> main() async {
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
 
-  /// FCM background messages
-  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  /// FCM background messages (mobile only)
+  if (!Platform.isWindows) {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  }
 
   /// Initialize theme before UI to avoid flicker
   final themeService = ThemeService();
@@ -52,13 +54,15 @@ Future<void> main() async {
   );
 
   // Defer non-critical init to keep startup fast
-  Future.microtask(() async {
-    try {
-      await NotificationService().initialize();
-    } catch (e) {
-      debugPrint('Notification init failed: $e');
-    }
-  });
+  if (!Platform.isWindows) {
+    Future.microtask(() async {
+      try {
+        await NotificationService().initialize();
+      } catch (e) {
+        debugPrint('Notification init failed: $e');
+      }
+    });
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -200,7 +204,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       _callRouteOpen = true;
 
       final callerName = message['callerName']?.toString() ?? 'User';
-      final isVideo = message['isVideo'] == true;
+      final isVideoRequested = message['isVideo'] == true;
+      final isVideo = isVideoRequested && !Platform.isWindows;
 
       if (_appLifecycleState != AppLifecycleState.resumed ||
           Platform.isWindows) {

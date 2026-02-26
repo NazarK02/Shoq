@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,10 +9,13 @@ import 'crypto_service.dart';
 import 'device_info_service.dart';
 
 class UserService {
+  static const String _friendIdRegistryCollection = 'friendIdRegistry';
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final CryptoService _crypto = CryptoService();
   final DeviceInfoService _deviceInfo = DeviceInfoService();
+  final Random _random = Random();
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
   Map<String, dynamic>? _cachedUserData;
   String? _lastProfileCacheJson;
@@ -25,28 +29,122 @@ class UserService {
   Future<void> saveUserToFirestore({required User user}) async {
     try {
       final userRef = _firestore.collection('users').doc(user.uid);
+      final existingDoc = await userRef.get();
+      final existingData = existingDoc.data();
+      final existingFriendId =
+          existingData?['friendId']?.toString().trim() ?? '';
+      String friendId = existingFriendId;
+      if (friendId.isEmpty) {
+        try {
+          friendId = await _generateAndReserveFriendId(
+            uid: user.uid,
+            preferredSeed: user.displayName ?? user.email ?? 'user',
+          );
+        } catch (_) {
+          friendId = _fallbackFriendIdForUid(user.uid);
+        }
+      }
 
-      print('💾 Saving user document for: ${user.uid}');
+      print('Saving user document for: ${user.uid}');
 
       // Create/update user document WITHOUT E2EE (that happens separately)
       await userRef.set({
         'uid': user.uid,
         'email': user.email ?? '',
+        'emailLower': (user.email ?? '').trim().toLowerCase(),
         'displayName': user.displayName ?? '',
         'photoUrl': user.photoURL ?? '',
         'status': 'online',
         'lastSeen': FieldValue.serverTimestamp(),
         'lastHeartbeat': FieldValue.serverTimestamp(),
-        'createdAt': FieldValue.serverTimestamp(),
+        'friendId': friendId,
+        'friendIdLower': friendId.toLowerCase(),
+        if (existingFriendId.isEmpty)
+          'friendIdCreatedAt': FieldValue.serverTimestamp(),
+        if (!existingDoc.exists) 'createdAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       await _cleanupLegacyDeviceMetadata(user.uid);
 
-      print('✅ User document saved successfully');
+      print('User document saved successfully');
     } catch (e) {
-      print('❌ Error saving user: $e');
+      print('Error saving user: $e');
       rethrow;
     }
+  }
+
+  Future<String> _generateAndReserveFriendId({
+    required String uid,
+    required String preferredSeed,
+  }) async {
+    final base = _sanitizeFriendIdBase(preferredSeed);
+
+    for (var attempt = 0; attempt < 40; attempt++) {
+      final suffixLength = attempt < 24 ? 4 : 5;
+      final candidate = '$base${_randomAlphaNum(suffixLength)}';
+      final candidateLower = candidate.toLowerCase();
+      final claimRef = _firestore
+          .collection(_friendIdRegistryCollection)
+          .doc(candidateLower);
+
+      try {
+        await _firestore.runTransaction((tx) async {
+          final claimDoc = await tx.get(claimRef);
+          if (claimDoc.exists) {
+            final ownerUid = claimDoc.data()?['uid']?.toString() ?? '';
+            if (ownerUid == uid) return;
+            throw _FriendIdTakenException();
+          }
+
+          tx.set(claimRef, {
+            'uid': uid,
+            'friendId': candidate,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        });
+
+        return candidate;
+      } on _FriendIdTakenException {
+        continue;
+      }
+    }
+
+    throw Exception('Failed to generate a unique friend ID');
+  }
+
+  String _sanitizeFriendIdBase(String raw) {
+    final normalized = raw.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    var base = normalized;
+    if (base.isEmpty) {
+      base = 'user';
+    }
+    if (base.length > 16) {
+      base = base.substring(0, 16);
+    }
+    if (RegExp(r'^[0-9]').hasMatch(base)) {
+      base = 'u$base';
+      if (base.length > 16) {
+        base = base.substring(0, 16);
+      }
+    }
+    return base;
+  }
+
+  String _randomAlphaNum(int length) {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    final buffer = StringBuffer();
+    for (var i = 0; i < length; i++) {
+      buffer.write(chars[_random.nextInt(chars.length)]);
+    }
+    return buffer.toString();
+  }
+
+  String _fallbackFriendIdForUid(String uid) {
+    final sanitized = uid.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    if (sanitized.isEmpty) {
+      return 'user${_randomAlphaNum(6)}';
+    }
+    return 'u$sanitized';
   }
 
   Future<void> _cleanupLegacyDeviceMetadata(String uid) async {
@@ -138,6 +236,7 @@ class UserService {
     final cache = <String, dynamic>{
       'displayName': data['displayName'] ?? '',
       'photoUrl': data['photoUrl'] ?? '',
+      'friendId': data['friendId'] ?? '',
       'bio': data['bio'] ?? '',
       'website': data['website'] ?? '',
       'location': data['location'] ?? '',
@@ -277,3 +376,5 @@ class UserService {
     await _auth.signOut();
   }
 }
+
+class _FriendIdTakenException implements Exception {}

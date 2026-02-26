@@ -17,7 +17,8 @@ class UserCacheService extends ChangeNotifier {
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Map<String, Map<String, dynamic>> _cache = {};
-  final Map<String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>> _subs = {};
+  final Map<String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
+  _subs = {};
   final Map<String, Future<void>> _inflight = {};
 
   Map<String, dynamic>? getCachedUser(String uid) => _cache[uid];
@@ -33,10 +34,7 @@ class UserCacheService extends ChangeNotifier {
     if (uid.trim().isEmpty) return;
     final normalized = _normalizeUserData(partial);
     if (normalized.isEmpty) return;
-    _cache[uid] = {
-      ..._cache[uid] ?? {},
-      ...normalized,
-    };
+    _cache[uid] = {..._cache[uid] ?? {}, ...normalized};
     _persistUser(uid, _cache[uid]!);
     notifyListeners();
   }
@@ -97,11 +95,9 @@ class UserCacheService extends ChangeNotifier {
 
   void _ensureListener(String uid) {
     if (_subs.containsKey(uid)) return;
-    _subs[uid] = _firestore
-        .collection('users')
-        .doc(uid)
-        .snapshots()
-        .listen((snapshot) {
+    _subs[uid] = _firestore.collection('users').doc(uid).snapshots().listen((
+      snapshot,
+    ) {
       final data = snapshot.data();
       if (data == null) return;
       _updateFromFirestore(uid, data, notify: true);
@@ -115,10 +111,7 @@ class UserCacheService extends ChangeNotifier {
   }) {
     final normalized = _normalizeUserData(data);
     if (normalized.isEmpty) return;
-    _cache[uid] = {
-      ..._cache[uid] ?? {},
-      ...normalized,
-    };
+    _cache[uid] = {..._cache[uid] ?? {}, ...normalized};
     _persistUser(uid, _cache[uid]!);
     if (notify) notifyListeners();
   }
@@ -132,6 +125,8 @@ class UserCacheService extends ChangeNotifier {
     for (final key in [
       'displayName',
       'email',
+      'friendId',
+      'friendIdLower',
       'bio',
       'website',
       'location',
@@ -168,7 +163,9 @@ class UserCacheService extends ChangeNotifier {
               entry.key == 'lastSeen' ||
               entry.key == 'lastHeartbeat') {
             if (entry.value is int) {
-              data[entry.key] = Timestamp.fromMillisecondsSinceEpoch(entry.value as int);
+              data[entry.key] = Timestamp.fromMillisecondsSinceEpoch(
+                entry.value as int,
+              );
             }
           } else {
             data[entry.key] = entry.value;

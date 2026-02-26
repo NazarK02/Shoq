@@ -7,9 +7,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:camera/camera.dart';
 import 'package:mime/mime.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
+import 'package:video_player/video_player.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import '../services/chat_service_e2ee.dart';
@@ -34,14 +40,23 @@ class ImprovedChatScreen extends StatefulWidget {
   State<ImprovedChatScreen> createState() => _ImprovedChatScreenState();
 }
 
+enum _RecorderMode { audio, video }
+
 class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     with WidgetsBindingObserver {
+  static const ResolutionPreset _videoMessageResolution =
+      ResolutionPreset.medium;
+  static const int _videoMessageFps = 24;
+  static const int _videoMessageBitrate = 1200000;
+  static const int _videoMessageAudioBitrate = 64000;
+
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final ChatService _chatService = ChatService();
   final NotificationService _notificationService = NotificationService();
   final UserCacheService _userCache = UserCacheService();
   final FileDownloadService _downloadService = FileDownloadService();
+  final AudioRecorder _audioRecorder = AudioRecorder();
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
@@ -54,6 +69,21 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   String? _initError;
   bool _sendPulse = false;
   bool _showScrollToBottomButton = false;
+  bool _isRecordingAudio = false;
+  bool _isAudioRecordingLocked = false;
+  int _audioRecordingSeconds = 0;
+  Timer? _audioRecordingTimer;
+  double? _recorderPressStartDy;
+  CameraController? _videoRecorderController;
+  List<CameraDescription> _videoCameras = const [];
+  int _videoCameraIndex = 0;
+  bool _showVideoRecorderOverlay = false;
+  bool _isVideoRecorderInitializing = false;
+  bool _isRecordingVideo = false;
+  int _videoRecordingSeconds = 0;
+  Timer? _videoRecordingTimer;
+  String? _videoRecorderError;
+  _RecorderMode _recorderMode = _RecorderMode.audio;
   _ReplyDraft? _replyDraft;
   final List<_PendingTextMessage> _pendingTextMessages = [];
   final List<_PendingUpload> _pendingUploads = [];
@@ -149,6 +179,16 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     _notificationService.setActiveChat(null);
     _downloadService.removeListener(_onDownloadProgressUpdate);
     _scrollController.removeListener(_handleScrollChanged);
+    _audioRecordingTimer?.cancel();
+    _videoRecordingTimer?.cancel();
+    if (_isRecordingAudio) {
+      unawaited(_audioRecorder.stop());
+    }
+    if (_isRecordingVideo) {
+      unawaited(_videoRecorderController?.stopVideoRecording());
+    }
+    unawaited(_audioRecorder.dispose());
+    unawaited(_videoRecorderController?.dispose());
     WidgetsBinding.instance.removeObserver(this);
     _messageController.dispose();
     _messageFocusNode.dispose();
@@ -361,6 +401,10 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                     ),
                   ),
                 ),
+                if (_showVideoRecorderOverlay ||
+                    _isVideoRecorderInitializing ||
+                    _isRecordingVideo)
+                  _buildVideoRecorderOverlay(),
               ],
             ),
           ),
@@ -461,6 +505,16 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
           icon: const Icon(Icons.videocam),
           tooltip: 'Video call',
           onPressed: () {
+            if (Platform.isWindows) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Video calls are disabled on Windows. Starting audio call.',
+                  ),
+                  duration: Duration(seconds: 3),
+                ),
+              );
+            }
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -468,7 +522,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                   peerId: widget.recipientId,
                   peerName: displayName,
                   peerPhotoUrl: photoUrl,
-                  isVideo: true,
+                  isVideo: !Platform.isWindows,
                 ),
               ),
             );
@@ -551,8 +605,649 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     );
   }
 
+  String _formatRecordingDuration(int totalSeconds) {
+    final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  Future<void> _startAudioRecording() async {
+    if (_conversationId == null || _isRecordingAudio || _isRecordingVideo) {
+      return;
+    }
+    final hasPermission = await _audioRecorder.hasPermission();
+    if (!hasPermission) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Microphone permission is required')),
+        );
+      }
+      return;
+    }
+
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final path = p.join(
+        tempDir.path,
+        'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
+      );
+
+      await _audioRecorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 96000,
+          sampleRate: 44100,
+        ),
+        path: path,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _isRecordingAudio = true;
+        _isAudioRecordingLocked = false;
+        _audioRecordingSeconds = 0;
+      });
+
+      _audioRecordingTimer?.cancel();
+      _audioRecordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted || !_isRecordingAudio) return;
+        setState(() {
+          _audioRecordingSeconds++;
+        });
+      });
+
+      HapticFeedback.lightImpact();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start recording: $e')),
+        );
+      }
+    }
+  }
+
+  void _lockAudioRecording() {
+    if (!_isRecordingAudio || _isAudioRecordingLocked) return;
+    setState(() {
+      _isAudioRecordingLocked = true;
+    });
+    HapticFeedback.mediumImpact();
+  }
+
+  Future<void> _stopAudioRecording({required bool send}) async {
+    if (!_isRecordingAudio) return;
+
+    _audioRecordingTimer?.cancel();
+    final recordedSeconds = _audioRecordingSeconds;
+    String? path;
+    try {
+      path = await _audioRecorder.stop();
+    } catch (_) {
+      path = null;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isRecordingAudio = false;
+      _isAudioRecordingLocked = false;
+      _audioRecordingSeconds = 0;
+      _recorderPressStartDy = null;
+    });
+
+    if (!send || path == null || path.trim().isEmpty) return;
+
+    final file = File(path);
+    if (!await file.exists()) return;
+    if (recordedSeconds < 1) {
+      try {
+        await file.delete();
+      } catch (_) {}
+      return;
+    }
+
+    final stamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+    await _sendLocalFile(
+      filePath: path,
+      fileName: 'voice_$stamp.m4a',
+      mimeType: 'audio/aac',
+      notificationText: 'Sent a voice message',
+    );
+  }
+
+  Future<void> _ensureVideoRecorderReady() async {
+    if (_videoRecorderController?.value.isInitialized == true) {
+      return;
+    }
+    if (_isVideoRecorderInitializing) return;
+
+    setState(() {
+      _isVideoRecorderInitializing = true;
+      _showVideoRecorderOverlay = true;
+      _videoRecorderError = null;
+    });
+
+    try {
+      _videoCameras = await availableCameras();
+      if (_videoCameras.isEmpty) {
+        throw Exception('No camera available');
+      }
+
+      if (_videoCameraIndex >= _videoCameras.length) {
+        _videoCameraIndex = 0;
+      }
+
+      final nextController = CameraController(
+        _videoCameras[_videoCameraIndex],
+        _videoMessageResolution,
+        enableAudio: true,
+        fps: _videoMessageFps,
+        videoBitrate: _videoMessageBitrate,
+        audioBitrate: _videoMessageAudioBitrate,
+      );
+      await nextController.initialize();
+
+      final previous = _videoRecorderController;
+      if (!mounted) {
+        await nextController.dispose();
+        return;
+      }
+
+      setState(() {
+        _videoRecorderController = nextController;
+        _isVideoRecorderInitializing = false;
+        _videoRecorderError = null;
+      });
+      await previous?.dispose();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isVideoRecorderInitializing = false;
+        _videoRecorderError = 'Could not open camera: $e';
+      });
+    }
+  }
+
+  Future<void> _switchVideoRecorderCamera() async {
+    if (_isVideoRecorderInitializing || _isRecordingVideo) return;
+    if (_videoCameras.length < 2) return;
+
+    final nextIndex = (_videoCameraIndex + 1) % _videoCameras.length;
+    setState(() {
+      _isVideoRecorderInitializing = true;
+      _videoRecorderError = null;
+    });
+
+    try {
+      final nextController = CameraController(
+        _videoCameras[nextIndex],
+        _videoMessageResolution,
+        enableAudio: true,
+        fps: _videoMessageFps,
+        videoBitrate: _videoMessageBitrate,
+        audioBitrate: _videoMessageAudioBitrate,
+      );
+      await nextController.initialize();
+
+      final previous = _videoRecorderController;
+      if (!mounted) {
+        await nextController.dispose();
+        return;
+      }
+
+      setState(() {
+        _videoRecorderController = nextController;
+        _videoCameraIndex = nextIndex;
+        _isVideoRecorderInitializing = false;
+      });
+      await previous?.dispose();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isVideoRecorderInitializing = false;
+        _videoRecorderError = 'Could not switch camera: $e';
+      });
+    }
+  }
+
+  Future<void> _startInlineVideoRecording() async {
+    if (_conversationId == null || _isRecordingVideo || _isRecordingAudio) {
+      return;
+    }
+
+    await _ensureVideoRecorderReady();
+    final controller = _videoRecorderController;
+    if (controller == null || !controller.value.isInitialized) return;
+
+    try {
+      await controller.prepareForVideoRecording();
+      await controller.startVideoRecording();
+
+      if (!mounted) return;
+      setState(() {
+        _isRecordingVideo = true;
+        _videoRecordingSeconds = 0;
+        _showVideoRecorderOverlay = true;
+        _videoRecorderError = null;
+      });
+
+      _videoRecordingTimer?.cancel();
+      _videoRecordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted || !_isRecordingVideo) return;
+        setState(() {
+          _videoRecordingSeconds++;
+        });
+      });
+
+      HapticFeedback.lightImpact();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _videoRecorderError = 'Could not start video recording: $e';
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not start recording: $e')));
+    }
+  }
+
+  Future<void> _stopInlineVideoRecording({required bool send}) async {
+    if (!_isRecordingVideo) {
+      if (!send && mounted) {
+        setState(() {
+          _showVideoRecorderOverlay = false;
+        });
+      }
+      return;
+    }
+
+    _videoRecordingTimer?.cancel();
+    final recordedSeconds = _videoRecordingSeconds;
+    XFile? file;
+    try {
+      file = await _videoRecorderController?.stopVideoRecording();
+    } catch (_) {
+      file = null;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isRecordingVideo = false;
+      _videoRecordingSeconds = 0;
+      _showVideoRecorderOverlay = false;
+    });
+
+    if (file == null || file.path.trim().isEmpty) return;
+
+    final recordedFile = File(file.path);
+    if (!send || recordedSeconds < 1) {
+      try {
+        if (await recordedFile.exists()) {
+          await recordedFile.delete();
+        }
+      } catch (_) {}
+      return;
+    }
+
+    if (!await recordedFile.exists()) return;
+
+    final stamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+    await _sendLocalFile(
+      filePath: file.path,
+      fileName: 'video_$stamp.mp4',
+      mimeType: lookupMimeType(file.path) ?? 'video/mp4',
+      notificationText: 'Sent a video',
+    );
+  }
+
+  Future<void> _recordVideoAndSend() async {
+    await _startInlineVideoRecording();
+  }
+
+  Future<void> _closeVideoRecorderOverlay() async {
+    if (_isRecordingVideo) {
+      await _stopInlineVideoRecording(send: false);
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _showVideoRecorderOverlay = false;
+      _videoRecorderError = null;
+    });
+  }
+
+  Widget _buildVideoRecorderOverlay() {
+    final controller = _videoRecorderController;
+    final canSwitch = _videoCameras.length > 1 && !_isRecordingVideo;
+
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.92),
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => unawaited(_closeVideoRecorderOverlay()),
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      tooltip: 'Close',
+                    ),
+                    if (_isRecordingVideo)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          'REC ${_formatRecordingDuration(_videoRecordingSeconds)}',
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: canSwitch
+                          ? () => unawaited(_switchVideoRecorderCamera())
+                          : null,
+                      icon: const Icon(
+                        Icons.cameraswitch_outlined,
+                        color: Colors.white,
+                      ),
+                      tooltip: 'Switch camera',
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      width: double.infinity,
+                      color: Colors.black,
+                      child: _isVideoRecorderInitializing
+                          ? const Center(child: CircularProgressIndicator())
+                          : (_videoRecorderError != null
+                                ? Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 18,
+                                      ),
+                                      child: Text(
+                                        _videoRecorderError!,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                : (controller == null ||
+                                          !controller.value.isInitialized
+                                      ? const Center(
+                                          child: Text(
+                                            'Camera not ready',
+                                            style: TextStyle(
+                                              color: Colors.white70,
+                                            ),
+                                          ),
+                                        )
+                                      : FittedBox(
+                                          fit: BoxFit.cover,
+                                          child: SizedBox(
+                                            width:
+                                                controller
+                                                    .value
+                                                    .previewSize
+                                                    ?.height ??
+                                                1080,
+                                            height:
+                                                controller
+                                                    .value
+                                                    .previewSize
+                                                    ?.width ??
+                                                1920,
+                                            child: CameraPreview(controller),
+                                          ),
+                                        ))),
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: Row(
+                  children: [
+                    if (_isRecordingVideo)
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () =>
+                              unawaited(_stopInlineVideoRecording(send: false)),
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('Discard'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white70,
+                            side: const BorderSide(color: Colors.white30),
+                          ),
+                        ),
+                      ),
+                    if (_isRecordingVideo) const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _isRecordingVideo
+                            ? () => unawaited(
+                                _stopInlineVideoRecording(send: true),
+                              )
+                            : () => unawaited(_startInlineVideoRecording()),
+                        icon: Icon(
+                          _isRecordingVideo
+                              ? Icons.send_rounded
+                              : Icons.fiber_manual_record,
+                        ),
+                        label: Text(_isRecordingVideo ? 'Send' : 'Record'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _isRecordingVideo
+                              ? Theme.of(context).colorScheme.primary
+                              : Colors.redAccent,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _handleRecorderTap() {
+    if (_recorderMode == _RecorderMode.audio &&
+        _isRecordingAudio &&
+        _isAudioRecordingLocked) {
+      unawaited(_stopAudioRecording(send: true));
+      return;
+    }
+
+    if (_recorderMode == _RecorderMode.video && _isRecordingVideo) {
+      unawaited(_stopInlineVideoRecording(send: true));
+      return;
+    }
+
+    _toggleRecorderMode();
+  }
+
+  void _handleRecorderLongPressStart(LongPressStartDetails details) {
+    _recorderPressStartDy = details.globalPosition.dy;
+    if (_recorderMode == _RecorderMode.audio) {
+      unawaited(_startAudioRecording());
+      return;
+    }
+    if (_recorderMode == _RecorderMode.video) {
+      unawaited(_startInlineVideoRecording());
+    }
+  }
+
+  void _handleRecorderLongPressMove(LongPressMoveUpdateDetails details) {
+    if (_recorderMode != _RecorderMode.audio ||
+        !_isRecordingAudio ||
+        _isAudioRecordingLocked) {
+      return;
+    }
+    final startDy = _recorderPressStartDy;
+    if (startDy == null) return;
+    final dragDistance = startDy - details.globalPosition.dy;
+    if (dragDistance >= 56) {
+      _lockAudioRecording();
+    }
+  }
+
+  void _handleRecorderLongPressEnd(LongPressEndDetails details) {
+    _recorderPressStartDy = null;
+    if (_recorderMode == _RecorderMode.audio && !_isAudioRecordingLocked) {
+      unawaited(_stopAudioRecording(send: true));
+    }
+  }
+
+  void _handleRecorderLongPressCancel() {
+    _recorderPressStartDy = null;
+    if (_recorderMode == _RecorderMode.audio && !_isAudioRecordingLocked) {
+      unawaited(_stopAudioRecording(send: false));
+    }
+  }
+
+  void _toggleRecorderMode() {
+    if (_isRecordingAudio ||
+        _isRecordingVideo ||
+        _isVideoRecorderInitializing) {
+      return;
+    }
+    setState(() {
+      _recorderMode = _recorderMode == _RecorderMode.audio
+          ? _RecorderMode.video
+          : _RecorderMode.audio;
+    });
+    HapticFeedback.selectionClick();
+  }
+
+  Future<void> _sendLocalFile({
+    required String filePath,
+    required String fileName,
+    String? mimeType,
+    String notificationText = 'Sent a file',
+  }) async {
+    if (_conversationId == null) return;
+
+    String? pendingId;
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not access selected file')),
+          );
+        }
+        return;
+      }
+
+      final detectedMime = (mimeType != null && mimeType.trim().isNotEmpty)
+          ? mimeType.trim()
+          : (lookupMimeType(filePath) ?? 'application/octet-stream');
+      final fileSize = await file.length();
+
+      final upload = _chatService.startFileUpload(
+        conversationId: _conversationId!,
+        filePath: filePath,
+        fileName: fileName,
+        mimeType: detectedMime,
+      );
+      pendingId = upload.messageId;
+
+      final pending = _PendingUpload(
+        id: upload.messageId,
+        fileName: fileName,
+        fileSize: fileSize,
+        mimeType: detectedMime,
+        progress: 0,
+      );
+      pending.task = upload.task;
+
+      if (mounted) {
+        setState(() {
+          _pendingUploads.add(pending);
+        });
+      }
+      _scrollToBottom();
+
+      pending.sub = upload.task.snapshotEvents.listen((snapshot) {
+        final total = snapshot.totalBytes;
+        final transferred = snapshot.bytesTransferred;
+        if (total > 0 && mounted) {
+          setState(() {
+            pending.progress = (transferred / total).clamp(0, 1);
+          });
+        }
+      });
+
+      final snapshot = await upload.task;
+      final downloadUrl = await snapshot.ref.getDownloadURL();
+
+      if (!_pendingUploads.any((u) => u.id == upload.messageId)) {
+        return;
+      }
+
+      await _chatService.commitFileMessage(
+        conversationId: _conversationId!,
+        messageId: upload.messageId,
+        storagePath: upload.storagePath,
+        downloadUrl: downloadUrl,
+        fileName: fileName,
+        fileSize: fileSize,
+        mimeType: upload.contentType,
+      );
+
+      try {
+        final currentUser = _auth.currentUser;
+        final senderName = currentUser?.displayName ?? 'Someone';
+        await _notificationService.sendMessageNotification(
+          recipientId: widget.recipientId,
+          senderName: senderName,
+          messageText: notificationText,
+          conversationId: _conversationId,
+        );
+      } catch (notificationError) {
+        print('Error sending notification: $notificationError');
+      }
+
+      _removePendingUpload(upload.messageId);
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send file: ${e.toString()}')),
+        );
+      }
+      if (pendingId != null) {
+        _removePendingUpload(pendingId);
+      }
+    }
+  }
+
   Widget _buildMessageInput() {
     final colorScheme = Theme.of(context).colorScheme;
+    final isAnyRecording = _isRecordingAudio || _isRecordingVideo;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
@@ -619,6 +1314,64 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                   ],
                 ),
               ),
+            if (_isRecordingAudio)
+              Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.fiber_manual_record,
+                      size: 14,
+                      color: colorScheme.error,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _isAudioRecordingLocked
+                            ? 'Recording ${_formatRecordingDuration(_audioRecordingSeconds)} - locked'
+                            : 'Recording ${_formatRecordingDuration(_audioRecordingSeconds)} - slide up to lock',
+                        style: TextStyle(
+                          color: colorScheme.onErrorContainer,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (_isAudioRecordingLocked) ...[
+                      IconButton(
+                        onPressed: () =>
+                            unawaited(_stopAudioRecording(send: false)),
+                        icon: Icon(
+                          Icons.delete_outline,
+                          size: 18,
+                          color: colorScheme.onErrorContainer,
+                        ),
+                        tooltip: 'Discard',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      IconButton(
+                        onPressed: () =>
+                            unawaited(_stopAudioRecording(send: true)),
+                        icon: Icon(
+                          Icons.send_rounded,
+                          size: 18,
+                          color: colorScheme.onErrorContainer,
+                        ),
+                        tooltip: 'Send',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             Row(
               children: [
                 Material(
@@ -635,7 +1388,11 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                 const SizedBox(width: 6),
                 Expanded(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    constraints: const BoxConstraints(minHeight: 42),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: colorScheme.surfaceContainerHighest.withValues(
                         alpha: 0.55,
@@ -657,6 +1414,32 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                       maxLines: null,
                       textCapitalization: TextCapitalization.sentences,
                       onSubmitted: (_) => _sendMessage(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: _handleRecorderTap,
+                  onLongPressStart: _handleRecorderLongPressStart,
+                  onLongPressMoveUpdate: _handleRecorderLongPressMove,
+                  onLongPressEnd: _handleRecorderLongPressEnd,
+                  onLongPressCancel: _handleRecorderLongPressCancel,
+                  child: CircleAvatar(
+                    radius: 20,
+                    backgroundColor: isAnyRecording
+                        ? colorScheme.error
+                        : colorScheme.surfaceContainerHighest,
+                    child: Icon(
+                      isAnyRecording
+                          ? (_isAudioRecordingLocked || _isRecordingVideo
+                                ? Icons.send_rounded
+                                : Icons.stop)
+                          : (_recorderMode == _RecorderMode.audio
+                                ? Icons.mic
+                                : Icons.videocam),
+                      color: isAnyRecording
+                          ? colorScheme.onError
+                          : colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ),
@@ -719,6 +1502,26 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                 _pickAndSendFile(type: FileType.any);
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.videocam),
+              title: const Text('Record video'),
+              onTap: () {
+                Navigator.pop(context);
+                if (Platform.isWindows) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Video recording is disabled on Windows'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                  return;
+                }
+                setState(() {
+                  _recorderMode = _RecorderMode.video;
+                });
+                _recordVideoAndSend();
+              },
+            ),
           ],
         ),
       ),
@@ -727,102 +1530,30 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
 
   Future<void> _pickAndSendFile({required FileType type}) async {
     if (_conversationId == null) return;
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      withData: false,
+      type: type,
+    );
+    if (result == null || result.files.isEmpty) return;
 
-    String? pendingId;
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: false,
-        withData: false,
-        type: type,
-      );
-
-      if (result == null || result.files.isEmpty) return;
-      final file = result.files.first;
-      if (file.path == null || file.path!.trim().isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not access selected file')),
-          );
-        }
-        return;
-      }
-
-      final detectedMime =
-          lookupMimeType(file.path!) ?? 'application/octet-stream';
-      final upload = _chatService.startFileUpload(
-        conversationId: _conversationId!,
-        filePath: file.path!,
-        fileName: file.name,
-        mimeType: detectedMime,
-      );
-      pendingId = upload.messageId;
-
-      final pending = _PendingUpload(
-        id: upload.messageId,
-        fileName: file.name,
-        fileSize: file.size,
-        mimeType: detectedMime,
-        progress: 0,
-      );
-      pending.task = upload.task;
-
-      setState(() {
-        _pendingUploads.add(pending);
-      });
-      _scrollToBottom();
-
-      pending.sub = upload.task.snapshotEvents.listen((snapshot) {
-        final total = snapshot.totalBytes;
-        final transferred = snapshot.bytesTransferred;
-        if (total > 0 && mounted) {
-          setState(() {
-            pending.progress = (transferred / total).clamp(0, 1);
-          });
-        }
-      });
-
-      final snapshot = await upload.task;
-      final downloadUrl = await snapshot.ref.getDownloadURL();
-
-      if (!_pendingUploads.any((u) => u.id == upload.messageId)) {
-        return;
-      }
-
-      await _chatService.commitFileMessage(
-        conversationId: _conversationId!,
-        messageId: upload.messageId,
-        storagePath: upload.storagePath,
-        downloadUrl: downloadUrl,
-        fileName: file.name,
-        fileSize: file.size,
-        mimeType: upload.contentType,
-      );
-
-      try {
-        final currentUser = _auth.currentUser;
-        final senderName = currentUser?.displayName ?? 'Someone';
-        await _notificationService.sendMessageNotification(
-          recipientId: widget.recipientId,
-          senderName: senderName,
-          messageText: 'Sent a file',
-          conversationId: _conversationId,
-        );
-      } catch (notificationError) {
-        print('Error sending notification: $notificationError');
-      }
-
-      _removePendingUpload(upload.messageId);
-      _scrollToBottom();
-    } catch (e) {
+    final file = result.files.first;
+    final path = file.path?.trim() ?? '';
+    if (path.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to send file: ${e.toString()}')),
+          const SnackBar(content: Text('Could not access selected file')),
         );
       }
-      if (pendingId != null) {
-        _removePendingUpload(pendingId);
-      }
+      return;
     }
+
+    await _sendLocalFile(
+      filePath: path,
+      fileName: file.name,
+      mimeType: lookupMimeType(path) ?? 'application/octet-stream',
+      notificationText: 'Sent a file',
+    );
   }
 
   void _removePendingUpload(String id) {
@@ -1063,6 +1794,39 @@ class _MessagesListState extends State<_MessagesList>
     return DateFormat('MMM d, yyyy • h:mm a').format(date);
   }
 
+  Future<void> _applyReaction({
+    required String messageId,
+    required Map<String, dynamic> message,
+    required String emoji,
+    bool toggleIfSame = false,
+  }) async {
+    final conversationId = widget.conversationId;
+    final currentUserId = _auth.currentUser?.uid;
+    if (conversationId == null || currentUserId == null) return;
+
+    final currentReaction = _extractReactions(message)[currentUserId];
+    try {
+      final ref = _firestore
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages')
+          .doc(messageId);
+
+      if (toggleIfSame && currentReaction == emoji) {
+        await ref.update({'reactions.$currentUserId': FieldValue.delete()});
+      } else {
+        await ref.set({
+          'reactions': {currentUserId: emoji},
+        }, SetOptions(merge: true));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not save reaction: $e')));
+    }
+  }
+
   Future<void> _showEditDialog({
     required String messageId,
     required String originalText,
@@ -1143,29 +1907,12 @@ class _MessagesListState extends State<_MessagesList>
                     selected: currentReaction == emoji,
                     onSelected: (_) async {
                       Navigator.pop(context);
-                      try {
-                        final ref = _firestore
-                            .collection('conversations')
-                            .doc(conversationId)
-                            .collection('messages')
-                            .doc(messageId);
-                        if (currentReaction == emoji) {
-                          await ref.update({
-                            'reactions.$currentUserId': FieldValue.delete(),
-                          });
-                        } else {
-                          await ref.set({
-                            'reactions': {currentUserId: emoji},
-                          }, SetOptions(merge: true));
-                        }
-                      } catch (e) {
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(this.context).showSnackBar(
-                          SnackBar(
-                            content: Text('Could not save reaction: $e'),
-                          ),
-                        );
-                      }
+                      await _applyReaction(
+                        messageId: messageId,
+                        message: message,
+                        emoji: emoji,
+                        toggleIfSame: true,
+                      );
                     },
                   ),
               ],
@@ -1173,6 +1920,180 @@ class _MessagesListState extends State<_MessagesList>
           ),
         );
       },
+    );
+  }
+
+  Future<void> _showDeleteForEveryoneDialog({required String messageId}) async {
+    final conversationId = widget.conversationId;
+    if (conversationId == null) return;
+
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete message'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete for everyone'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete != true || !mounted) return;
+    try {
+      await widget.chatService.deleteMessage(
+        conversationId: conversationId,
+        messageId: messageId,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not delete message: $e')));
+    }
+  }
+
+  IconData _deliveryStatusIcon({
+    required bool isPending,
+    required bool isRead,
+  }) {
+    if (isPending) return Icons.schedule;
+    if (isRead) return Icons.done_all;
+    return Icons.done;
+  }
+
+  Color _deliveryStatusColor({
+    required bool isPending,
+    required bool isRead,
+    required bool isMe,
+    required ColorScheme colorScheme,
+  }) {
+    if (!isMe) {
+      return colorScheme.onSurfaceVariant;
+    }
+    if (isPending) {
+      return Colors.amber.shade300;
+    }
+    if (isRead) {
+      return Colors.lightBlueAccent.shade100;
+    }
+    return Colors.white;
+  }
+
+  _CallSummaryData? _extractCallSummaryData(Map<String, dynamic> messageData) {
+    final raw = messageData['callSummary'];
+    if (raw is! Map) return null;
+    final map = Map<String, dynamic>.from(raw);
+
+    final kind = map['kind']?.toString().toLowerCase() == 'video'
+        ? 'video'
+        : 'audio';
+    final result = map['result']?.toString().trim().toLowerCase() ?? 'ended';
+    final durationSeconds = map['durationSeconds'] is num
+        ? (map['durationSeconds'] as num).toInt()
+        : 0;
+    final startedAtMs = map['startedAtMs'] is num
+        ? (map['startedAtMs'] as num).toInt()
+        : null;
+    final startedAt = startedAtMs != null
+        ? DateTime.fromMillisecondsSinceEpoch(startedAtMs)
+        : null;
+
+    return _CallSummaryData(
+      isVideo: kind == 'video',
+      result: result,
+      durationSeconds: durationSeconds < 0 ? 0 : durationSeconds,
+      startedAt: startedAt,
+    );
+  }
+
+  String _formatCompactDuration(int totalSeconds) {
+    var seconds = totalSeconds;
+    if (seconds < 0) seconds = 0;
+
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    final secs = seconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:'
+          '${minutes.toString().padLeft(2, '0')}:'
+          '${secs.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:'
+        '${secs.toString().padLeft(2, '0')}';
+  }
+
+  String _callResultLabel(String result) {
+    switch (result) {
+      case 'completed':
+        return 'Completed';
+      case 'declined':
+        return 'Declined';
+      case 'missed':
+        return 'Missed';
+      case 'failed':
+        return 'Failed';
+      default:
+        return 'Ended';
+    }
+  }
+
+  Widget _buildCallSummaryBody({
+    required _CallSummaryData data,
+    required bool isMe,
+    required ColorScheme colorScheme,
+    required Color incomingTextColor,
+    required Color incomingMetaColor,
+  }) {
+    final primaryColor = isMe ? colorScheme.onPrimary : incomingTextColor;
+    final secondaryColor = isMe
+        ? colorScheme.onPrimary.withValues(alpha: 0.76)
+        : incomingMetaColor;
+    final title = data.isVideo ? 'Video call' : 'Audio call';
+    final startedAtText = data.startedAt != null
+        ? DateFormat('HH:mm').format(data.startedAt!)
+        : null;
+    final subtitle = data.result == 'completed' && data.durationSeconds > 0
+        ? _formatCompactDuration(data.durationSeconds)
+        : (startedAtText == null
+              ? _callResultLabel(data.result)
+              : '${_callResultLabel(data.result)} • $startedAtText');
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          data.isVideo ? Icons.videocam : Icons.call,
+          size: 16,
+          color: primaryColor,
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: primaryColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: TextStyle(color: secondaryColor, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1184,7 +2105,10 @@ class _MessagesListState extends State<_MessagesList>
     required Timestamp? sentAt,
     required Timestamp? readAt,
   }) async {
-    final canEdit = isMe && (message['type']?.toString() ?? 'text') == 'text';
+    final canEdit =
+        isMe &&
+        (message['type']?.toString() ?? 'text') == 'text' &&
+        message['callSummary'] == null;
     final rootContext = context;
 
     await showModalBottomSheet<void>(
@@ -1219,6 +2143,21 @@ class _MessagesListState extends State<_MessagesList>
                       messageId: messageId,
                       originalText: displayText,
                     );
+                  },
+                ),
+              if (isMe)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline, color: Colors.red),
+                  title: const Text(
+                    'Delete',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  subtitle: const Text(
+                    'Choose if you want to delete for everyone',
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showDeleteForEveryoneDialog(messageId: messageId);
                   },
                 ),
               ListTile(
@@ -1290,9 +2229,14 @@ class _MessagesListState extends State<_MessagesList>
     );
   }
 
-  Widget _buildReactionsRow(Map<String, dynamic> message) {
+  Widget _buildReactionsRow({
+    required String messageId,
+    required Map<String, dynamic> message,
+  }) {
     final reactions = _extractReactions(message);
     if (reactions.isEmpty) return const SizedBox.shrink();
+    final currentUserId = _auth.currentUser?.uid;
+    final myReaction = currentUserId == null ? null : reactions[currentUserId];
 
     final counts = <String, int>{};
     for (final emoji in reactions.values) {
@@ -1306,15 +2250,32 @@ class _MessagesListState extends State<_MessagesList>
         runSpacing: 4,
         children: [
           for (final entry in counts.entries)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                '${entry.key} ${entry.value}',
-                style: const TextStyle(fontSize: 11),
+            InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () {
+                _applyReaction(
+                  messageId: messageId,
+                  message: message,
+                  emoji: entry.key,
+                  toggleIfSame: true,
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(10),
+                  border: myReaction == entry.key
+                      ? Border.all(
+                          color: Theme.of(context).colorScheme.primary,
+                          width: 1.1,
+                        )
+                      : null,
+                ),
+                child: Text(
+                  '${entry.key} ${entry.value}',
+                  style: const TextStyle(fontSize: 11),
+                ),
               ),
             ),
         ],
@@ -1439,6 +2400,7 @@ class _MessagesListState extends State<_MessagesList>
                   timestamp,
                   isPending: isPending,
                   isRead: isRead,
+                  readAt: readAt,
                   messageId: messageId,
                   key: ValueKey(messageId),
                 ),
@@ -1583,33 +2545,47 @@ class _MessagesListState extends State<_MessagesList>
         ? 'You'
         : widget.recipientName;
     final isEdited = messageData['edited'] == true;
+    final callSummary = _extractCallSummaryData(messageData);
+    final isCallSummary = callSummary != null;
     final sentAtText = timestamp != null
         ? DateFormat('HH:mm').format(timestamp.toDate())
         : '';
-    final statusIcon = isPending ? Icons.done : Icons.done_all;
-    final statusColor = isPending
-        ? colorScheme.onPrimary.withValues(alpha: 0.72)
-        : (isRead
-              ? colorScheme.tertiary
-              : colorScheme.onPrimary.withValues(alpha: 0.72));
+    final statusIcon = _deliveryStatusIcon(
+      isPending: isPending,
+      isRead: isRead,
+    );
+    final statusColor = _deliveryStatusColor(
+      isPending: isPending,
+      isRead: isRead,
+      isMe: isMe,
+      colorScheme: colorScheme,
+    );
 
-    return Align(
+    return GestureDetector(
       key: key,
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: GestureDetector(
-        onLongPress: () {
-          _showMessageActions(
-            messageId: messageId,
-            message: messageData,
-            displayText: text,
-            isMe: isMe,
-            sentAt: timestamp,
-            readAt: readAt,
-          );
-        },
+      behavior: HitTestBehavior.translucent,
+      onDoubleTap: () {
+        _applyReaction(messageId: messageId, message: messageData, emoji: '❤️');
+      },
+      onLongPress: () {
+        _showMessageActions(
+          messageId: messageId,
+          message: messageData,
+          displayText: text,
+          isMe: isMe,
+          sentAt: timestamp,
+          readAt: readAt,
+        );
+      },
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 12),
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
         child: Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: EdgeInsets.symmetric(
+            horizontal: isCallSummary ? 12 : 16,
+            vertical: isCallSummary ? 8 : 10,
+          ),
           constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.75,
           ),
@@ -1637,7 +2613,7 @@ class _MessagesListState extends State<_MessagesList>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (replyText.isNotEmpty)
+              if (!isCallSummary && replyText.isNotEmpty)
                 Container(
                   margin: const EdgeInsets.only(bottom: 6),
                   padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
@@ -1675,14 +2651,23 @@ class _MessagesListState extends State<_MessagesList>
                     ],
                   ),
                 ),
-              Text(
-                text,
-                style: TextStyle(
-                  color: isMe ? colorScheme.onPrimary : receivedTextColor,
-                  fontSize: 15,
+              if (callSummary != null)
+                _buildCallSummaryBody(
+                  data: callSummary,
+                  isMe: isMe,
+                  colorScheme: colorScheme,
+                  incomingTextColor: receivedTextColor,
+                  incomingMetaColor: receivedMetaColor,
+                )
+              else
+                Text(
+                  text,
+                  style: TextStyle(
+                    color: isMe ? colorScheme.onPrimary : receivedTextColor,
+                    fontSize: 15,
+                  ),
                 ),
-              ),
-              if (isEdited) ...[
+              if (!isCallSummary && isEdited) ...[
                 const SizedBox(height: 2),
                 Text(
                   'edited',
@@ -1695,7 +2680,7 @@ class _MessagesListState extends State<_MessagesList>
                   ),
                 ),
               ],
-              _buildReactionsRow(messageData),
+              _buildReactionsRow(messageId: messageId, message: messageData),
               if (timestamp != null) ...[
                 const SizedBox(height: 4),
                 Row(
@@ -1712,7 +2697,7 @@ class _MessagesListState extends State<_MessagesList>
                     ),
                     if (isMe) ...[
                       const SizedBox(width: 4),
-                      Icon(statusIcon, size: 14, color: statusColor),
+                      Icon(statusIcon, size: 16, color: statusColor),
                     ],
                   ],
                 ),
@@ -1781,6 +2766,13 @@ class _MessagesListState extends State<_MessagesList>
   }
 
   Widget _buildPendingUploadBubble(_PendingUpload upload, {Key? key}) {
+    final mime = upload.mimeType.toLowerCase();
+    final isAudio = mime.startsWith('audio/');
+    final isVideo = mime.startsWith('video/');
+    final title = isAudio
+        ? 'Voice message'
+        : (isVideo ? 'Video message' : upload.fileName);
+
     return Align(
       key: key,
       alignment: Alignment.centerRight,
@@ -1809,7 +2801,7 @@ class _MessagesListState extends State<_MessagesList>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    upload.fileName,
+                    title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -1852,6 +2844,7 @@ class _MessagesListState extends State<_MessagesList>
     Timestamp? timestamp, {
     required bool isPending,
     required bool isRead,
+    required Timestamp? readAt,
     required String messageId,
     Key? key,
   }) {
@@ -1862,6 +2855,8 @@ class _MessagesListState extends State<_MessagesList>
     final fileUrl = message['fileUrl']?.toString() ?? '';
     final mimeType = message['mimeType']?.toString() ?? '';
     final isImage = mimeType.toLowerCase().startsWith('image/');
+    final isVideo = mimeType.toLowerCase().startsWith('video/');
+    final isAudio = mimeType.toLowerCase().startsWith('audio/');
 
     // Check download status
     final downloadProgress = widget.downloadService.getProgress(messageId);
@@ -1876,56 +2871,111 @@ class _MessagesListState extends State<_MessagesList>
         ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.92)
         : colorScheme.surfaceContainerHigh;
 
-    return Align(
+    return GestureDetector(
       key: key,
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      behavior: HitTestBehavior.translucent,
+      onDoubleTap: () {
+        _applyReaction(messageId: messageId, message: message, emoji: '❤️');
+      },
+      onLongPress: () {
+        _showMessageActions(
+          messageId: messageId,
+          message: message,
+          displayText: 'File: $fileName',
+          isMe: isMe,
+          sentAt: timestamp,
+          readAt: readAt,
+        );
+      },
       child: Container(
+        width: double.infinity,
         margin: const EdgeInsets.only(bottom: 12),
-        padding: isImage ? EdgeInsets.zero : const EdgeInsets.all(8),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-        ),
-        decoration: BoxDecoration(
-          color: isImage
-              ? Colors.transparent
-              : (isMe ? colorScheme.primary : incomingBubbleColor),
-          borderRadius: BorderRadius.circular(isImage ? 12 : 16),
-          border: !isImage && !isMe && isDarkTheme
-              ? Border.all(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.35),
-                )
-              : null,
-        ),
-        child: isImage
-            ? _buildImagePreview(
-                fileUrl: fileUrl,
-                fileName: fileName,
-                fileSize: fileSize,
-                localPath: localPath,
-                timestamp: timestamp,
-                isMe: isMe,
-              )
-            : _buildFileInfo(
-                fileName: fileName,
-                fileSize: fileSize,
-                mimeType: mimeType,
-                isDownloading: isDownloading,
-                isDownloaded: isDownloaded,
-                progress: progress,
-                timestamp: timestamp,
-                isMe: isMe,
-                isPending: isPending,
-                isRead: isRead,
-                onAction: () => _handleFileAction(
-                  messageId: messageId,
-                  url: fileUrl,
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          padding: isImage ? EdgeInsets.zero : const EdgeInsets.all(8),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.75,
+          ),
+          decoration: BoxDecoration(
+            color: isImage
+                ? Colors.transparent
+                : (isMe ? colorScheme.primary : incomingBubbleColor),
+            borderRadius: BorderRadius.circular(isImage ? 12 : 16),
+            border: !isImage && !isMe && isDarkTheme
+                ? Border.all(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                  )
+                : null,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isImage)
+                _buildImagePreview(
+                  fileUrl: fileUrl,
                   fileName: fileName,
-                  mimeType: mimeType,
                   fileSize: fileSize,
-                  isDownloaded: isDownloaded,
                   localPath: localPath,
+                  timestamp: timestamp,
+                  isMe: isMe,
+                )
+              else if (isVideo && fileUrl.isNotEmpty) ...[
+                if (Platform.isWindows)
+                  _buildWindowsVideoPreviewFallback(
+                    fileName: fileName,
+                    isMe: isMe,
+                  )
+                else
+                  _InlineVideoPlayer(url: fileUrl),
+                if (timestamp != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: _buildFileMetaRow(
+                      timestamp: timestamp,
+                      isMe: isMe,
+                      isPending: isPending,
+                      isRead: isRead,
+                    ),
+                  ),
+              ] else if (isAudio && fileUrl.isNotEmpty) ...[
+                _InlineAudioPlayer(url: fileUrl, isMe: isMe),
+                if (timestamp != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: _buildFileMetaRow(
+                      timestamp: timestamp,
+                      isMe: isMe,
+                      isPending: isPending,
+                      isRead: isRead,
+                    ),
+                  ),
+              ] else
+                _buildFileInfo(
+                  fileName: fileName,
+                  fileSize: fileSize,
+                  mimeType: mimeType,
+                  isDownloading: isDownloading,
+                  isDownloaded: isDownloaded,
+                  progress: progress,
+                  timestamp: timestamp,
+                  isMe: isMe,
+                  isPending: isPending,
+                  isRead: isRead,
+                  onAction: () => _handleFileAction(
+                    messageId: messageId,
+                    url: fileUrl,
+                    fileName: fileName,
+                    mimeType: mimeType,
+                    fileSize: fileSize,
+                    isDownloaded: isDownloaded,
+                    localPath: localPath,
+                  ),
                 ),
-              ),
+              _buildReactionsRow(messageId: messageId, message: message),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -2009,6 +3059,99 @@ class _MessagesListState extends State<_MessagesList>
     );
   }
 
+  Widget _buildWindowsVideoPreviewFallback({
+    required String fileName,
+    required bool isMe,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final receivedMetaColor = colorScheme.onSurfaceVariant;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.black12,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.videocam,
+                size: 18,
+                color: isMe ? colorScheme.onPrimary : receivedMetaColor,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  fileName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isMe ? colorScheme.onPrimary : receivedMetaColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Video preview is disabled on Windows. Download and open the file.',
+            style: TextStyle(
+              color: isMe
+                  ? colorScheme.onPrimary.withValues(alpha: 0.75)
+                  : receivedMetaColor,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFileMetaRow({
+    required Timestamp timestamp,
+    required bool isMe,
+    required bool isPending,
+    required bool isRead,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final receivedMetaColor = colorScheme.onSurfaceVariant;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          DateFormat('HH:mm').format(timestamp.toDate()),
+          style: TextStyle(
+            color: isMe
+                ? colorScheme.onPrimary.withValues(alpha: 0.7)
+                : receivedMetaColor,
+            fontSize: 11,
+          ),
+        ),
+        if (isMe) ...[
+          const SizedBox(width: 4),
+          Icon(
+            _deliveryStatusIcon(isPending: isPending, isRead: isRead),
+            size: 16,
+            color: _deliveryStatusColor(
+              isPending: isPending,
+              isRead: isRead,
+              isMe: isMe,
+              colorScheme: colorScheme,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildFileInfo({
     required String fileName,
     required int fileSize,
@@ -2088,15 +3231,17 @@ class _MessagesListState extends State<_MessagesList>
                     if (isMe) ...[
                       const SizedBox(width: 4),
                       Icon(
-                        isPending ? Icons.done : Icons.done_all,
-                        size: 14,
-                        color: isPending
-                            ? colorScheme.onPrimary.withValues(alpha: 0.72)
-                            : (isRead
-                                  ? colorScheme.tertiary
-                                  : colorScheme.onPrimary.withValues(
-                                      alpha: 0.72,
-                                    )),
+                        _deliveryStatusIcon(
+                          isPending: isPending,
+                          isRead: isRead,
+                        ),
+                        size: 16,
+                        color: _deliveryStatusColor(
+                          isPending: isPending,
+                          isRead: isRead,
+                          isMe: isMe,
+                          colorScheme: colorScheme,
+                        ),
                       ),
                     ],
                   ],
@@ -2196,6 +3341,492 @@ class _MessagesListState extends State<_MessagesList>
   }
 }
 
+class _InlineVideoPlayer extends StatefulWidget {
+  final String url;
+
+  const _InlineVideoPlayer({required this.url});
+
+  @override
+  State<_InlineVideoPlayer> createState() => _InlineVideoPlayerState();
+}
+
+class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
+  VideoPlayerController? _controller;
+  Future<void>? _initializeFuture;
+  String? _error;
+  int _setupToken = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (Platform.isWindows) {
+      _error = 'Video preview is unavailable on Windows';
+      return;
+    }
+    _setupController();
+  }
+
+  @override
+  void didUpdateWidget(covariant _InlineVideoPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (Platform.isWindows) return;
+    if (oldWidget.url != widget.url) {
+      _setupController();
+    }
+  }
+
+  void _videoListener() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Future<void> _setupController() async {
+    if (Platform.isWindows) {
+      final oldController = _controller;
+      _controller = null;
+      _initializeFuture = null;
+      _error = 'Video preview is unavailable on Windows';
+      await oldController?.dispose();
+      if (mounted) setState(() {});
+      return;
+    }
+
+    final setupToken = ++_setupToken;
+    final oldController = _controller;
+    if (oldController != null) {
+      oldController.removeListener(_videoListener);
+    }
+
+    final uri = Uri.tryParse(widget.url);
+    if (uri == null || (!uri.hasScheme && !uri.hasAuthority)) {
+      setState(() {
+        _controller = null;
+        _initializeFuture = null;
+        _error = 'Invalid video link';
+      });
+      await oldController?.dispose();
+      return;
+    }
+
+    final controller = VideoPlayerController.networkUrl(uri);
+    controller.addListener(_videoListener);
+    final future = controller.initialize().then((_) {
+      controller.setLooping(false);
+    });
+
+    if (!mounted || setupToken != _setupToken) {
+      controller.removeListener(_videoListener);
+      await controller.dispose();
+      return;
+    }
+
+    setState(() {
+      _controller = controller;
+      _initializeFuture = future;
+      _error = null;
+    });
+
+    try {
+      await future;
+    } catch (_) {
+      if (!mounted || setupToken != _setupToken) return;
+      controller.removeListener(_videoListener);
+      await controller.dispose();
+      setState(() {
+        _controller = null;
+        _initializeFuture = null;
+        _error = 'Could not load video';
+      });
+    } finally {
+      await oldController?.dispose();
+    }
+  }
+
+  Future<void> _togglePlayback() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    try {
+      if (controller.value.isPlaying) {
+        await controller.pause();
+      } else {
+        await controller.play();
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    final controller = _controller;
+    if (controller != null) {
+      controller.removeListener(_videoListener);
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error != null) {
+      return Container(
+        width: double.infinity,
+        height: 190,
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Center(
+          child: Text(_error!, style: Theme.of(context).textTheme.bodySmall),
+        ),
+      );
+    }
+
+    final controller = _controller;
+    final initFuture = _initializeFuture;
+    if (controller == null || initFuture == null) {
+      return Container(
+        width: double.infinity,
+        height: 190,
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return FutureBuilder<void>(
+      future: initFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Container(
+            width: double.infinity,
+            height: 190,
+            decoration: BoxDecoration(
+              color: Colors.black12,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final aspectRatio = controller.value.aspectRatio > 0
+            ? controller.value.aspectRatio
+            : (16 / 9);
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            color: Colors.black,
+            child: Stack(
+              children: [
+                AspectRatio(
+                  aspectRatio: aspectRatio,
+                  child: VideoPlayer(controller),
+                ),
+                Positioned.fill(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(onTap: _togglePlayback),
+                  ),
+                ),
+                if (!controller.value.isPlaying)
+                  const Positioned.fill(
+                    child: Center(
+                      child: Icon(
+                        Icons.play_circle_fill,
+                        color: Colors.white,
+                        size: 54,
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: VideoProgressIndicator(
+                    controller,
+                    allowScrubbing: true,
+                    colors: VideoProgressColors(
+                      playedColor: Colors.white,
+                      bufferedColor: Colors.white38,
+                      backgroundColor: Colors.black38,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _InlineAudioPlayer extends StatefulWidget {
+  final String url;
+  final bool isMe;
+
+  const _InlineAudioPlayer({required this.url, required this.isMe});
+
+  @override
+  State<_InlineAudioPlayer> createState() => _InlineAudioPlayerState();
+}
+
+class _InlineAudioPlayerState extends State<_InlineAudioPlayer> {
+  final AudioPlayer _player = AudioPlayer();
+  StreamSubscription<Duration>? _durationSub;
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<PlayerState>? _stateSub;
+  StreamSubscription<void>? _completeSub;
+
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+  double? _dragMillis;
+  PlayerState _state = PlayerState.stopped;
+  bool _isLoading = false;
+  bool _sourcePrepared = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _bindPlayerStreams();
+    unawaited(_prepareSource());
+  }
+
+  @override
+  void didUpdateWidget(covariant _InlineAudioPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      unawaited(_resetAndPrepareSource());
+    }
+  }
+
+  void _bindPlayerStreams() {
+    _durationSub = _player.onDurationChanged.listen((duration) {
+      if (!mounted) return;
+      setState(() {
+        _duration = duration;
+      });
+    });
+
+    _positionSub = _player.onPositionChanged.listen((position) {
+      if (!mounted) return;
+      setState(() {
+        _position = position;
+      });
+    });
+
+    _stateSub = _player.onPlayerStateChanged.listen((state) {
+      if (!mounted) return;
+      setState(() {
+        _state = state;
+        _isLoading = false;
+      });
+    });
+
+    _completeSub = _player.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+      setState(() {
+        _state = PlayerState.stopped;
+        _position = _duration;
+      });
+    });
+  }
+
+  Future<void> _resetAndPrepareSource() async {
+    try {
+      await _player.stop();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _duration = Duration.zero;
+      _position = Duration.zero;
+      _dragMillis = null;
+      _state = PlayerState.stopped;
+      _isLoading = false;
+      _sourcePrepared = false;
+      _error = null;
+    });
+    await _prepareSource();
+  }
+
+  Future<void> _prepareSource() async {
+    try {
+      await _player.setReleaseMode(ReleaseMode.stop);
+      await _player.setSource(UrlSource(widget.url));
+      if (!mounted) return;
+      setState(() {
+        _sourcePrepared = true;
+        _error = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _sourcePrepared = false;
+        _error = 'Could not load audio';
+      });
+    }
+  }
+
+  Future<void> _togglePlayback() async {
+    if (_isLoading) return;
+    try {
+      if (_state == PlayerState.playing) {
+        await _player.pause();
+        return;
+      }
+
+      setState(() {
+        _isLoading = true;
+      });
+
+      if (_sourcePrepared &&
+          (_state == PlayerState.paused ||
+              (_position > Duration.zero && _position < _duration))) {
+        await _player.resume();
+      } else {
+        await _player.play(UrlSource(widget.url));
+        _sourcePrepared = true;
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not play audio';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _seekToMillis(double millis) async {
+    final target = Duration(milliseconds: millis.round());
+    try {
+      await _player.seek(target);
+    } catch (_) {}
+  }
+
+  String _formatDuration(Duration duration) {
+    final totalSeconds = duration.inSeconds;
+    final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  @override
+  void dispose() {
+    _durationSub?.cancel();
+    _positionSub?.cancel();
+    _stateSub?.cancel();
+    _completeSub?.cancel();
+    _player.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final accentColor = widget.isMe
+        ? colorScheme.onPrimary
+        : colorScheme.primary;
+    final metaColor = widget.isMe
+        ? colorScheme.onPrimary.withValues(alpha: 0.72)
+        : colorScheme.onSurfaceVariant;
+    final maxMillis = (_duration.inMilliseconds > 0)
+        ? _duration.inMilliseconds.toDouble()
+        : 1.0;
+    final currentMillis = (_dragMillis ?? _position.inMilliseconds.toDouble())
+        .clamp(0.0, maxMillis);
+    final playIcon = _state == PlayerState.playing
+        ? Icons.pause_circle_filled
+        : Icons.play_circle_fill;
+
+    return Container(
+      constraints: const BoxConstraints(minWidth: 210),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            splashRadius: 20,
+            visualDensity: VisualDensity.compact,
+            onPressed: _togglePlayback,
+            icon: _isLoading
+                ? SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      valueColor: AlwaysStoppedAnimation<Color>(accentColor),
+                    ),
+                  )
+                : Icon(playIcon, size: 34, color: accentColor),
+          ),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 6,
+                    ),
+                    overlayShape: const RoundSliderOverlayShape(
+                      overlayRadius: 12,
+                    ),
+                    activeTrackColor: accentColor,
+                    inactiveTrackColor: metaColor.withValues(alpha: 0.35),
+                    thumbColor: accentColor,
+                  ),
+                  child: Slider(
+                    value: currentMillis,
+                    min: 0,
+                    max: maxMillis,
+                    onChanged: (value) {
+                      setState(() {
+                        _dragMillis = value;
+                      });
+                    },
+                    onChangeEnd: (value) async {
+                      setState(() {
+                        _dragMillis = null;
+                      });
+                      await _seekToMillis(value);
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 8, right: 8, bottom: 2),
+                  child: Text(
+                    '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
+                    style: TextStyle(fontSize: 11, color: metaColor),
+                  ),
+                ),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      left: 8,
+                      right: 8,
+                      bottom: 2,
+                    ),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(fontSize: 10, color: metaColor),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _LiveStatusWidget extends StatefulWidget {
   final String userId;
   const _LiveStatusWidget({required this.userId});
@@ -2240,6 +3871,20 @@ class _LiveStatusWidgetState extends State<_LiveStatusWidget> {
       },
     );
   }
+}
+
+class _CallSummaryData {
+  final bool isVideo;
+  final String result;
+  final int durationSeconds;
+  final DateTime? startedAt;
+
+  const _CallSummaryData({
+    required this.isVideo,
+    required this.result,
+    required this.durationSeconds,
+    required this.startedAt,
+  });
 }
 
 class _ReplyDraft {

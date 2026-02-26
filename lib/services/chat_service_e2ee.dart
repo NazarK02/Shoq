@@ -187,9 +187,9 @@ class ChatService {
     return _UserKeySet(legacyKey: legacyKey, deviceKeys: deviceKeys);
   }
 
-  Future<Map<String, dynamic>> _buildEncryptedTextPayload({
+  Future<Map<String, dynamic>> _buildEncryptedTextPayloadForRecipients({
     required String messageText,
-    required String recipientId,
+    required List<String> recipientIds,
     bool includeTimestamps = true,
   }) async {
     final currentUser = _auth.currentUser;
@@ -201,11 +201,16 @@ class ChatService {
       );
     }
 
-    final senderKeys = await _ensureUserHasE2EE(currentUser.uid);
-    final recipientKeys = await _ensureUserHasE2EE(recipientId);
-    if (!recipientKeys.hasAnyKey) {
-      throw Exception('Recipient has no encryption keys');
+    final uniqueRecipientIds = recipientIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty && id != currentUser.uid)
+        .toSet()
+        .toList();
+    if (uniqueRecipientIds.isEmpty) {
+      throw Exception('No recipients provided for encrypted message');
     }
+
+    final senderKeys = await _ensureUserHasE2EE(currentUser.uid);
 
     final device = await _deviceInfo.getDeviceInfo();
     final senderDeviceId = device['deviceId'] ?? 'unknown';
@@ -218,21 +223,50 @@ class ChatService {
     final recipientCiphertexts = <String, String>{};
     final recipientCiphertextsByKey = <String, String>{};
     final recipientCipherCache = <String, String>{};
-    for (final entry in recipientKeys.deviceKeys.entries) {
-      final publicKey = entry.value.trim();
-      if (publicKey.isEmpty) continue;
+    String? legacyRecipientCiphertext;
+    for (final recipientId in uniqueRecipientIds) {
+      final recipientKeys = await _ensureUserHasE2EE(recipientId);
+      if (!recipientKeys.hasAnyKey) {
+        continue;
+      }
 
-      final keyId = _publicKeyId(publicKey);
-      final ciphertext =
-          recipientCipherCache[keyId] ??
-          await _crypto.encryptMessageWithPublicKey(
-            plaintext: messageText,
-            recipientPublicKeyBase64: publicKey,
-          );
+      for (final entry in recipientKeys.deviceKeys.entries) {
+        final publicKey = entry.value.trim();
+        if (publicKey.isEmpty) continue;
 
-      recipientCipherCache[keyId] = ciphertext;
-      recipientCiphertexts[entry.key] = ciphertext;
-      recipientCiphertextsByKey[keyId] = ciphertext;
+        final keyId = _publicKeyId(publicKey);
+        final ciphertext =
+            recipientCipherCache[keyId] ??
+            await _crypto.encryptMessageWithPublicKey(
+              plaintext: messageText,
+              recipientPublicKeyBase64: publicKey,
+            );
+
+        recipientCipherCache[keyId] = ciphertext;
+        recipientCiphertexts['$recipientId::${entry.key}'] = ciphertext;
+        recipientCiphertextsByKey[keyId] = ciphertext;
+        legacyRecipientCiphertext ??= ciphertext;
+      }
+
+      if (recipientKeys.legacyKey != null &&
+          recipientKeys.legacyKey!.trim().isNotEmpty) {
+        final legacyPublicKey = recipientKeys.legacyKey!.trim();
+        final legacyKeyId = _publicKeyId(legacyPublicKey);
+        final legacyCiphertext =
+            recipientCipherCache[legacyKeyId] ??
+            await _crypto.encryptMessageWithPublicKey(
+              plaintext: messageText,
+              recipientPublicKeyBase64: legacyPublicKey,
+            );
+        recipientCipherCache[legacyKeyId] = legacyCiphertext;
+        recipientCiphertextsByKey[legacyKeyId] = legacyCiphertext;
+        legacyRecipientCiphertext ??= legacyCiphertext;
+      }
+    }
+
+    if (recipientCiphertextsByKey.isEmpty &&
+        legacyRecipientCiphertext == null) {
+      throw Exception('Recipients have no encryption keys');
     }
 
     final senderCiphertexts = <String, String>{};
@@ -253,20 +287,6 @@ class ChatService {
       senderCipherCache[keyId] = ciphertext;
       senderCiphertexts[entry.key] = ciphertext;
       senderCiphertextsByKey[keyId] = ciphertext;
-    }
-
-    String? legacyRecipientCiphertext;
-    if (recipientKeys.legacyKey != null &&
-        recipientKeys.legacyKey!.isNotEmpty) {
-      final legacyPublicKey = recipientKeys.legacyKey!.trim();
-      final legacyKeyId = _publicKeyId(legacyPublicKey);
-      legacyRecipientCiphertext =
-          recipientCipherCache[legacyKeyId] ??
-          await _crypto.encryptMessageWithPublicKey(
-            plaintext: messageText,
-            recipientPublicKeyBase64: legacyPublicKey,
-          );
-      recipientCiphertextsByKey[legacyKeyId] = legacyRecipientCiphertext;
     }
 
     String? legacySenderCiphertext;
@@ -299,6 +319,7 @@ class ChatService {
       payload['senderPublicKey'] = myPublicKey;
       payload['senderKeyId'] = _publicKeyId(myPublicKey);
     }
+    payload['recipientIds'] = uniqueRecipientIds;
     if (recipientCiphertexts.isNotEmpty) {
       payload['ciphertexts'] = recipientCiphertexts;
     }
@@ -321,6 +342,26 @@ class ChatService {
     return payload;
   }
 
+  Future<Map<String, dynamic>> _buildEncryptedTextPayload({
+    required String messageText,
+    required String recipientId,
+    bool includeTimestamps = true,
+  }) {
+    return _buildEncryptedTextPayloadForRecipients(
+      messageText: messageText,
+      recipientIds: [recipientId],
+      includeTimestamps: includeTimestamps,
+    );
+  }
+
+  String _buildMessagePreview(String messageText) {
+    final normalized = messageText.trim();
+    if (normalized.isEmpty) return '';
+    return normalized.length > 50
+        ? '${normalized.substring(0, 50)}...'
+        : normalized;
+  }
+
   /// Send an encrypted message
   Future<void> sendMessage({
     required String conversationId,
@@ -330,6 +371,7 @@ class ChatService {
     String? replyToMessageId,
     String? replyToText,
     String? replyToSenderId,
+    Map<String, dynamic>? callSummary,
   }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) throw Exception('User not logged in');
@@ -339,9 +381,7 @@ class ChatService {
 
     try {
       // Get first 50 chars of plaintext for preview in chat list.
-      final preview = messageText.length > 50
-          ? '${messageText.substring(0, 50)}...'
-          : messageText;
+      final preview = _buildMessagePreview(messageText);
 
       final payload = await _buildEncryptedTextPayload(
         messageText: messageText,
@@ -361,6 +401,9 @@ class ChatService {
       }
       if (trimmedReplySenderId != null && trimmedReplySenderId.isNotEmpty) {
         payload['replyToSenderId'] = trimmedReplySenderId;
+      }
+      if (callSummary != null && callSummary.isNotEmpty) {
+        payload['callSummary'] = Map<String, dynamic>.from(callSummary);
       }
 
       // Store encrypted message. Allow caller-provided IDs for optimistic UI
@@ -389,6 +432,72 @@ class ChatService {
       print('Failed to send encrypted message: $e');
       rethrow;
     }
+  }
+
+  Future<void> sendRoomMessage({
+    required String conversationId,
+    required String messageText,
+    required List<String> participantIds,
+    String? messageId,
+    String? replyToMessageId,
+    String? replyToText,
+    String? replyToSenderId,
+    Map<String, dynamic>? callSummary,
+  }) async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) throw Exception('User not logged in');
+
+    final trimmedText = messageText.trim();
+    if (trimmedText.isEmpty) return;
+
+    final recipientIds = participantIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty && id != currentUser.uid)
+        .toSet()
+        .toList();
+    if (recipientIds.isEmpty) {
+      throw Exception('Conversation has no recipients');
+    }
+
+    final payload = await _buildEncryptedTextPayloadForRecipients(
+      messageText: trimmedText,
+      recipientIds: recipientIds,
+    );
+
+    final trimmedReplyId = replyToMessageId?.trim();
+    final trimmedReplyText = replyToText?.trim();
+    final trimmedReplySenderId = replyToSenderId?.trim();
+    if (trimmedReplyId != null && trimmedReplyId.isNotEmpty) {
+      payload['replyToMessageId'] = trimmedReplyId;
+    }
+    if (trimmedReplyText != null && trimmedReplyText.isNotEmpty) {
+      payload['replyToText'] = trimmedReplyText.length > 120
+          ? '${trimmedReplyText.substring(0, 120)}...'
+          : trimmedReplyText;
+    }
+    if (trimmedReplySenderId != null && trimmedReplySenderId.isNotEmpty) {
+      payload['replyToSenderId'] = trimmedReplySenderId;
+    }
+    if (callSummary != null && callSummary.isNotEmpty) {
+      payload['callSummary'] = Map<String, dynamic>.from(callSummary);
+    }
+
+    final messagesRef = _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages');
+    final trimmedMessageId = messageId?.trim();
+    final messageRef = (trimmedMessageId != null && trimmedMessageId.isNotEmpty)
+        ? messagesRef.doc(trimmedMessageId)
+        : messagesRef.doc();
+    await messageRef.set(payload);
+
+    await _firestore.collection('conversations').doc(conversationId).set({
+      'lastMessage': _buildMessagePreview(trimmedText),
+      'lastMessageTime': FieldValue.serverTimestamp(),
+      'lastSenderId': currentUser.uid,
+      'hasMessages': true,
+    }, SetOptions(merge: true));
   }
 
   /// Edit an existing encrypted text message.

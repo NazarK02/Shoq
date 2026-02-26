@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb, mapEquals;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -43,18 +44,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
     final cached = UserService().cachedUserData;
     if (cached != null) {
-      _userData = {
-        ..._userData ?? {},
-        ...cached,
-      };
+      _userData = {..._userData ?? {}, ...cached};
     }
     UserService().loadCachedProfile().then((cachedProfile) {
       if (!mounted || cachedProfile == null) return;
       setState(() {
-        _userData = {
-          ..._userData ?? {},
-          ...cachedProfile,
-        };
+        _userData = {..._userData ?? {}, ...cachedProfile};
       });
     });
     _loadUserData();
@@ -94,10 +89,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   void _applyUserData(Map<String, dynamic>? data) {
     if (data == null) return;
-    final merged = {
-      ..._userData ?? {},
-      ...data,
-    };
+    final merged = {..._userData ?? {}, ...data};
 
     if (!mapEquals(_userData, merged)) {
       if (mounted) {
@@ -158,9 +150,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ? 'Not authorized to upload. Please re-login or verify your email.'
           : 'Error: ${e.toString()}';
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     } finally {
       setState(() => _isUploading = false);
@@ -186,7 +178,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               if (_userData?['photoUrl'] != null)
                 ListTile(
                   leading: const Icon(Icons.delete, color: Colors.red),
-                  title: const Text('Remove Photo', style: TextStyle(color: Colors.red)),
+                  title: const Text(
+                    'Remove Photo',
+                    style: TextStyle(color: Colors.red),
+                  ),
                   onTap: () {
                     Navigator.pop(context);
                     _removeProfilePicture();
@@ -222,7 +217,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               if (_userData?['photoUrl'] != null)
                 ListTile(
                   leading: const Icon(Icons.delete, color: Colors.red),
-                  title: const Text('Remove Photo', style: TextStyle(color: Colors.red)),
+                  title: const Text(
+                    'Remove Photo',
+                    style: TextStyle(color: Colors.red),
+                  ),
                   onTap: () {
                     Navigator.pop(context);
                     _removeProfilePicture();
@@ -252,12 +250,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (result == null || result.files.isEmpty) return;
 
       final file = result.files.first;
-      
+
       setState(() => _isUploading = true);
 
       // Upload to Firebase Storage
       final ref = _storage.ref().child('profile_pictures/${user.uid}');
-      
+
       UploadTask uploadTask;
       if (file.path != null) {
         uploadTask = ref.putFile(
@@ -272,7 +270,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       } else {
         throw Exception('Selected file has no data');
       }
-      
+
       final uploadResult = await uploadTask;
       final downloadUrl = await uploadResult.ref.getDownloadURL();
 
@@ -298,9 +296,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ? 'Not authorized to upload. Please re-login or verify your email.'
           : 'Error: ${e.toString()}';
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     } finally {
       setState(() => _isUploading = false);
@@ -340,9 +338,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     } finally {
       setState(() => _isUploading = false);
@@ -409,15 +407,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await _loadUserData();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Name updated!')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Name updated!')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     } finally {
       setState(() => _isLoading = false);
@@ -425,9 +423,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _editBio() {
-    final controller = TextEditingController(
-      text: _getBio(),
-    );
+    final controller = TextEditingController(text: _getBio());
 
     showDialog(
       context: context,
@@ -488,9 +484,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     } finally {
       setState(() => _isLoading = false);
@@ -555,15 +551,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(newLocation.isEmpty ? 'Location removed' : 'Location updated!'),
+            content: Text(
+              newLocation.isEmpty ? 'Location removed' : 'Location updated!',
+            ),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     } finally {
       setState(() => _isLoading = false);
@@ -581,18 +579,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final platform = map['platform']?.toString() ?? '';
       final url = map['url']?.toString() ?? '';
       if (platform.trim().isEmpty && url.trim().isEmpty) continue;
-      result.add({
-        'platform': platform.trim(),
-        'url': url.trim(),
-      });
+      result.add({'platform': platform.trim(), 'url': url.trim()});
     }
     if (result.isEmpty) {
       final legacyWebsite = _userData?['website']?.toString() ?? '';
       if (legacyWebsite.trim().isNotEmpty) {
-        result.add({
-          'platform': 'Website',
-          'url': legacyWebsite.trim(),
-        });
+        result.add({'platform': 'Website', 'url': legacyWebsite.trim()});
       }
     }
     return result;
@@ -642,7 +634,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: IconButton(
-                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.red,
+                        ),
                         onPressed: () {
                           setDialogState(() {
                             if (links.length > 1) {
@@ -683,11 +678,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
             TextButton(
               onPressed: () async {
                 final cleaned = links
-                    .map((e) => {
-                          'platform': (e['platform'] ?? '').trim(),
-                          'url': (e['url'] ?? '').trim(),
-                        })
-                    .where((e) => e['platform']!.isNotEmpty || e['url']!.isNotEmpty)
+                    .map(
+                      (e) => {
+                        'platform': (e['platform'] ?? '').trim(),
+                        'url': (e['url'] ?? '').trim(),
+                      },
+                    )
+                    .where(
+                      (e) => e['platform']!.isNotEmpty || e['url']!.isNotEmpty,
+                    )
                     .toList();
 
                 Navigator.pop(context);
@@ -721,15 +720,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await _loadUserData();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Social media updated')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Social media updated')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     } finally {
       setState(() => _isLoading = false);
@@ -830,22 +829,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final uri = Uri.tryParse(resolved);
     if (uri == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid link')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Invalid link')));
       }
       return;
     }
 
-    final launched = await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
 
     if (!launched && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open link')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not open link')));
     }
   }
 
@@ -868,9 +864,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ListTile(
         leading: const Icon(Icons.link),
         title: const Text('Other Social Media'),
-        subtitle: Text(
-          links.isEmpty ? 'Not set' : 'Tap a link to open',
-        ),
+        subtitle: Text(links.isEmpty ? 'Not set' : 'Tap a link to open'),
         trailing: IconButton(
           icon: const Icon(Icons.edit),
           onPressed: _isLoading ? null : _editSocialLinks,
@@ -891,22 +885,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       width: radius * 2,
       height: radius * 2,
       color: Colors.grey[300],
-      child: Icon(
-        Icons.person,
-        size: radius,
-        color: Colors.grey[600],
-      ),
+      child: Icon(Icons.person, size: radius, color: Colors.grey[600]),
     );
 
     if (photoUrl == null || photoUrl.isEmpty) {
       return CircleAvatar(
         radius: radius,
         backgroundColor: Colors.grey[300],
-        child: Icon(
-          Icons.person,
-          size: radius,
-          color: Colors.grey[600],
-        ),
+        child: Icon(Icons.person, size: radius, color: Colors.grey[600]),
       );
     }
     final dpr = MediaQuery.of(context).devicePixelRatio;
@@ -980,14 +966,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return '';
   }
 
+  Future<void> _copyFriendId(String friendId) async {
+    if (friendId.trim().isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: friendId.trim()));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Friend ID copied')));
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = _auth.currentUser;
     final themeService = Provider.of<ThemeService>(context);
-    
+
     final photoUrl = _pickPhotoUrl();
-    final displayName = _userData?['displayName'] ?? user?.displayName ?? 'User';
+    final displayName =
+        _userData?['displayName'] ?? user?.displayName ?? 'User';
     final email = user?.email ?? '';
+    final friendId = _userData?['friendId']?.toString().trim() ?? '';
     final bio = _getBio();
     final location = _userData?['location'] ?? '';
     final emailVerified = user?.emailVerified ?? false;
@@ -1011,239 +1008,259 @@ class _ProfileScreenState extends State<ProfileScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-                // Profile Picture Section
-                Center(
-                  child: Stack(
-                    children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Theme.of(context).primaryColor,
-                            width: 3,
-                          ),
-                        ),
-                        child: _buildAvatar(photoUrl, 70),
-                      ),
-                      if (_isUploading)
-                        Positioned.fill(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Center(
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      Positioned(
-                        bottom: 0,
-                        right: 0,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).primaryColor,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Theme.of(context).scaffoldBackgroundColor,
-                              width: 3,
-                            ),
-                          ),
-                          child: IconButton(
-                            icon: const Icon(Icons.camera_alt, color: Colors.white),
-                            onPressed: _isUploading ? null : _showImageSourceDialog,
-                          ),
-                        ),
-                      ),
-                    ],
+          // Profile Picture Section
+          Center(
+            child: Stack(
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Theme.of(context).primaryColor,
+                      width: 3,
+                    ),
                   ),
+                  child: _buildAvatar(photoUrl, 70),
                 ),
-                const SizedBox(height: 24),
-
-                // Name
-                Center(
-                  child: Text(
-                    displayName,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
+                if (_isUploading)
+                  Positioned.fill(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        width: 3,
+                      ),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.camera_alt, color: Colors.white),
+                      onPressed: _isUploading ? null : _showImageSourceDialog,
                     ),
                   ),
                 ),
-                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
 
-                // Status
-                Center(
-                  child: Text(
-                    bio.isEmpty ? 'No bio' : bio,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: bio.isEmpty ? Colors.grey : null,
-                      fontStyle: bio.isEmpty ? FontStyle.italic : null,
-                    ),
-                    textAlign: TextAlign.center,
+          // Name
+          Center(
+            child: Text(
+              displayName,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // Status
+          Center(
+            child: Text(
+              bio.isEmpty ? 'No bio' : bio,
+              style: TextStyle(
+                fontSize: 16,
+                color: bio.isEmpty ? Colors.grey : null,
+                fontStyle: bio.isEmpty ? FontStyle.italic : null,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 32),
+
+          // Profile Info Card
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.person_outline),
+                  title: const Text('Name'),
+                  subtitle: Text(displayName),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.edit),
+                    onPressed: _isLoading ? null : _editDisplayName,
                   ),
                 ),
-                const SizedBox(height: 32),
-
-                // Profile Info Card
-                Card(
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: const Icon(Icons.person_outline),
-                        title: const Text('Name'),
-                        subtitle: Text(displayName),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.edit),
-                          onPressed: _isLoading ? null : _editDisplayName,
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.email_outlined),
+                  title: const Text('Email'),
+                  subtitle: Text(email),
+                  trailing: emailVerified
+                      ? const Icon(Icons.verified, color: Colors.green)
+                      : const Icon(Icons.warning, color: Colors.orange),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.alternate_email),
+                  title: const Text('Friend ID'),
+                  subtitle: Text(
+                    friendId.isEmpty ? 'Not available yet' : '@$friendId',
+                  ),
+                  trailing: friendId.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.copy_rounded),
+                          tooltip: 'Copy',
+                          onPressed: () => _copyFriendId(friendId),
                         ),
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.email_outlined),
-                        title: const Text('Email'),
-                        subtitle: Text(email),
-                        trailing: emailVerified
-                            ? const Icon(Icons.verified, color: Colors.green)
-                            : const Icon(Icons.warning, color: Colors.orange),
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.info_outline),
-                        title: const Text('Bio'),
-                        subtitle: Text(bio.isEmpty ? 'No bio set' : bio),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.edit),
-                          onPressed: _isLoading ? null : _editBio,
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      ..._buildSocialLinksSection(socialLinks),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.place_outlined),
-                        title: const Text('Location'),
-                        subtitle: Text(location.isEmpty ? 'Not set' : location),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.edit),
-                          onPressed: _isLoading ? null : _editLocation,
-                        ),
-                      ),
-                    ],
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.info_outline),
+                  title: const Text('Bio'),
+                  subtitle: Text(bio.isEmpty ? 'No bio set' : bio),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.edit),
+                    onPressed: _isLoading ? null : _editBio,
                   ),
                 ),
-                const SizedBox(height: 24),
+                const Divider(height: 1),
+                ..._buildSocialLinksSection(socialLinks),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.place_outlined),
+                  title: const Text('Location'),
+                  subtitle: Text(location.isEmpty ? 'Not set' : location),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.edit),
+                    onPressed: _isLoading ? null : _editLocation,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
 
-                // Account Section
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  child: Text(
-                    'Account',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey,
-                    ),
-                  ),
+          // Account Section
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Text(
+              'Account',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.lock_outline),
+                  title: const Text('Change Password'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    _showChangePasswordDialog();
+                  },
                 ),
-                Card(
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: const Icon(Icons.lock_outline),
-                        title: const Text('Change Password'),
-                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                        onTap: () {
-                          _showChangePasswordDialog();
-                        },
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.phone_outlined),
+                  title: const Text('Phone Number'),
+                  subtitle: const Text('Not set'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Phone number feature coming soon'),
                       ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.phone_outlined),
-                        title: const Text('Phone Number'),
-                        subtitle: const Text('Not set'),
-                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Phone number feature coming soon')),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
-                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
 
-                // Privacy Section
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  child: Text(
-                    'Privacy',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ),
-                Card(
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: const Icon(Icons.visibility_outlined),
-                        title: const Text('Profile Visibility'),
-                        subtitle: const Text('Everyone'),
-                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Privacy settings coming soon')),
-                          );
-                        },
+          // Privacy Section
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Text(
+              'Privacy',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.visibility_outlined),
+                  title: const Text('Profile Visibility'),
+                  subtitle: const Text('Everyone'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Privacy settings coming soon'),
                       ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.block_outlined),
-                        title: const Text('Blocked Users'),
-                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Blocked users list coming soon')),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
-                const SizedBox(height: 24),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.block_outlined),
+                  title: const Text('Blocked Users'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Blocked users list coming soon'),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
 
-                // Danger Zone
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  child: Text(
-                    'Danger Zone',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.red,
-                    ),
-                  ),
-                ),
-                Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.delete_forever, color: Colors.red),
-                    title: const Text(
-                      'Delete Account',
-                      style: TextStyle(color: Colors.red),
-                    ),
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.red),
-                    onTap: () {
-                      _showDeleteAccountDialog();
-                    },
-                  ),
-                ),
+          // Danger Zone
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Text(
+              'Danger Zone',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.red,
+              ),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.delete_forever, color: Colors.red),
+              title: const Text(
+                'Delete Account',
+                style: TextStyle(color: Colors.red),
+              ),
+              trailing: const Icon(
+                Icons.arrow_forward_ios,
+                size: 16,
+                color: Colors.red,
+              ),
+              onTap: () {
+                _showDeleteAccountDialog();
+              },
+            ),
+          ),
         ],
       ),
     );
@@ -1273,7 +1290,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     labelText: 'Current Password',
                     prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
-                      icon: Icon(obscureCurrent ? Icons.visibility_off : Icons.visibility),
+                      icon: Icon(
+                        obscureCurrent
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
                       onPressed: () {
                         setDialogState(() => obscureCurrent = !obscureCurrent);
                       },
@@ -1288,7 +1309,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     labelText: 'New Password',
                     prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
-                      icon: Icon(obscureNew ? Icons.visibility_off : Icons.visibility),
+                      icon: Icon(
+                        obscureNew ? Icons.visibility_off : Icons.visibility,
+                      ),
                       onPressed: () {
                         setDialogState(() => obscureNew = !obscureNew);
                       },
@@ -1303,7 +1326,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     labelText: 'Confirm New Password',
                     prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
-                      icon: Icon(obscureConfirm ? Icons.visibility_off : Icons.visibility),
+                      icon: Icon(
+                        obscureConfirm
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
                       onPressed: () {
                         setDialogState(() => obscureConfirm = !obscureConfirm);
                       },
@@ -1340,7 +1367,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 if (newPass.length < 6) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Password must be at least 6 characters')),
+                    const SnackBar(
+                      content: Text('Password must be at least 6 characters'),
+                    ),
                   );
                   return;
                 }
@@ -1356,7 +1385,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Future<void> _changePassword(String currentPassword, String newPassword) async {
+  Future<void> _changePassword(
+    String currentPassword,
+    String newPassword,
+  ) async {
     final user = _auth.currentUser;
     if (user == null) return;
 
@@ -1368,7 +1400,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
 
       await user.reauthenticateWithCredential(credential);
-      
+
       // Update password
       await user.updatePassword(newPassword);
 
@@ -1386,15 +1418,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }

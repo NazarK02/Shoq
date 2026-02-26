@@ -11,10 +11,11 @@ class ImprovedFriendsListScreen extends StatefulWidget {
   const ImprovedFriendsListScreen({super.key});
 
   @override
-  State<ImprovedFriendsListScreen> createState() => _ImprovedFriendsListScreenState();
+  State<ImprovedFriendsListScreen> createState() =>
+      _ImprovedFriendsListScreenState();
 }
 
-class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen> 
+class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -38,11 +39,9 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
   @override
   Widget build(BuildContext context) {
     final user = _auth.currentUser;
-    
+
     if (user == null) {
-      return const Scaffold(
-        body: Center(child: Text('Not logged in')),
-      );
+      return const Scaffold(body: Center(child: Text('Not logged in')));
     }
 
     return Scaffold(
@@ -157,7 +156,8 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .snapshots(),
       builder: (context, snapshot) {
         // Don't show loading spinner after initial preload
-        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
@@ -168,9 +168,15 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
               children: [
                 Icon(Icons.people_outline, size: 80, color: Colors.grey[400]),
                 const SizedBox(height: 16),
-                Text('No friends yet', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                Text(
+                  'No friends yet',
+                  style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                ),
                 const SizedBox(height: 8),
-                Text('Send friend requests to connect', style: TextStyle(fontSize: 14, color: Colors.grey[500])),
+                Text(
+                  'Send friend requests to connect',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                ),
               ],
             ),
           );
@@ -182,11 +188,11 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           final bData = b.data() as Map<String, dynamic>;
           final aTime = aData['addedAt'] as Timestamp?;
           final bTime = bData['addedAt'] as Timestamp?;
-          
+
           if (aTime == null && bTime == null) return 0;
           if (aTime == null) return 1;
           if (bTime == null) return -1;
-          
+
           return bTime.compareTo(aTime);
         });
 
@@ -195,14 +201,17 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           itemBuilder: (context, index) {
             final friendData = friends[index].data() as Map<String, dynamic>;
             final friendId = friendData['userId'] as String;
-            
+
             return AnimatedSwitcher(
               duration: const Duration(milliseconds: 200),
               child: _FriendListTile(
                 key: ValueKey(friendId),
                 friendId: friendId,
                 initialData: friendData,
-                onRemove: () => _showRemoveFriendDialog(friendId, friendData['displayName']),
+                onRemove: () => _showRemoveFriendDialog(
+                  friendId,
+                  friendData['displayName'],
+                ),
                 onBlock: () => _blockUser(friendId, friendData),
               ),
             );
@@ -220,7 +229,8 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .where('status', isEqualTo: 'pending')
           .snapshots(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
@@ -229,9 +239,16 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.notifications_none, size: 80, color: Colors.grey[400]),
+                Icon(
+                  Icons.notifications_none,
+                  size: 80,
+                  color: Colors.grey[400],
+                ),
                 const SizedBox(height: 16),
-                Text('No friend requests', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                Text(
+                  'No friend requests',
+                  style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                ),
               ],
             ),
           );
@@ -266,7 +283,8 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .collection('blocked')
           .snapshots(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
@@ -277,7 +295,10 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
               children: [
                 Icon(Icons.block, size: 80, color: Colors.grey[400]),
                 const SizedBox(height: 16),
-                Text('No blocked users', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                Text(
+                  'No blocked users',
+                  style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                ),
               ],
             ),
           );
@@ -286,14 +307,18 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
         return ListView.builder(
           itemCount: snapshot.data!.docs.length,
           itemBuilder: (context, index) {
-            final blocked = snapshot.data!.docs[index].data() as Map<String, dynamic>;
-            
-            final blockedPhoto = blocked['photoURL']?.toString() ?? '';
+            final blocked =
+                snapshot.data!.docs[index].data() as Map<String, dynamic>;
+
+            final blockedPhoto =
+                (blocked['photoURL'] ?? blocked['photoUrl'])?.toString() ?? '';
             final hasBlockedPhoto = blockedPhoto.isNotEmpty;
             return ListTile(
               leading: CircleAvatar(
                 radius: 20,
-                backgroundColor: hasBlockedPhoto ? Colors.transparent : Colors.grey[300],
+                backgroundColor: hasBlockedPhoto
+                    ? Colors.transparent
+                    : Colors.grey[300],
                 backgroundImage: hasBlockedPhoto
                     ? CachedNetworkImageProvider(blockedPhoto)
                     : null,
@@ -318,8 +343,8 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
   // I'll include the essential ones below with optimizations
 
   void _showAddFriendDialog(BuildContext context) {
-    final emailController = TextEditingController();
-    
+    final queryController = TextEditingController();
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -327,14 +352,14 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Enter your friend\'s email address:'),
+            const Text('Enter email or unique Friend ID'),
             const SizedBox(height: 16),
             TextField(
-              controller: emailController,
+              controller: queryController,
               decoration: const InputDecoration(
-                labelText: 'Email',
-                hintText: 'friend@example.com',
-                prefixIcon: Icon(Icons.email),
+                labelText: 'Email or Friend ID',
+                hintText: 'friend@example.com or @alex1234',
+                prefixIcon: Icon(Icons.search),
                 border: OutlineInputBorder(),
               ),
               keyboardType: TextInputType.emailAddress,
@@ -348,16 +373,18 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           ),
           ElevatedButton(
             onPressed: () async {
-              final email = emailController.text.trim();
-              if (email.isEmpty) {
+              final query = queryController.text.trim();
+              if (query.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter an email')),
+                  const SnackBar(
+                    content: Text('Please enter email or Friend ID'),
+                  ),
                 );
                 return;
               }
-              
+
               Navigator.pop(context);
-              await _sendFriendRequest(email);
+              await _sendFriendRequest(query);
             },
             child: const Text('Send Request'),
           ),
@@ -366,21 +393,82 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
     );
   }
 
-  Future<void> _sendFriendRequest(String email) async {
+  bool _looksLikeEmail(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return false;
+    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text);
+  }
+
+  String _normalizeFriendIdInput(String value) {
+    var normalized = value.trim().toLowerCase();
+    if (normalized.startsWith('@')) {
+      normalized = normalized.substring(1);
+    }
+    return normalized.replaceAll(RegExp(r'[^a-z0-9]'), '');
+  }
+
+  Future<void> _sendFriendRequest(String query) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
 
     try {
-      final userQuery = await _firestore
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .limit(1)
-          .get();
+      final isEmail = _looksLikeEmail(query);
+      final usersRef = _firestore.collection('users');
+      QuerySnapshot<Map<String, dynamic>> userQuery;
+
+      if (isEmail) {
+        final email = query.trim().toLowerCase();
+        userQuery = await usersRef
+            .where('emailLower', isEqualTo: email)
+            .limit(1)
+            .get();
+        if (userQuery.docs.isEmpty) {
+          userQuery = await usersRef
+              .where('email', isEqualTo: query.trim())
+              .limit(1)
+              .get();
+        }
+      } else {
+        final friendIdLower = _normalizeFriendIdInput(query);
+        final rawFriendId = query.trim().replaceFirst(RegExp(r'^@'), '');
+        if (friendIdLower.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('Invalid Friend ID')));
+          }
+          return;
+        }
+        userQuery = await usersRef
+            .where('friendIdLower', isEqualTo: friendIdLower)
+            .limit(1)
+            .get();
+        if (userQuery.docs.isEmpty && rawFriendId.isNotEmpty) {
+          userQuery = await usersRef
+              .where('friendId', isEqualTo: rawFriendId)
+              .limit(1)
+              .get();
+        }
+        if (userQuery.docs.isEmpty &&
+            rawFriendId.isNotEmpty &&
+            rawFriendId.toLowerCase() != rawFriendId) {
+          userQuery = await usersRef
+              .where('friendId', isEqualTo: rawFriendId.toLowerCase())
+              .limit(1)
+              .get();
+        }
+      }
 
       if (userQuery.docs.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('User not found')),
+            SnackBar(
+              content: Text(
+                isEmail
+                    ? 'No user found for this email'
+                    : 'No user found for this Friend ID',
+              ),
+            ),
           );
         }
         return;
@@ -388,7 +476,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
 
       final friendUser = userQuery.docs.first;
       final friendId = friendUser.id;
-      
+
       if (friendId == currentUser.uid) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -408,9 +496,9 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
 
       if (existingFriend.exists) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Already friends')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Already friends')));
         }
         return;
       }
@@ -442,9 +530,12 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
 
       // Send notification
       try {
-        final currentUserData = await _firestore.collection('users').doc(currentUser.uid).get();
+        final currentUserData = await _firestore
+            .collection('users')
+            .doc(currentUser.uid)
+            .get();
         final senderName = currentUserData.data()?['displayName'] ?? 'Someone';
-        
+
         await NotificationService().sendFriendRequestNotification(
           recipientId: friendId,
           senderName: senderName,
@@ -452,18 +543,18 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       } catch (notificationError) {
         print('Error sending notification: $notificationError');
       }
-      
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend request sent!')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Friend request sent!')));
       }
     } catch (e) {
       print('Error sending friend request: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
@@ -474,10 +565,16 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
 
     try {
       // Get friend data directly from Firestore
-      final friendDoc = await _firestore.collection('users').doc(friendId).get();
+      final friendDoc = await _firestore
+          .collection('users')
+          .doc(friendId)
+          .get();
       final friendData = friendDoc.data();
 
-      final conversationId = _getDirectConversationId(currentUser.uid, friendId);
+      final conversationId = _getDirectConversationId(
+        currentUser.uid,
+        friendId,
+      );
 
       // Create conversation
       await _firestore.collection('conversations').doc(conversationId).set({
@@ -496,28 +593,35 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .collection('friends')
           .doc(friendId)
           .set({
-        'userId': friendId,
-        'displayName': friendData?['displayName'] ?? 'User',
-        'email': friendData?['email'] ?? '',
-        'photoURL': friendData?['photoURL'],
-        'addedAt': FieldValue.serverTimestamp(),
-        'conversationId': conversationId,
-      });
+            'userId': friendId,
+            'friendId': friendData?['friendId'] ?? '',
+            'displayName': friendData?['displayName'] ?? 'User',
+            'email': friendData?['email'] ?? '',
+            'photoURL': friendData?['photoUrl'] ?? friendData?['photoURL'],
+            'addedAt': FieldValue.serverTimestamp(),
+            'conversationId': conversationId,
+          });
 
-      final currentUserData = await _firestore.collection('users').doc(currentUser.uid).get();
+      final currentUserData = await _firestore
+          .collection('users')
+          .doc(currentUser.uid)
+          .get();
       await _firestore
           .collection('contacts')
           .doc(friendId)
           .collection('friends')
           .doc(currentUser.uid)
           .set({
-        'userId': currentUser.uid,
-        'displayName': currentUserData.data()?['displayName'] ?? 'User',
-        'email': currentUserData.data()?['email'] ?? '',
-        'photoURL': currentUserData.data()?['photoURL'],
-        'addedAt': FieldValue.serverTimestamp(),
-        'conversationId': conversationId,
-      });
+            'userId': currentUser.uid,
+            'friendId': currentUserData.data()?['friendId'] ?? '',
+            'displayName': currentUserData.data()?['displayName'] ?? 'User',
+            'email': currentUserData.data()?['email'] ?? '',
+            'photoURL':
+                currentUserData.data()?['photoUrl'] ??
+                currentUserData.data()?['photoURL'],
+            'addedAt': FieldValue.serverTimestamp(),
+            'conversationId': conversationId,
+          });
 
       // Update request status
       await _firestore.collection('friendRequests').doc(requestId).update({
@@ -534,9 +638,9 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
@@ -549,15 +653,15 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend request denied')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Friend request denied')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
@@ -576,12 +680,13 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .collection('blocked')
           .doc(userId)
           .set({
-        'userId': userId,
-        'displayName': userData?['displayName'] ?? 'User',
-        'email': userData?['email'] ?? '',
-        'photoURL': userData?['photoURL'],
-        'blockedAt': FieldValue.serverTimestamp(),
-      });
+            'userId': userId,
+            'friendId': userData?['friendId'] ?? '',
+            'displayName': userData?['displayName'] ?? 'User',
+            'email': userData?['email'] ?? '',
+            'photoURL': userData?['photoUrl'] ?? userData?['photoURL'],
+            'blockedAt': FieldValue.serverTimestamp(),
+          });
 
       await _firestore.collection('friendRequests').doc(requestId).update({
         'status': 'blocked',
@@ -589,20 +694,23 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('User blocked')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('User blocked')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
 
-  Future<void> _blockUser(String friendId, Map<String, dynamic> friendData) async {
+  Future<void> _blockUser(
+    String friendId,
+    Map<String, dynamic> friendData,
+  ) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
 
@@ -613,12 +721,13 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .collection('blocked')
           .doc(friendId)
           .set({
-        'userId': friendId,
-        'displayName': friendData['displayName'] ?? 'User',
-        'email': friendData['email'] ?? '',
-        'photoURL': friendData['photoURL'],
-        'blockedAt': FieldValue.serverTimestamp(),
-      });
+            'userId': friendId,
+            'friendId': friendData['friendId'] ?? '',
+            'displayName': friendData['displayName'] ?? 'User',
+            'email': friendData['email'] ?? '',
+            'photoURL': friendData['photoURL'] ?? friendData['photoUrl'],
+            'blockedAt': FieldValue.serverTimestamp(),
+          });
 
       await _firestore
           .collection('contacts')
@@ -635,15 +744,15 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .delete();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('User blocked')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('User blocked')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
@@ -661,15 +770,15 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .delete();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('User unblocked')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('User unblocked')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
@@ -679,7 +788,9 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Remove Friend'),
-        content: Text('Are you sure you want to remove $friendName from your friends?'),
+        content: Text(
+          'Are you sure you want to remove $friendName from your friends?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -720,15 +831,15 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       // (No cache subscription to remove)
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend removed')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Friend removed')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     }
   }
@@ -758,7 +869,8 @@ class _FriendListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final displayName = initialData['displayName'] ?? 'User';
     final email = initialData['email'] ?? '';
-    final photoURL = initialData['photoURL']?.toString() ?? '';
+    final photoURL =
+        (initialData['photoURL'] ?? initialData['photoUrl'])?.toString() ?? '';
     final hasPhoto = photoURL.isNotEmpty;
 
     return ListTile(
@@ -770,10 +882,8 @@ class _FriendListTile extends StatelessWidget {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => UserProfileViewScreen(
-              userId: friendId,
-              userData: seedData,
-            ),
+            builder: (_) =>
+                UserProfileViewScreen(userId: friendId, userData: seedData),
           ),
         );
       },
@@ -878,7 +988,10 @@ class _FriendRequestTileState extends State<_FriendRequestTile> {
 
   Future<void> _loadUserData() async {
     try {
-      final doc = await FirebaseFirestore.instance.collection('users').doc(widget.senderId).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.senderId)
+          .get();
       final data = doc.data();
       if (mounted) {
         setState(() {
@@ -907,7 +1020,8 @@ class _FriendRequestTileState extends State<_FriendRequestTile> {
 
     final displayName = _userData?['displayName'] ?? 'User';
     final email = _userData?['email'] ?? '';
-    final photoURL = _userData?['photoURL']?.toString() ?? '';
+    final photoURL =
+        (_userData?['photoURL'] ?? _userData?['photoUrl'])?.toString() ?? '';
     final hasPhoto = photoURL.isNotEmpty;
 
     return Card(
@@ -916,10 +1030,15 @@ class _FriendRequestTileState extends State<_FriendRequestTile> {
         leading: CircleAvatar(
           radius: 20,
           backgroundColor: hasPhoto ? Colors.transparent : Colors.grey[300],
-          backgroundImage: hasPhoto ? CachedNetworkImageProvider(photoURL) : null,
+          backgroundImage: hasPhoto
+              ? CachedNetworkImageProvider(photoURL)
+              : null,
           child: hasPhoto ? null : Icon(Icons.person, color: Colors.grey[600]),
         ),
-        title: Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(
+          displayName,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
         subtitle: Text(email),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
