@@ -72,14 +72,10 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
       final user = _auth.currentUser;
       if (user != null) {
         await user.reload(); // Refresh emailVerified status
-        if (user.emailVerified) {
+        // Do NOT navigate from here. AuthWrapper listens to userChanges()
+        // and will handle routing when `emailVerified` becomes true.
+        if (_auth.currentUser?.emailVerified == true) {
           timer.cancel();
-          if (mounted) {
-            // Navigate to HomeScreen automatically
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const HomeScreen()),
-            );
-          }
         }
       }
     });
@@ -179,14 +175,12 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                   final user = _auth.currentUser;
                   if (user != null) {
                     await user.reload();
-                    if (user.emailVerified) {
-                      // Navigate to HomeScreen or main app
-                      if (mounted) {
-                        Navigator.of(context).pushReplacement(
-                          MaterialPageRoute(
-                              builder: (_) => const HomeScreen()),
-                        );
-                      }
+                    // Do not navigate here; AuthWrapper will route when
+                    // `emailVerified` flips to true. Just cancel the timer
+                    // so we stop polling and give the StreamBuilder a chance
+                    // to react to the auth change.
+                    if (_auth.currentUser?.emailVerified == true) {
+                      _timer?.cancel();
                     } else {
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
