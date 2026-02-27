@@ -17,6 +17,7 @@ import 'services/user_service_e2ee.dart';
 import 'services/app_prefetch_service.dart';
 import 'services/user_cache_service.dart';
 import 'services/conversation_cache_service.dart';
+import 'services/video_cache_service.dart';
 import 'screens/call_screen.dart';
 import 'services/signaling_service.dart';
 
@@ -63,6 +64,15 @@ Future<void> main() async {
       }
     });
   }
+
+  // Evict old cached videos in background to avoid unbounded disk growth
+  Future.microtask(() async {
+    try {
+      unawaited(VideoCacheService().evictOlderThan(const Duration(days: 30)));
+    } catch (e) {
+      debugPrint('Video cache eviction failed: $e');
+    }
+  });
 }
 
 class MyApp extends StatelessWidget {
@@ -249,11 +259,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   Future<void> _initializeE2EEForUser() async {
     try {
-      print('🔐 Initializing E2EE for logged-in user...');
+      debugPrint('🔐 Initializing E2EE for logged-in user...');
       await UserService().initializeE2EE();
-      print('✅ E2EE initialization complete');
+      debugPrint('✅ E2EE initialization complete');
     } catch (e) {
-      print('⚠️  E2EE initialization failed (user may be new): $e');
+      debugPrint('⚠️  E2EE initialization failed (user may be new): $e');
       // Don't throw - app should still work for new users
       // E2EE will be initialized when they first try to send a message
     }
@@ -275,7 +285,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    print('📱 Lifecycle changed to: $state');
+    debugPrint('📱 Lifecycle changed to: $state');
 
     switch (state) {
       case AppLifecycleState.resumed:

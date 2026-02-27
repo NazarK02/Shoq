@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:image_picker/image_picker.dart';
@@ -78,7 +77,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         }
       }
     } catch (e) {
-      print('Error loading user data: $e');
+      debugPrint('Error loading user data: $e');
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -317,7 +316,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final ref = _storage.ref().child('profile_pictures/${user.uid}');
         await ref.delete();
       } catch (e) {
-        print('No profile picture to delete: $e');
+        debugPrint('No profile picture to delete: $e');
       }
 
       // Update Firestore
@@ -575,7 +574,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final result = <Map<String, String>>[];
     for (final item in raw) {
       if (item is! Map) continue;
-      final map = Map<String, dynamic>.from(item as Map);
+      final map = Map<String, dynamic>.from(item);
       final platform = map['platform']?.toString() ?? '';
       final url = map['url']?.toString() ?? '';
       if (platform.trim().isEmpty && url.trim().isEmpty) continue;
@@ -812,8 +811,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         fit: BoxFit.cover,
         memCacheWidth: 48,
         memCacheHeight: 48,
-        placeholder: (_, __) => Icon(_iconForPlatform(platform)),
-        errorWidget: (_, __, ___) => Icon(_iconForPlatform(platform)),
+        placeholder: (_, url) => Icon(_iconForPlatform(platform)),
+        errorWidget: (_, url, error) => Icon(_iconForPlatform(platform)),
         fadeInDuration: const Duration(milliseconds: 100),
         fadeOutDuration: const Duration(milliseconds: 100),
       ),
@@ -913,7 +912,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: frame == null ? placeholder : child,
             );
           },
-          errorBuilder: (_, __, ___) => placeholder,
+          errorBuilder: (_, error, stackTrace) => placeholder,
           loadingBuilder: (context, child, loadingProgress) {
             if (loadingProgress == null) return child;
             return placeholder;
@@ -931,8 +930,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         fit: BoxFit.cover,
         memCacheWidth: cacheSize,
         memCacheHeight: cacheSize,
-        placeholder: (_, __) => placeholder,
-        errorWidget: (_, __, ___) => placeholder,
+        placeholder: (_, url) => placeholder,
+        errorWidget: (_, url, error) => placeholder,
         fadeInDuration: const Duration(milliseconds: 150),
         fadeOutDuration: const Duration(milliseconds: 150),
       ),

@@ -671,6 +671,24 @@ class ChatService {
         .snapshots();
   }
 
+  /// Reads recent messages from Firestore local cache for instant first paint.
+  Future<QuerySnapshot?> getCachedMessages(
+    String conversationId, {
+    int limit = 120,
+  }) async {
+    try {
+      return await _firestore
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages')
+          .orderBy('clientTimestamp', descending: false)
+          .limitToLast(limit)
+          .get(const GetOptions(source: Source.cache));
+    } catch (_) {
+      return null;
+    }
+  }
+
   void _addUniqueString(List<String> target, String? value) {
     if (value == null) return;
     final trimmed = value.trim();

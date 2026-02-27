@@ -226,6 +226,24 @@ class FileDownloadService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Call this when the chat screen mounts to restore completed download state
+  /// from disk without re-downloading anything.
+  Future<void> hydrateFromDisk(String messageId, String fileName, String mimeType) async {
+    if (_downloads.containsKey(messageId)) return; // already known
+
+    final targetPath = await _resolveTargetPath(fileName, mimeType);
+    if (File(targetPath).existsSync()) {
+      _downloads[messageId] = DownloadProgress(
+        status: DownloadStatus.completed,
+        progress: 1.0,
+        totalBytes: 0,
+        downloadedBytes: 0,
+        localPath: targetPath,
+      );
+      // Silent restore — no notifyListeners to avoid extra rebuilds
+    }
+  }
+
   @override
   void dispose() {
     _client.close(force: true);

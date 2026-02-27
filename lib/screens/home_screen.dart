@@ -1434,7 +1434,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: frame == null ? placeholder : child,
             );
           },
-          errorBuilder: (_, __, ___) => placeholder,
+          errorBuilder: (_, error, stackTrace) => placeholder,
           loadingBuilder: (context, child, loadingProgress) {
             if (loadingProgress == null) return child;
             return placeholder;
@@ -1451,8 +1451,8 @@ class _HomeScreenState extends State<HomeScreen> {
         fit: BoxFit.cover,
         memCacheWidth: cacheSize,
         memCacheHeight: cacheSize,
-        placeholder: (_, __) => placeholder,
-        errorWidget: (_, __, ___) => placeholder,
+        placeholder: (_, url) => placeholder,
+        errorWidget: (_, url, error) => placeholder,
         fadeInDuration: const Duration(milliseconds: 150),
         fadeOutDuration: const Duration(milliseconds: 150),
       ),

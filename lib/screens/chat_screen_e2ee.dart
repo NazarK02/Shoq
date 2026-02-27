@@ -17,6 +17,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:video_player/video_player.dart';
 import '../services/notification_service.dart';
+import '../services/video_cache_service.dart';
 import '../services/presence_service.dart';
 import '../services/chat_service_e2ee.dart';
 import '../services/user_cache_service.dart';
@@ -271,7 +272,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
           conversationId: _conversationId,
         );
       } catch (notificationError) {
-        print('Error sending notification: $notificationError');
+        debugPrint('Error sending notification: $notificationError');
       }
 
       _scrollToBottom();
@@ -574,7 +575,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                 child: frame == null ? placeholder : child,
               );
             },
-            errorBuilder: (_, __, ___) => placeholder,
+            errorBuilder: (_, error, stackTrace) => placeholder,
             loadingBuilder: (context, child, loadingProgress) {
               if (loadingProgress == null) return child;
               return placeholder;
@@ -596,8 +597,8 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
           fit: BoxFit.cover,
           memCacheWidth: cacheSize,
           memCacheHeight: cacheSize,
-          placeholder: (_, __) => placeholder,
-          errorWidget: (_, __, ___) => placeholder,
+          placeholder: (_, url) => placeholder,
+          errorWidget: (_, url, error) => placeholder,
           fadeInDuration: const Duration(milliseconds: 150),
           fadeOutDuration: const Duration(milliseconds: 150),
         ),
@@ -1228,7 +1229,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
           conversationId: _conversationId,
         );
       } catch (notificationError) {
-        print('Error sending notification: $notificationError');
+        debugPrint('Error sending notification: $notificationError');
       }
 
       _removePendingUpload(upload.messageId);
@@ -1568,17 +1569,6 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     }
   }
 
-  void _removePendingTextMessage(String id) {
-    if (!mounted) return;
-    final index = _pendingTextMessages.indexWhere(
-      (pending) => pending.id == id,
-    );
-    if (index == -1) return;
-    setState(() {
-      _pendingTextMessages.removeAt(index);
-    });
-  }
-
   void _ackPendingTextMessages(Set<String> deliveredIds) {
     if (!mounted || deliveredIds.isEmpty) return;
     setState(() {
@@ -1675,6 +1665,54 @@ class _MessagesListState extends State<_MessagesList>
   bool _animationCachePrimed = false;
   int _lastTotalItems = 0;
   bool _markReadInFlight = false;
+  QuerySnapshot? _cachedMessagesSnapshot;
+  bool _cacheHydrated = false;
+  String? _cacheConversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    _hydrateLocalMessages();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MessagesList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationId != widget.conversationId) {
+      _resetTransientCaches();
+      _hydrateLocalMessages();
+    }
+  }
+
+  void _resetTransientCaches() {
+    _decryptedCache.clear();
+    _decryptFutureCache.clear();
+    _decryptInputSignature.clear();
+    _animatedMessageIds.clear();
+    _animationCachePrimed = false;
+    _lastTotalItems = 0;
+    _markReadInFlight = false;
+    _cachedMessagesSnapshot = null;
+    _cacheHydrated = widget.conversationId == null;
+  }
+
+  void _hydrateLocalMessages() {
+    final conversationId = widget.conversationId;
+    _cacheConversationId = conversationId;
+    _cachedMessagesSnapshot = null;
+    _cacheHydrated = conversationId == null;
+    if (conversationId == null) return;
+    unawaited(_loadCachedMessages(conversationId));
+  }
+
+  Future<void> _loadCachedMessages(String conversationId) async {
+    final cached = await widget.chatService.getCachedMessages(conversationId);
+    if (!mounted || _cacheConversationId != conversationId) return;
+    setState(() {
+      _cachedMessagesSnapshot = cached;
+      _cacheHydrated = true;
+    });
+  }
 
   @override
   bool get wantKeepAlive => true;
@@ -1751,7 +1789,7 @@ class _MessagesListState extends State<_MessagesList>
     final hasUnreadFromPeer = messages.any((doc) {
       final data = doc.data();
       if (data is! Map) return false;
-      final map = Map<String, dynamic>.from(data as Map);
+      final map = Map<String, dynamic>.from(data);
       final senderId = map['senderId']?.toString();
       final isRead = map['read'] == true;
       return senderId == widget.recipientId && !isRead;
@@ -2167,7 +2205,7 @@ class _MessagesListState extends State<_MessagesList>
                 onTap: () async {
                   Navigator.pop(sheetContext);
                   await Clipboard.setData(ClipboardData(text: displayText));
-                  if (!mounted) return;
+                  if (!rootContext.mounted) return;
                   ScaffoldMessenger.of(rootContext).showSnackBar(
                     const SnackBar(content: Text('Message copied for forward')),
                   );
@@ -2298,18 +2336,26 @@ class _MessagesListState extends State<_MessagesList>
 
     return StreamBuilder<QuerySnapshot>(
       stream: widget.chatService.getMessages(widget.conversationId!),
+      initialData: _cachedMessagesSnapshot,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
+        final hasPendingItems =
+            widget.pendingTextMessages.isNotEmpty ||
+            widget.pendingUploads.isNotEmpty;
+
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData &&
-            widget.pendingTextMessages.isEmpty &&
-            widget.pendingUploads.isEmpty) {
+            !hasPendingItems) {
+          if (!widget.hasMessages && _cacheHydrated) {
+            return _buildEmptyState();
+          }
           return const SizedBox.shrink();
         }
 
+        final encryptionReady = widget.chatService.isEncryptionReady;
         final messages = snapshot.data?.docs ?? [];
         if (!_animationCachePrimed && messages.isNotEmpty) {
           _animationCachePrimed = true;
@@ -2339,10 +2385,15 @@ class _MessagesListState extends State<_MessagesList>
           (key, _) => !visibleMessageIds.contains(key),
         );
 
-        if (messages.isEmpty &&
-            widget.pendingTextMessages.isEmpty &&
-            widget.pendingUploads.isEmpty) {
-          return _buildEmptyState();
+        if (messages.isEmpty && !hasPendingItems) {
+          final streamSettled =
+              snapshot.connectionState == ConnectionState.active ||
+              snapshot.connectionState == ConnectionState.done ||
+              snapshot.hasData;
+          if (!widget.hasMessages || streamSettled || _cacheHydrated) {
+            return _buildEmptyState();
+          }
+          return const SizedBox.shrink();
         }
 
         final pendingText = widget.pendingTextMessages;
@@ -2424,7 +2475,8 @@ class _MessagesListState extends State<_MessagesList>
               );
             }
 
-            final signature = _decryptSignature(message);
+            final signature =
+                '${encryptionReady ? 'ready' : 'not_ready'}||${_decryptSignature(message)}';
             if (_decryptInputSignature[messageId] != signature) {
               _decryptInputSignature[messageId] = signature;
               _decryptFutureCache.remove(messageId);
@@ -2434,13 +2486,12 @@ class _MessagesListState extends State<_MessagesList>
             final decryptFuture = _decryptFutureCache.putIfAbsent(
               messageId,
               () {
-                final future = widget.chatService.isEncryptionReady
+                final future = encryptionReady
                     ? widget.chatService.decryptMessage(messageData: message)
                     : Future.value('');
 
                 return future.then((decrypted) {
-                  if (widget.chatService.isEncryptionReady &&
-                      decrypted.isNotEmpty) {
+                  if (encryptionReady && decrypted.isNotEmpty) {
                     _decryptedCache[messageId] = decrypted;
                   }
                   return decrypted;
@@ -2453,7 +2504,7 @@ class _MessagesListState extends State<_MessagesList>
               builder: (context, decryptSnapshot) {
                 String displayText;
 
-                if (!widget.chatService.isEncryptionReady) {
+                if (!encryptionReady) {
                   displayText = _decryptedCache[messageId] ?? '';
                 } else if (decryptSnapshot.connectionState ==
                     ConnectionState.waiting) {
@@ -2927,7 +2978,7 @@ class _MessagesListState extends State<_MessagesList>
                     isMe: isMe,
                   )
                 else
-                  _InlineVideoPlayer(url: fileUrl),
+                  _InlineVideoPlayer(url: fileUrl, messageId: messageId),
                 if (timestamp != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
@@ -3014,12 +3065,12 @@ class _MessagesListState extends State<_MessagesList>
               child: CachedNetworkImage(
                 imageUrl: fileUrl,
                 fit: BoxFit.cover,
-                placeholder: (_, __) => Container(
+                placeholder: (_, url) => Container(
                   height: 200,
                   color: Colors.grey[800],
                   child: const Center(child: CircularProgressIndicator()),
                 ),
-                errorWidget: (_, __, ___) => Container(
+                errorWidget: (_, url, error) => Container(
                   height: 200,
                   color: Colors.grey[800],
                   child: const Center(
@@ -3343,8 +3394,9 @@ class _MessagesListState extends State<_MessagesList>
 
 class _InlineVideoPlayer extends StatefulWidget {
   final String url;
+  final String messageId; // ADD THIS
 
-  const _InlineVideoPlayer({required this.url});
+  const _InlineVideoPlayer({required this.url, required this.messageId});
 
   @override
   State<_InlineVideoPlayer> createState() => _InlineVideoPlayerState();
@@ -3354,6 +3406,9 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
   VideoPlayerController? _controller;
   Future<void>? _initializeFuture;
   String? _error;
+  bool _userRequestedPlay = false;
+  bool _checkingCache = true; // NEW
+  String? _cachedPath; // NEW
   int _setupToken = 0;
 
   @override
@@ -3361,17 +3416,20 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
     super.initState();
     if (Platform.isWindows) {
       _error = 'Video preview is unavailable on Windows';
+      _checkingCache = false;
       return;
     }
-    _setupController();
+    _checkCache();
   }
 
   @override
   void didUpdateWidget(covariant _InlineVideoPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (Platform.isWindows) return;
-    if (oldWidget.url != widget.url) {
-      _setupController();
+    if (oldWidget.url != widget.url ||
+        oldWidget.messageId != widget.messageId) {
+      _checkingCache = true;
+      _checkCache();
     }
   }
 
@@ -3380,36 +3438,27 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
     setState(() {});
   }
 
-  Future<void> _setupController() async {
-    if (Platform.isWindows) {
-      final oldController = _controller;
-      _controller = null;
-      _initializeFuture = null;
-      _error = 'Video preview is unavailable on Windows';
-      await oldController?.dispose();
-      if (mounted) setState(() {});
-      return;
+  Future<void> _checkCache() async {
+    final cached = await VideoCacheService().getCached(widget.messageId);
+    if (!mounted) return;
+    setState(() {
+      _cachedPath = cached;
+      _checkingCache = false;
+    });
+    // If already cached, initialize immediately — no tap needed
+    if (cached != null) {
+      _setupControllerFromPath(cached);
     }
+  }
 
+  Future<void> _setupControllerFromPath(String localPath) async {
     final setupToken = ++_setupToken;
     final oldController = _controller;
-    if (oldController != null) {
-      oldController.removeListener(_videoListener);
-    }
+    oldController?.removeListener(_videoListener);
 
-    final uri = Uri.tryParse(widget.url);
-    if (uri == null || (!uri.hasScheme && !uri.hasAuthority)) {
-      setState(() {
-        _controller = null;
-        _initializeFuture = null;
-        _error = 'Invalid video link';
-      });
-      await oldController?.dispose();
-      return;
-    }
-
-    final controller = VideoPlayerController.networkUrl(uri);
+    final controller = VideoPlayerController.file(File(localPath));
     controller.addListener(_videoListener);
+
     final future = controller.initialize().then((_) {
       controller.setLooping(false);
     });
@@ -3442,6 +3491,53 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
     }
   }
 
+  Future<void> _setupControllerFromNetwork() async {
+    final setupToken = ++_setupToken;
+    final oldController = _controller;
+    oldController?.removeListener(_videoListener);
+
+    final uri = Uri.tryParse(widget.url);
+    if (uri == null) {
+      setState(() => _error = 'Invalid video link');
+      await oldController?.dispose();
+      return;
+    }
+
+    // Download to cache dir, then play from file — avoids repeated network hits
+    final cachePath = await VideoCacheService().reservePath(widget.messageId);
+    final cacheFile = File(cachePath);
+
+    if (!cacheFile.existsSync()) {
+      try {
+        final client = HttpClient();
+        final request = await client.getUrl(uri);
+        final response = await request.close();
+        final sink = cacheFile.openWrite();
+        await response.pipe(sink);
+        client.close();
+      } catch (e) {
+        if (!mounted || setupToken != _setupToken) return;
+        setState(() => _error = 'Could not download video');
+        await oldController?.dispose();
+        return;
+      }
+    }
+
+    if (!mounted || setupToken != _setupToken) return;
+    await _setupControllerFromPath(cachePath);
+  }
+
+  void _onTapPlay() {
+    if (_controller != null && _controller!.value.isInitialized) {
+      _togglePlayback();
+      return;
+    }
+    if (!_userRequestedPlay) {
+      setState(() => _userRequestedPlay = true);
+      _setupControllerFromNetwork();
+    }
+  }
+
   Future<void> _togglePlayback() async {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
@@ -3466,14 +3562,13 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
 
   @override
   Widget build(BuildContext context) {
+    if (_checkingCache) {
+      // Tiny non-intrusive placeholder while we check disk (usually <1ms)
+      return _buildShell(child: const SizedBox.shrink());
+    }
+
     if (_error != null) {
-      return Container(
-        width: double.infinity,
-        height: 190,
-        decoration: BoxDecoration(
-          color: Colors.black12,
-          borderRadius: BorderRadius.circular(12),
-        ),
+      return _buildShell(
         child: Center(
           child: Text(_error!, style: Theme.of(context).textTheme.bodySmall),
         ),
@@ -3482,15 +3577,27 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
 
     final controller = _controller;
     final initFuture = _initializeFuture;
-    if (controller == null || initFuture == null) {
-      return Container(
-        width: double.infinity,
-        height: 190,
-        decoration: BoxDecoration(
-          color: Colors.black12,
-          borderRadius: BorderRadius.circular(12),
+
+    // Not yet requested by user AND not cached — show tap-to-play
+    if (!_userRequestedPlay && _cachedPath == null) {
+      return _buildShell(
+        child: GestureDetector(
+          onTap: _onTapPlay,
+          child: const Center(
+            child: Icon(
+              Icons.play_circle_outline,
+              color: Colors.white70,
+              size: 54,
+            ),
+          ),
         ),
-        child: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // Requested or cached, but controller not ready yet
+    if (controller == null || initFuture == null) {
+      return _buildShell(
+        child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
       );
     }
 
@@ -3498,17 +3605,12 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       future: initFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return Container(
-            width: double.infinity,
-            height: 190,
-            decoration: BoxDecoration(
-              color: Colors.black12,
-              borderRadius: BorderRadius.circular(12),
+          return _buildShell(
+            child: const Center(
+              child: CircularProgressIndicator(strokeWidth: 2),
             ),
-            child: const Center(child: CircularProgressIndicator()),
           );
         }
-
         final aspectRatio = controller.value.aspectRatio > 0
             ? controller.value.aspectRatio
             : (16 / 9);
@@ -3560,6 +3662,20 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       },
     );
   }
+
+  Widget _buildShell({required Widget child}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: double.infinity,
+        height: 190,
+        color: Colors.black87,
+        child: child,
+      ),
+    );
+  }
+
+  // ... _videoListener, _togglePlayback, dispose unchanged
 }
 
 class _InlineAudioPlayer extends StatefulWidget {

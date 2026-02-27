@@ -541,7 +541,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           senderName: senderName,
         );
       } catch (notificationError) {
-        print('Error sending notification: $notificationError');
+        debugPrint('Error sending notification: $notificationError');
       }
 
       if (mounted) {
@@ -550,7 +550,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
         ).showSnackBar(const SnackBar(content: Text('Friend request sent!')));
       }
     } catch (e) {
-      print('Error sending friend request: $e');
+      debugPrint('Error sending friend request: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,

@@ -697,7 +697,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
     if (raw is List) {
       for (final item in raw) {
         if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item as Map);
+        final map = Map<String, dynamic>.from(item);
         final platform = map['platform']?.toString() ?? '';
         final url = map['url']?.toString() ?? '';
         if (platform.trim().isEmpty && url.trim().isEmpty) continue;
@@ -792,8 +792,8 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         fit: BoxFit.cover,
         memCacheWidth: 48,
         memCacheHeight: 48,
-        placeholder: (_, __) => Icon(_iconForPlatform(platform)),
-        errorWidget: (_, __, ___) => Icon(_iconForPlatform(platform)),
+        placeholder: (_, url) => Icon(_iconForPlatform(platform)),
+        errorWidget: (_, url, error) => Icon(_iconForPlatform(platform)),
         fadeInDuration: const Duration(milliseconds: 100),
         fadeOutDuration: const Duration(milliseconds: 100),
       ),
@@ -889,7 +889,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
               child: frame == null ? placeholder : child,
             );
           },
-          errorBuilder: (_, __, ___) => placeholder,
+          errorBuilder: (_, error, stackTrace) => placeholder,
           loadingBuilder: (context, child, loadingProgress) {
             if (loadingProgress == null) return child;
             return placeholder;
@@ -906,8 +906,8 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         fit: BoxFit.cover,
         memCacheWidth: cacheSize,
         memCacheHeight: cacheSize,
-        placeholder: (_, __) => placeholder,
-        errorWidget: (_, __, ___) => placeholder,
+        placeholder: (_, url) => placeholder,
+        errorWidget: (_, url, error) => placeholder,
         fadeInDuration: const Duration(milliseconds: 150),
         fadeOutDuration: const Duration(milliseconds: 150),
       ),

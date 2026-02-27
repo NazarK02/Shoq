@@ -123,7 +123,7 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void initState() {
     super.initState();
-    print(
+    debugPrint(
       '🎬 CallScreen initState - isVideo: ${widget.isVideo}, isIncoming: ${widget.isIncoming}',
     );
 
@@ -152,18 +152,18 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     try {
-      print('Initializing renderers - isVideo: $_isVideo');
+      debugPrint('Initializing renderers - isVideo: $_isVideo');
 
       // Keep startup light for audio calls, but eagerly initialize for video.
       if (_isVideo) {
         await _ensureVideoRenderers();
-        print('Video renderers initialized');
+        debugPrint('Video renderers initialized');
       } else {
-        print('Audio-only call - skipping video renderer initialization');
+        debugPrint('Audio-only call - skipping video renderer initialization');
       }
     } catch (e, stack) {
-      print('Renderer initialization error: $e');
-      print('Stack trace: $stack');
+      debugPrint('Renderer initialization error: $e');
+      debugPrint('Stack trace: $stack');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -175,7 +175,7 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     if (!mounted) {
-      print('Widget unmounted during initialization');
+      debugPrint('Widget unmounted during initialization');
       return;
     }
 
@@ -186,15 +186,15 @@ class _CallScreenState extends State<CallScreen> {
 
     try {
       if (widget.isIncoming) {
-        print('Initializing incoming call');
+        debugPrint('Initializing incoming call');
         await _initIncomingCall();
       } else {
-        print('Initializing outgoing call');
+        debugPrint('Initializing outgoing call');
         await _initOutgoingCall();
       }
     } catch (e, stack) {
-      print('Initialization error: $e');
-      print('Stack trace: $stack');
+      debugPrint('Initialization error: $e');
+      debugPrint('Stack trace: $stack');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -224,7 +224,7 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   void dispose() {
-    print('🧹 CallScreen disposing');
+    debugPrint('🧹 CallScreen disposing');
     _ringTimeout?.cancel();
     _offerRetry?.cancel();
     _connectionTimeout?.cancel();
@@ -236,25 +236,25 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _initOutgoingCall() async {
-    print('📱 Starting outgoing call initialization');
+    debugPrint('📱 Starting outgoing call initialization');
 
     final allowed = await _ensurePermissions();
     if (!allowed) {
-      print('❌ Permissions denied');
+      debugPrint('❌ Permissions denied');
       if (mounted) Navigator.pop(context);
       return;
     }
-    print('✅ Permissions granted');
+    debugPrint('✅ Permissions granted');
 
     final currentUser = _auth.currentUser;
     if (currentUser == null || _peerId == null) {
-      print('❌ No user or peerId');
+      debugPrint('❌ No user or peerId');
       return;
     }
 
     // Prevent calling yourself
     if (_peerId == currentUser.uid) {
-      print('❌ Cannot call yourself');
+      debugPrint('❌ Cannot call yourself');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -274,11 +274,11 @@ class _CallScreenState extends State<CallScreen> {
     _callerName = currentUser.displayName ?? 'User';
     _callerPhotoUrl = currentUser.photoURL ?? '';
 
-    print('🔌 Connecting to signaling server');
+    debugPrint('🔌 Connecting to signaling server');
     try {
       await _signaling.ensureConnected(userId: currentUser.uid);
     } catch (e) {
-      print('❌ Failed to connect to signaling server: $e');
+      debugPrint('❌ Failed to connect to signaling server: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -297,16 +297,16 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     try {
-      print('🔗 Creating peer connection');
+      debugPrint('🔗 Creating peer connection');
       await _createPeerConnection();
 
-      print('🎤 Starting local media stream');
+      debugPrint('🎤 Starting local media stream');
       await _startLocalStream();
 
-      print('✅ Local stream started successfully');
+      debugPrint('✅ Local stream started successfully');
     } catch (e, stack) {
-      print('❌ Error in call setup: $e');
-      print('Stack trace: $stack');
+      debugPrint('❌ Error in call setup: $e');
+      debugPrint('Stack trace: $stack');
       _endCallLocal();
       return;
     }
@@ -314,21 +314,21 @@ class _CallScreenState extends State<CallScreen> {
     if (mounted) setState(() => _phase = _CallPhase.ringing);
 
     _callId = '${currentUser.uid}_${DateTime.now().microsecondsSinceEpoch}';
-    print('📱 Call ID: $_callId');
+    debugPrint('📱 Call ID: $_callId');
 
     _listenToSignaling();
 
-    print('📝 Creating offer');
+    debugPrint('📝 Creating offer');
     final offer = await _peerConnection!.createOffer(_rtcOfferConstraints());
     await _peerConnection!.setLocalDescription(offer);
     _localOffer = {'sdp': offer.sdp, 'sdpType': offer.type};
 
-    print('📤 Sending offer');
+    debugPrint('📤 Sending offer');
     await _sendOffer();
     _startOfferRetry();
 
     _ringTimeout = Timer(const Duration(seconds: 35), () async {
-      print('⏰ Call timeout');
+      debugPrint('⏰ Call timeout');
       if (_phase != _CallPhase.ringing || _callId == null) return;
       _callEndReason = 'missed';
       await _sendSignal('call_missed');
@@ -337,11 +337,11 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _initIncomingCall() async {
-    print('📞 Initializing incoming call');
+    debugPrint('📞 Initializing incoming call');
 
     final currentUser = _auth.currentUser;
     if (currentUser == null || _callId == null) {
-      print('❌ No user or callId');
+      debugPrint('❌ No user or callId');
       return;
     }
 
@@ -350,7 +350,7 @@ class _CallScreenState extends State<CallScreen> {
     _listenToSignaling();
     await NotificationService().clearCallNotification(_callId!);
 
-    print('✅ Incoming call initialized');
+    debugPrint('✅ Incoming call initialized');
   }
 
   Future<void> _listenToSignaling() async {
@@ -358,12 +358,12 @@ class _CallScreenState extends State<CallScreen> {
     _signalSub = _signaling.messages.listen((message) async {
       if (message['callId']?.toString() != _callId) return;
       final type = message['type']?.toString();
-      print('📨 Received signal: $type');
+      debugPrint('📨 Received signal: $type');
 
       if (type == 'call_answer') {
         final answer = {'sdp': message['sdp'], 'type': message['sdpType']};
         if (!_remoteDescriptionSet) {
-          print('📥 Setting remote description (answer)');
+          debugPrint('📥 Setting remote description (answer)');
           await _setRemoteDescription(answer);
           _offerRetry?.cancel();
           _ringTimeout?.cancel();
@@ -382,7 +382,7 @@ class _CallScreenState extends State<CallScreen> {
           await _ensureVideoRenderers();
         }
         try {
-          print('📥 Applying re-offer');
+          debugPrint('📥 Applying re-offer');
           await _setRemoteDescription(offer);
           final answer = await _peerConnection!.createAnswer(
             _rtcOfferConstraints(),
@@ -393,7 +393,7 @@ class _CallScreenState extends State<CallScreen> {
             data: {'sdp': answer.sdp, 'sdpType': answer.type},
           );
         } catch (e) {
-          print('Failed to handle call_reoffer: $e');
+          debugPrint('Failed to handle call_reoffer: $e');
         }
         return;
       }
@@ -402,10 +402,10 @@ class _CallScreenState extends State<CallScreen> {
         if (_peerConnection == null) return;
         final answer = {'sdp': message['sdp'], 'type': message['sdpType']};
         try {
-          print('📥 Applying re-answer');
+          debugPrint('📥 Applying re-answer');
           await _setRemoteDescription(answer);
         } catch (e) {
-          print('Failed to handle call_reanswer: $e');
+          debugPrint('Failed to handle call_reanswer: $e');
         }
         return;
       }
@@ -432,7 +432,7 @@ class _CallScreenState extends State<CallScreen> {
             fromClientId != null &&
             fromClientId != _signaling.clientId) {
           final reason = message['reason']?.toString() ?? 'answered';
-          print('Call handled on another device: $reason');
+          debugPrint('Call handled on another device: $reason');
           if (_callId != null) {
             await NotificationService().clearCallNotification(_callId!);
           }
@@ -450,7 +450,7 @@ class _CallScreenState extends State<CallScreen> {
         _callEndReason = type == 'call_decline'
             ? 'declined'
             : (type == 'call_missed' ? 'missed' : 'ended');
-        print('☎️ Call ended by peer: $type');
+        debugPrint('☎️ Call ended by peer: $type');
         if (_callId != null) {
           await NotificationService().clearCallNotification(_callId!);
         }
@@ -487,24 +487,24 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<bool> _ensurePermissions() async {
-    print('🔐 Checking permissions - isVideo: $_isVideo');
+    debugPrint('🔐 Checking permissions - isVideo: $_isVideo');
 
     if (!Platform.isAndroid && !Platform.isIOS) {
-      print('✅ Non-mobile platform, skipping permission check');
+      debugPrint('✅ Non-mobile platform, skipping permission check');
       return true;
     }
 
     final permissions = <Permission>[Permission.microphone];
     if (_isVideo) permissions.add(Permission.camera);
 
-    print(
+    debugPrint(
       '📋 Requesting permissions: ${permissions.map((p) => p.toString()).join(", ")}',
     );
 
     final results = await permissions.request();
 
     for (var entry in results.entries) {
-      print('   ${entry.key}: ${entry.value}');
+      debugPrint('   ${entry.key}: ${entry.value}');
     }
 
     final granted = results.values.every((status) => status.isGranted);
@@ -541,13 +541,13 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _createPeerConnection() async {
-    print('🔗 Creating RTCPeerConnection');
+    debugPrint('🔗 Creating RTCPeerConnection');
 
     // Clear any existing connection timeout and start a new one
     _connectionTimeout?.cancel();
     _connectionTimeout = Timer(_maxConnectionWait, () {
       if (_phase != _CallPhase.inCall) {
-        print('⏰ Connection timeout - call failed to establish');
+        debugPrint('⏰ Connection timeout - call failed to establish');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -573,11 +573,11 @@ class _CallScreenState extends State<CallScreen> {
     };
 
     _peerConnection = await createPeerConnection(config, constraints);
-    print('✅ PeerConnection created');
+    debugPrint('✅ PeerConnection created');
 
     _peerConnection!.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
-      print('🧊 ICE candidate generated');
+      debugPrint('🧊 ICE candidate generated');
       _sendSignal(
         'call_ice',
         data: {
@@ -589,7 +589,7 @@ class _CallScreenState extends State<CallScreen> {
     };
 
     _peerConnection!.onTrack = (event) async {
-      print('🎵 Remote track received: ${event.track.kind}');
+      debugPrint('🎵 Remote track received: ${event.track.kind}');
       final track = event.track;
       MediaStream? stream;
       if (event.streams.isNotEmpty) {
@@ -618,7 +618,7 @@ class _CallScreenState extends State<CallScreen> {
     };
 
     _peerConnection!.onAddStream = (stream) {
-      print('📺 Remote stream added');
+      debugPrint('📺 Remote stream added');
       _remoteStream = stream;
       if (stream.getVideoTracks().isNotEmpty) {
         if (_isWindowsVideoUnsupported) {
@@ -639,10 +639,10 @@ class _CallScreenState extends State<CallScreen> {
     };
 
     _peerConnection!.onConnectionState = (state) {
-      print('🔗 Connection state: $state');
+      debugPrint('🔗 Connection state: $state');
 
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-        print('✅ Call connected!');
+        debugPrint('✅ Call connected!');
         _connectionTimeout?.cancel(); // Cancel timeout on successful connection
         _markCallConnected();
         if (mounted) setState(() => _phase = _CallPhase.inCall);
@@ -651,7 +651,7 @@ class _CallScreenState extends State<CallScreen> {
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
-        print('❌ Connection failed/disconnected: $state');
+        debugPrint('❌ Connection failed/disconnected: $state');
         if (_callConnectedAt == null) {
           _callEndReason = 'failed';
         }
@@ -661,12 +661,12 @@ class _CallScreenState extends State<CallScreen> {
     };
 
     _peerConnection!.onIceConnectionState = (state) {
-      print('ICE connection state: $state');
+      debugPrint('ICE connection state: $state');
     };
   }
 
   Future<void> _startLocalStream() async {
-    print('🎤 Getting user media - audio: true, video: $_isVideo');
+    debugPrint('🎤 Getting user media - audio: true, video: $_isVideo');
 
     final mediaConstraints = {
       'audio': {
@@ -685,19 +685,23 @@ class _CallScreenState extends State<CallScreen> {
       final audioTracks = _localStream!.getAudioTracks();
       final videoTracks = _localStream!.getVideoTracks();
 
-      print(
+      debugPrint(
         '✅ Got local stream - audio: ${audioTracks.length}, video: ${videoTracks.length}',
       );
 
       for (var track in audioTracks) {
-        print('   Audio track: ${track.label} (enabled: ${track.enabled})');
+        debugPrint(
+          '   Audio track: ${track.label} (enabled: ${track.enabled})',
+        );
       }
       for (var track in videoTracks) {
-        print('   Video track: ${track.label} (enabled: ${track.enabled})');
+        debugPrint(
+          '   Video track: ${track.label} (enabled: ${track.enabled})',
+        );
       }
     } catch (e, stack) {
-      print('❌ Failed to get media: $e');
-      print('Stack trace: $stack');
+      debugPrint('❌ Failed to get media: $e');
+      debugPrint('Stack trace: $stack');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -724,7 +728,7 @@ class _CallScreenState extends State<CallScreen> {
 
     for (final track in _localStream!.getTracks()) {
       await _peerConnection!.addTrack(track, _localStream!);
-      print('✅ Added track to peer connection: ${track.kind}');
+      debugPrint('✅ Added track to peer connection: ${track.kind}');
     }
 
     if (Platform.isAndroid) {
@@ -737,13 +741,13 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _setRemoteDescription(Map<String, dynamic> data) async {
     if (_peerConnection == null) return;
-    print('📥 Setting remote description');
+    debugPrint('📥 Setting remote description');
 
     final description = RTCSessionDescription(data['sdp'], data['type']);
     await _peerConnection!.setRemoteDescription(description);
     _remoteDescriptionSet = true;
 
-    print(
+    debugPrint(
       '🧊 Adding ${_pendingRemoteCandidates.length} pending ICE candidates',
     );
     for (final candidate in _pendingRemoteCandidates) {
@@ -764,17 +768,17 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _answerCall() async {
-    print('📞 Answering call');
+    debugPrint('📞 Answering call');
 
     final allowed = await _ensurePermissions();
     if (!allowed) {
-      print('❌ Permissions denied for answer');
+      debugPrint('❌ Permissions denied for answer');
       await _declineCall();
       return;
     }
 
     if (_remoteOffer == null) {
-      print('❌ No remote offer available');
+      debugPrint('❌ No remote offer available');
       _endCallLocal();
       return;
     }
@@ -783,8 +787,8 @@ class _CallScreenState extends State<CallScreen> {
       await _createPeerConnection();
       await _startLocalStream();
     } catch (e, stack) {
-      print('❌ Error answering call: $e');
-      print('Stack trace: $stack');
+      debugPrint('❌ Error answering call: $e');
+      debugPrint('Stack trace: $stack');
       _callEndReason = 'failed';
       _endCallLocal();
       return;
@@ -805,11 +809,11 @@ class _CallScreenState extends State<CallScreen> {
     await NotificationService().clearCallNotification(_callId!);
     if (mounted) setState(() => _phase = _CallPhase.inCall);
 
-    print('✅ Call answered');
+    debugPrint('✅ Call answered');
   }
 
   Future<void> _declineCall() async {
-    print('❌ Declining call');
+    debugPrint('❌ Declining call');
     _callEndReason = 'declined';
     await _sendSignal('call_decline');
     await _broadcastCallHandledToOwnDevices('declined');
@@ -820,7 +824,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _hangUp() async {
-    print('📵 Hanging up');
+    debugPrint('📵 Hanging up');
     _callEndReason = 'ended';
     await _sendSignal('call_end');
     if (_callId != null) {
@@ -830,7 +834,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   void _endCallLocal({bool sendSummary = true}) {
-    print('🛑 Ending call locally');
+    debugPrint('🛑 Ending call locally');
     if (sendSummary) {
       unawaited(_sendCallSummaryMessage());
     }
@@ -843,7 +847,7 @@ class _CallScreenState extends State<CallScreen> {
 
     Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) {
-        print('👋 Popping call screen');
+        debugPrint('👋 Popping call screen');
         Navigator.pop(context);
       }
     });
@@ -885,7 +889,7 @@ class _CallScreenState extends State<CallScreen> {
         data: {'sdp': offer.sdp, 'sdpType': offer.type, 'isVideo': _isVideo},
       );
     } catch (e) {
-      print('Failed to renegotiate call: $e');
+      debugPrint('Failed to renegotiate call: $e');
     } finally {
       _isRenegotiating = false;
     }
@@ -901,10 +905,12 @@ class _CallScreenState extends State<CallScreen> {
       }
 
       _offerRetryCount++;
-      print('🔄 Retrying offer (attempt $_offerRetryCount/$_maxOfferRetries)');
+      debugPrint(
+        '🔄 Retrying offer (attempt $_offerRetryCount/$_maxOfferRetries)',
+      );
 
       if (_offerRetryCount >= _maxOfferRetries) {
-        print('❌ Max retry attempts reached');
+        debugPrint('❌ Max retry attempts reached');
         _offerRetry?.cancel();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -923,7 +929,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   void _cleanupRtc() {
-    print('🧹 Cleaning up RTC resources');
+    debugPrint('🧹 Cleaning up RTC resources');
 
     for (final track in _localStream?.getTracks() ?? []) {
       track.stop();
@@ -1031,7 +1037,7 @@ class _CallScreenState extends State<CallScreen> {
         },
       );
     } catch (e) {
-      print('Failed to send call summary message: $e');
+      debugPrint('Failed to send call summary message: $e');
     }
   }
 
@@ -1040,7 +1046,7 @@ class _CallScreenState extends State<CallScreen> {
     for (final track in _localStream?.getAudioTracks() ?? []) {
       track.enabled = !_isMuted;
     }
-    print('🎤 Mute: $_isMuted');
+    debugPrint('🎤 Mute: $_isMuted');
     if (mounted) setState(() {});
   }
 
@@ -1049,7 +1055,7 @@ class _CallScreenState extends State<CallScreen> {
     if (Platform.isAndroid) {
       Helper.setSpeakerphoneOn(_isSpeakerOn);
     }
-    print('🔊 Speaker: $_isSpeakerOn');
+    debugPrint('🔊 Speaker: $_isSpeakerOn');
     if (mounted) setState(() {});
   }
 
@@ -1081,7 +1087,7 @@ class _CallScreenState extends State<CallScreen> {
       await _ensureVideoRenderers();
       _localRenderer?.srcObject = _localStream;
     }
-    print('Camera off: $_isCameraOff');
+    debugPrint('Camera off: $_isCameraOff');
     if (mounted) setState(() {});
   }
 
@@ -1140,7 +1146,7 @@ class _CallScreenState extends State<CallScreen> {
           context,
         ).showSnackBar(SnackBar(content: Text('Could not enable camera: $e')));
       }
-      print('Failed to start camera during audio call: $e');
+      debugPrint('Failed to start camera during audio call: $e');
     }
   }
 
@@ -1161,7 +1167,7 @@ class _CallScreenState extends State<CallScreen> {
       return;
     }
     await Helper.switchCamera(tracks.first);
-    print('Camera switched');
+    debugPrint('Camera switched');
   }
 
   String _statusText() {
