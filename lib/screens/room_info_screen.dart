@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -12,6 +13,7 @@ import 'package:flutter/services.dart';
 
 import '../services/user_cache_service.dart';
 import 'image_viewer_screen.dart';
+import 'photo_editor_screen.dart';
 import 'video_viewer_screen.dart';
 
 class RoomInfoScreen extends StatefulWidget {
@@ -46,6 +48,9 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
 
   bool get _isServer => widget.conversationType == 'server';
   String get _currentUid => _auth.currentUser?.uid ?? '';
+  bool get _isRoomMember => _participants.contains(_currentUid);
+  bool get _canAddMembers => !_isServer && _isRoomMember;
+  bool get _canEditIcon => _isServer ? _canManage : _isRoomMember;
   bool get _canManage {
     final data = _conversation;
     if (data == null) return false;
@@ -401,38 +406,51 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
   }
 
   Future<void> _pickAndUploadIcon() async {
-    if (_isUploadingIcon) return;
+    if (_isUploadingIcon || !_canEditIcon) return;
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
       allowMultiple: false,
-      withData: true,
+      withData: false,
     );
     if (result == null || result.files.isEmpty) return;
 
     final file = result.files.first;
+    final pickedPath = await _resolvePickedImagePath(file);
+    if (pickedPath == null || pickedPath.isEmpty) {
+      _showSnack('Could not access selected image');
+      return;
+    }
+
+    if (!mounted) return;
+    final editedPath = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PhotoEditorScreen(
+          filePath: pickedPath,
+          title: _isServer ? 'Edit server icon' : 'Edit group icon',
+        ),
+      ),
+    );
+    final pathToUpload = editedPath?.trim() ?? '';
+    if (pathToUpload.isEmpty) return;
+
     setState(() {
       _isUploadingIcon = true;
     });
 
     try {
       final ref = _storage.ref().child(
-        'chat_files/${widget.conversationId}/room_icon_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        'chat_files/${widget.conversationId}/room_icon_${DateTime.now().millisecondsSinceEpoch}.png',
       );
 
-      UploadTask uploadTask;
-      if (file.path != null && file.path!.trim().isNotEmpty) {
-        uploadTask = ref.putFile(
-          File(file.path!),
-          SettableMetadata(contentType: 'image/jpeg'),
-        );
-      } else if (file.bytes != null) {
-        uploadTask = ref.putData(
-          file.bytes!,
-          SettableMetadata(contentType: 'image/jpeg'),
-        );
-      } else {
-        throw Exception('Selected image has no data');
+      final uploadFile = File(pathToUpload);
+      if (!uploadFile.existsSync()) {
+        throw Exception('Edited image file does not exist');
       }
+      final uploadTask = ref.putFile(
+        uploadFile,
+        SettableMetadata(contentType: 'image/png'),
+      );
 
       final uploadResult = await uploadTask;
       final downloadUrl = await uploadResult.ref.getDownloadURL();
@@ -446,6 +464,44 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
         });
       }
     }
+  }
+
+  Future<String?> _resolvePickedImagePath(PlatformFile file) async {
+    final path = file.path?.trim() ?? '';
+    if (path.isNotEmpty && File(path).existsSync()) return path;
+
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) return null;
+
+    return _writeTempImageBytes(
+      bytes: bytes,
+      extension: _fileExtension(file.name),
+    );
+  }
+
+  Future<String> _writeTempImageBytes({
+    required Uint8List bytes,
+    required String extension,
+  }) async {
+    final tempDir = await Directory.systemTemp.createTemp('shoq_room_icon_');
+    final ext = extension.startsWith('.') ? extension : '.$extension';
+    final path =
+        '${tempDir.path}${Platform.pathSeparator}picked_${DateTime.now().millisecondsSinceEpoch}$ext';
+    final file = File(path);
+    await file.writeAsBytes(bytes, flush: true);
+    return file.path;
+  }
+
+  String _fileExtension(String fileName) {
+    final value = fileName.trim();
+    if (value.isEmpty) return '.png';
+    final dot = value.lastIndexOf('.');
+    if (dot <= 0 || dot >= value.length - 1) return '.png';
+    final ext = value.substring(dot).toLowerCase();
+    if (!RegExp(r'^\.[a-z0-9]+$').hasMatch(ext) || ext.length > 6) {
+      return '.png';
+    }
+    return ext;
   }
 
   Future<List<_FriendSeed>> _loadFriendsNotInRoom() async {
@@ -479,6 +535,7 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
   }
 
   Future<void> _addMembers() async {
+    if (!_canAddMembers) return;
     final candidates = await _loadFriendsNotInRoom();
     if (!mounted) return;
     if (candidates.isEmpty) {
@@ -731,7 +788,7 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
                         )
                       : null,
                 ),
-                if (_canManage)
+                if (_canEditIcon)
                   Positioned(
                     right: -2,
                     bottom: -2,
@@ -801,7 +858,7 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const Spacer(),
-                if (_canManage && !_isServer)
+                if (_canAddMembers)
                   TextButton.icon(
                     onPressed: _addMembers,
                     icon: const Icon(Icons.person_add_alt_1),
@@ -810,7 +867,7 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
               ],
             ),
             const SizedBox(height: 6),
-            for (final uid in _participants.take(14))
+            for (final uid in _participants)
               ListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
