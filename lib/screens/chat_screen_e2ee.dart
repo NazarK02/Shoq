@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
 import 'package:mime/mime.dart';
@@ -22,8 +23,10 @@ import '../services/presence_service.dart';
 import '../services/chat_service_e2ee.dart';
 import '../services/user_cache_service.dart';
 import '../services/file_download_service.dart';
+import '../services/message_cache_service.dart';
 import 'user_profile_view_screen.dart';
 import 'image_viewer_screen.dart';
+import 'video_viewer_screen.dart';
 import 'call_screen.dart';
 
 /// Improved E2EE chat with torrent-like file handling
@@ -58,9 +61,11 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   final UserCacheService _userCache = UserCacheService();
   final FileDownloadService _downloadService = FileDownloadService();
   final AudioRecorder _audioRecorder = AudioRecorder();
+  final ImagePicker _imagePicker = ImagePicker();
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
+  static const bool _messagesListReversed = true;
   static const double _autoScrollThreshold = 110;
   static const double _scrollButtonThreshold = 320;
 
@@ -144,8 +149,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
 
   void _handleScrollChanged() {
     if (!_scrollController.hasClients) return;
-    final distance =
-        _scrollController.position.maxScrollExtent - _scrollController.offset;
+    final distance = _distanceFromBottom();
     final shouldShow = distance > _scrollButtonThreshold;
     if (!mounted || shouldShow == _showScrollToBottomButton) return;
     setState(() {
@@ -155,9 +159,17 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
 
   bool _isNearBottom() {
     if (!_scrollController.hasClients) return true;
-    final distance =
-        _scrollController.position.maxScrollExtent - _scrollController.offset;
+    final distance = _distanceFromBottom();
     return distance <= _autoScrollThreshold;
+  }
+
+  double _distanceFromBottom() {
+    if (!_scrollController.hasClients) return 0;
+    if (_messagesListReversed) {
+      return _scrollController.offset;
+    }
+    return _scrollController.position.maxScrollExtent -
+        _scrollController.offset;
   }
 
   void _listenToConversationMetadata() {
@@ -307,7 +319,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       if (!_scrollController.hasClients) return;
       if (!force && !_isNearBottom()) return;
 
-      final target = _scrollController.position.maxScrollExtent;
+      final target = _messagesListReversed
+          ? _scrollController.position.minScrollExtent
+          : _scrollController.position.maxScrollExtent;
       if (animated) {
         _scrollController.animateTo(
           target,
@@ -1148,6 +1162,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     required String fileName,
     String? mimeType,
     String notificationText = 'Sent a file',
+    String? caption,
   }) async {
     if (_conversationId == null) return;
 
@@ -1166,6 +1181,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       final detectedMime = (mimeType != null && mimeType.trim().isNotEmpty)
           ? mimeType.trim()
           : (lookupMimeType(filePath) ?? 'application/octet-stream');
+      final trimmedCaption = caption?.trim();
       final fileSize = await file.length();
 
       final upload = _chatService.startFileUpload(
@@ -1182,6 +1198,8 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         fileSize: fileSize,
         mimeType: detectedMime,
         progress: 0,
+        createdAt: DateTime.now(),
+        caption: trimmedCaption,
       );
       pending.task = upload.task;
 
@@ -1217,6 +1235,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         fileName: fileName,
         fileSize: fileSize,
         mimeType: upload.contentType,
+        caption: trimmedCaption,
       );
 
       try {
@@ -1488,11 +1507,11 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         child: Wrap(
           children: [
             ListTile(
-              leading: const Icon(Icons.image),
-              title: const Text('Image'),
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Gallery'),
               onTap: () {
                 Navigator.pop(context);
-                _pickAndSendFile(type: FileType.image);
+                _pickAndSendFromGallery();
               },
             ),
             ListTile(
@@ -1527,6 +1546,154 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         ),
       ),
     );
+  }
+
+  Future<void> _pickAndSendFromGallery() async {
+    if (_conversationId == null) return;
+
+    final picked = await _imagePicker.pickMultipleMedia(
+      requestFullMetadata: false,
+    );
+    if (picked.isEmpty) return;
+
+    final draft = await _showMediaComposer(picked);
+    if (!mounted || draft == null) return;
+
+    final caption = draft.caption.trim();
+    for (var i = 0; i < draft.files.length; i++) {
+      final file = draft.files[i];
+      final path = file.path.trim();
+      if (path.isEmpty) continue;
+
+      final mimeType = lookupMimeType(path) ?? 'application/octet-stream';
+      final fileName = p.basename(path).trim().isEmpty
+          ? 'media_${DateTime.now().millisecondsSinceEpoch}'
+          : p.basename(path);
+      final isVideo = mimeType.toLowerCase().startsWith('video/');
+      final isImage = mimeType.toLowerCase().startsWith('image/');
+
+      await _sendLocalFile(
+        filePath: path,
+        fileName: fileName,
+        mimeType: mimeType,
+        caption: (i == 0 && caption.isNotEmpty) ? caption : null,
+        notificationText: isVideo
+            ? 'Sent a video'
+            : (isImage ? 'Sent a photo' : 'Sent a file'),
+      );
+    }
+  }
+
+  Future<_MediaComposerResult?> _showMediaComposer(List<XFile> files) async {
+    final captionController = TextEditingController();
+    final result = await showModalBottomSheet<_MediaComposerResult>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final insets = MediaQuery.of(sheetContext).viewInsets;
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, insets.bottom + 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${files.length} selected',
+                  style: Theme.of(sheetContext).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 90,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: files.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) {
+                      final path = files[index].path;
+                      final mimeType = lookupMimeType(path) ?? '';
+                      final isVideo = mimeType.toLowerCase().startsWith(
+                        'video/',
+                      );
+
+                      return Stack(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.file(
+                              File(path),
+                              width: 90,
+                              height: 90,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  Container(
+                                    width: 90,
+                                    height: 90,
+                                    color: Colors.grey[300],
+                                    alignment: Alignment.center,
+                                    child: Icon(
+                                      isVideo ? Icons.videocam : Icons.image,
+                                    ),
+                                  ),
+                            ),
+                          ),
+                          if (isVideo)
+                            const Positioned(
+                              right: 6,
+                              bottom: 6,
+                              child: Icon(
+                                Icons.play_circle_fill,
+                                size: 20,
+                                color: Colors.white,
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: captionController,
+                  minLines: 1,
+                  maxLines: 4,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    labelText: 'Add caption',
+                    hintText: 'Write a message...',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      Navigator.pop(
+                        sheetContext,
+                        _MediaComposerResult(
+                          files: files,
+                          caption: captionController.text,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.send_rounded),
+                    label: Text(
+                      files.length == 1
+                          ? 'Send media'
+                          : 'Send ${files.length} items',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    captionController.dispose();
+    return result;
   }
 
   Future<void> _pickAndSendFile({required FileType type}) async {
@@ -1656,23 +1823,36 @@ class _MessagesList extends StatefulWidget {
 
 class _MessagesListState extends State<_MessagesList>
     with AutomaticKeepAliveClientMixin {
+  static final Map<String, QuerySnapshot> _sessionMessageCache = {};
+  static final Map<String, List<Map<String, dynamic>>>
+  _sessionPersistedMessages = {};
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final MessageCacheService _messageCache = MessageCacheService();
   final Map<String, String> _decryptedCache = {};
   final Map<String, Future<String>> _decryptFutureCache = {};
   final Map<String, String> _decryptInputSignature = {};
   final Set<String> _animatedMessageIds = {};
+  final Map<String, Map<String, dynamic>> _persistedById = {};
   bool _animationCachePrimed = false;
   int _lastTotalItems = 0;
   bool _markReadInFlight = false;
   QuerySnapshot? _cachedMessagesSnapshot;
+  List<Map<String, dynamic>> _persistedMessages = [];
+  Timer? _persistentCacheDebounce;
   bool _cacheHydrated = false;
+  bool _persistentCacheHydrated = false;
   String? _cacheConversationId;
+  String? _persistentConversationId;
+  List<QueryDocumentSnapshot> _latestLiveMessages = const [];
+  String? _latestLiveMessagesOwnerId;
+  String _lastPersistedPayloadSignature = '';
 
   @override
   void initState() {
     super.initState();
     _hydrateLocalMessages();
+    _hydratePersistentMessages();
   }
 
   @override
@@ -1681,6 +1861,7 @@ class _MessagesListState extends State<_MessagesList>
     if (oldWidget.conversationId != widget.conversationId) {
       _resetTransientCaches();
       _hydrateLocalMessages();
+      _hydratePersistentMessages();
     }
   }
 
@@ -1689,29 +1870,108 @@ class _MessagesListState extends State<_MessagesList>
     _decryptFutureCache.clear();
     _decryptInputSignature.clear();
     _animatedMessageIds.clear();
+    _persistedById.clear();
+    _latestLiveMessages = const [];
+    _latestLiveMessagesOwnerId = null;
     _animationCachePrimed = false;
     _lastTotalItems = 0;
     _markReadInFlight = false;
     _cachedMessagesSnapshot = null;
+    _persistedMessages = [];
     _cacheHydrated = widget.conversationId == null;
+    _persistentCacheHydrated = widget.conversationId == null;
+    _lastPersistedPayloadSignature = '';
   }
 
   void _hydrateLocalMessages() {
     final conversationId = widget.conversationId;
     _cacheConversationId = conversationId;
-    _cachedMessagesSnapshot = null;
-    _cacheHydrated = conversationId == null;
+    _cachedMessagesSnapshot = conversationId == null
+        ? null
+        : _sessionMessageCache[conversationId];
+    _cacheHydrated = conversationId == null || _cachedMessagesSnapshot != null;
     if (conversationId == null) return;
     unawaited(_loadCachedMessages(conversationId));
+  }
+
+  void _hydratePersistentMessages() {
+    final conversationId = widget.conversationId;
+    _persistentConversationId = conversationId;
+    final sessionCached = conversationId == null
+        ? null
+        : _sessionPersistedMessages[conversationId];
+    if (sessionCached != null && sessionCached.isNotEmpty) {
+      final seeded = _clonePersistedMessages(sessionCached);
+      final byId = _indexPersistedMessages(seeded);
+      _persistedMessages = seeded;
+      _persistedById
+        ..clear()
+        ..addAll(byId);
+      _persistentCacheHydrated = true;
+      _lastPersistedPayloadSignature = _persistedPayloadSignature(seeded);
+    } else {
+      _persistedMessages = [];
+      _persistedById.clear();
+      _persistentCacheHydrated = conversationId == null;
+      _lastPersistedPayloadSignature = 'empty';
+    }
+    if (conversationId == null) return;
+    unawaited(_loadPersistedMessages(conversationId));
   }
 
   Future<void> _loadCachedMessages(String conversationId) async {
     final cached = await widget.chatService.getCachedMessages(conversationId);
     if (!mounted || _cacheConversationId != conversationId) return;
+    if (cached != null && cached.docs.isNotEmpty) {
+      _sessionMessageCache[conversationId] = cached;
+    }
     setState(() {
-      _cachedMessagesSnapshot = cached;
+      if (cached != null) {
+        _cachedMessagesSnapshot = cached;
+      }
       _cacheHydrated = true;
     });
+  }
+
+  Future<void> _loadPersistedMessages(String conversationId) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null || uid.trim().isEmpty) {
+      if (!mounted || _persistentConversationId != conversationId) return;
+      setState(() {
+        _persistentCacheHydrated = true;
+      });
+      return;
+    }
+    final cached = await _messageCache.loadConversationMessages(
+      uid,
+      conversationId,
+    );
+    if (!mounted || _persistentConversationId != conversationId) return;
+
+    final seeded = _clonePersistedMessages(cached);
+    final byId = _indexPersistedMessages(seeded);
+    final signature = _persistedPayloadSignature(seeded);
+
+    if (_lastPersistedPayloadSignature == signature &&
+        _persistentCacheHydrated) {
+      return;
+    }
+
+    setState(() {
+      _persistedMessages = seeded;
+      _persistedById
+        ..clear()
+        ..addAll(byId);
+      _persistentCacheHydrated = true;
+      _lastPersistedPayloadSignature = signature;
+      _sessionPersistedMessages[conversationId] = seeded;
+    });
+  }
+
+  @override
+  void dispose() {
+    _persistentCacheDebounce?.cancel();
+    super.dispose();
   }
 
   @override
@@ -1740,6 +2000,40 @@ class _MessagesListState extends State<_MessagesList>
       _mapSignature(message['ciphertextsByKey']),
       _mapSignature(message['senderCiphertextsByKey']),
     ].join('||');
+  }
+
+  List<Map<String, dynamic>> _clonePersistedMessages(
+    List<Map<String, dynamic>> source,
+  ) {
+    return source.map((item) => Map<String, dynamic>.from(item)).toList();
+  }
+
+  Map<String, Map<String, dynamic>> _indexPersistedMessages(
+    List<Map<String, dynamic>> items,
+  ) {
+    final byId = <String, Map<String, dynamic>>{};
+    for (final item in items) {
+      final id = item['id']?.toString().trim() ?? '';
+      if (id.isEmpty) continue;
+      byId[id] = item;
+    }
+    return byId;
+  }
+
+  String _persistedTextForMessage(String messageId) {
+    return _persistedById[messageId]?['text']?.toString().trim() ?? '';
+  }
+
+  String _persistedPayloadSignature(List<Map<String, dynamic>> payload) {
+    var hash = 17;
+    for (final item in payload) {
+      hash = 37 * hash + (item['id']?.toString().hashCode ?? 0);
+      hash = 37 * hash + (item['timestampMs']?.hashCode ?? 0);
+      hash = 37 * hash + (item['type']?.toString().hashCode ?? 0);
+      hash = 37 * hash + (item['text']?.toString().hashCode ?? 0);
+      hash = 37 * hash + (item['read'] == true ? 1 : 0);
+    }
+    return '${payload.length}:$hash';
   }
 
   Widget _animateOnFirstPaint({required String id, required Widget child}) {
@@ -1778,6 +2072,230 @@ class _MessagesListState extends State<_MessagesList>
       if (!mounted) return;
       widget.onAutoScrollToBottom();
     });
+  }
+
+  void _schedulePersistedCacheWriteFromLive() {
+    final conversationId = widget.conversationId;
+    final uid = _latestLiveMessagesOwnerId;
+    if (conversationId == null || uid == null || uid.trim().isEmpty) return;
+
+    final docs = List<QueryDocumentSnapshot>.from(_latestLiveMessages);
+    _persistentCacheDebounce?.cancel();
+    _persistentCacheDebounce = Timer(
+      const Duration(milliseconds: 360),
+      () async {
+        final payload = <Map<String, dynamic>>[];
+        for (final doc in docs) {
+          final data = doc.data();
+          if (data is! Map) continue;
+          final map = Map<String, dynamic>.from(data);
+          final cached = _buildPersistableMessage(id: doc.id, message: map);
+          if (cached.isEmpty) continue;
+          payload.add(cached);
+        }
+
+        if (payload.isEmpty) {
+          return;
+        }
+        final signature = _persistedPayloadSignature(payload);
+        if (signature == _lastPersistedPayloadSignature) {
+          return;
+        }
+
+        await _messageCache.saveConversationMessages(
+          uid,
+          conversationId,
+          payload,
+        );
+        if (!mounted || _persistentConversationId != conversationId) return;
+
+        final seeded = _clonePersistedMessages(payload);
+        final byId = _indexPersistedMessages(seeded);
+
+        setState(() {
+          _persistedMessages = seeded;
+          _persistedById
+            ..clear()
+            ..addAll(byId);
+          _persistentCacheHydrated = true;
+          _lastPersistedPayloadSignature = signature;
+          _sessionPersistedMessages[conversationId] = seeded;
+        });
+      },
+    );
+  }
+
+  void _schedulePersistedCacheClear(String uid) {
+    final conversationId = widget.conversationId;
+    if (conversationId == null || uid.trim().isEmpty) return;
+
+    _persistentCacheDebounce?.cancel();
+    _persistentCacheDebounce = Timer(
+      const Duration(milliseconds: 260),
+      () async {
+        await _messageCache.clearConversation(uid, conversationId);
+        if (!mounted || _persistentConversationId != conversationId) return;
+        setState(() {
+          _persistedMessages = [];
+          _persistedById.clear();
+          _persistentCacheHydrated = true;
+          _lastPersistedPayloadSignature = 'empty';
+          _sessionPersistedMessages.remove(conversationId);
+        });
+      },
+    );
+  }
+
+  Map<String, dynamic> _buildPersistableMessage({
+    required String id,
+    required Map<String, dynamic> message,
+  }) {
+    final senderId = message['senderId']?.toString().trim() ?? '';
+    if (senderId.isEmpty) return const {};
+
+    final type = message['type']?.toString().trim() ?? 'text';
+    final timestamp =
+        (message['timestamp'] as Timestamp?) ??
+        (message['clientTimestamp'] as Timestamp?);
+    final readAt = message['readAt'] as Timestamp?;
+    final reactions = _extractReactions(message);
+
+    final item = <String, dynamic>{
+      'id': id,
+      'type': type,
+      'senderId': senderId,
+    };
+    if (timestamp != null) {
+      item['timestampMs'] = timestamp.millisecondsSinceEpoch;
+    }
+    item['read'] = message['read'] == true;
+    if (readAt != null) {
+      item['readAtMs'] = readAt.millisecondsSinceEpoch;
+    }
+    if (reactions.isNotEmpty) {
+      item['reactions'] = reactions;
+    }
+
+    final caption = message['caption']?.toString().trim();
+    if (caption != null && caption.isNotEmpty) {
+      item['caption'] = caption;
+    }
+
+    if (type == 'file') {
+      item['fileName'] = message['fileName']?.toString().trim() ?? 'File';
+      item['fileSize'] = (message['fileSize'] is num)
+          ? (message['fileSize'] as num).toInt()
+          : int.tryParse(message['fileSize']?.toString() ?? '') ?? 0;
+      final fileUrl = message['fileUrl']?.toString().trim() ?? '';
+      if (fileUrl.isNotEmpty) {
+        item['fileUrl'] = fileUrl;
+      }
+      final mimeType = message['mimeType']?.toString().trim() ?? '';
+      if (mimeType.isNotEmpty) {
+        item['mimeType'] = mimeType;
+      }
+      return item;
+    }
+
+    final replyToText = message['replyToText']?.toString().trim() ?? '';
+    if (replyToText.isNotEmpty) {
+      item['replyToText'] = replyToText;
+    }
+    final replyToSenderId = message['replyToSenderId']?.toString().trim() ?? '';
+    if (replyToSenderId.isNotEmpty) {
+      item['replyToSenderId'] = replyToSenderId;
+    }
+    if (message['edited'] is bool) {
+      item['edited'] = message['edited'] as bool;
+    }
+
+    if (message['callSummary'] is Map) {
+      final callSummary = Map<String, dynamic>.from(
+        message['callSummary'] as Map,
+      );
+      if (callSummary.isNotEmpty) {
+        item['callSummary'] = callSummary;
+      }
+    }
+
+    final decrypted = _decryptedCache[id]?.trim() ?? '';
+    final persistedText = _persistedById[id]?['text']?.toString().trim() ?? '';
+    final displayText = decrypted.isNotEmpty ? decrypted : persistedText;
+    if (displayText.isNotEmpty) {
+      item['text'] = displayText;
+    }
+
+    if (!item.containsKey('text') && !item.containsKey('callSummary')) {
+      return const {};
+    }
+
+    return item;
+  }
+
+  Timestamp? _timestampFromMs(dynamic value) {
+    if (value is int) {
+      return Timestamp.fromMillisecondsSinceEpoch(value);
+    }
+    if (value is num) {
+      return Timestamp.fromMillisecondsSinceEpoch(value.toInt());
+    }
+    final parsed = int.tryParse(value?.toString() ?? '');
+    if (parsed == null) return null;
+    return Timestamp.fromMillisecondsSinceEpoch(parsed);
+  }
+
+  Widget _buildPersistedMessagesList(String currentUserId) {
+    final orderedMessages = _persistedMessages.reversed.toList();
+    _scheduleAutoScrollIfNeeded(orderedMessages.length);
+
+    return ListView.builder(
+      controller: widget.scrollController,
+      reverse: true,
+      padding: const EdgeInsets.all(16),
+      itemCount: orderedMessages.length,
+      itemBuilder: (context, index) {
+        final message = orderedMessages[index];
+        final messageId = message['id']?.toString().trim() ?? '';
+        if (messageId.isEmpty) return const SizedBox.shrink();
+
+        final isMe = message['senderId']?.toString() == currentUserId;
+        final timestamp = _timestampFromMs(message['timestampMs']);
+        final isRead = message['read'] == true;
+        final readAt = _timestampFromMs(message['readAtMs']);
+        final type = message['type']?.toString().trim() ?? 'text';
+
+        if (type == 'file') {
+          return _buildFileBubble(
+            message,
+            isMe,
+            timestamp,
+            isPending: false,
+            isRead: isRead,
+            readAt: readAt,
+            messageId: messageId,
+            key: ValueKey('persisted_file_$messageId'),
+          );
+        }
+
+        final text = message['text']?.toString() ?? '';
+        final hasCallSummary = message['callSummary'] is Map;
+        if (text.trim().isEmpty && !hasCallSummary) {
+          return const SizedBox.shrink();
+        }
+
+        return _buildMessageBubble(
+          text,
+          isMe,
+          timestamp,
+          messageId: messageId,
+          messageData: message,
+          isPending: false,
+          isRead: isRead,
+          readAt: readAt,
+          key: ValueKey('persisted_msg_$messageId'),
+        );
+      },
+    );
   }
 
   void _markIncomingMessagesAsRead(
@@ -2342,21 +2860,39 @@ class _MessagesListState extends State<_MessagesList>
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
+        final activeConversationId = widget.conversationId;
+        final snapshotData = snapshot.data;
+        if (activeConversationId != null &&
+            snapshotData != null &&
+            snapshotData.docs.isNotEmpty) {
+          _sessionMessageCache[activeConversationId] = snapshotData;
+        }
+
         final hasPendingItems =
             widget.pendingTextMessages.isNotEmpty ||
             widget.pendingUploads.isNotEmpty;
+        final hasPersistedItems = _persistedMessages.isNotEmpty;
 
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData &&
             !hasPendingItems) {
-          if (!widget.hasMessages && _cacheHydrated) {
+          if (hasPersistedItems) {
+            return _buildPersistedMessagesList(currentUser.uid);
+          }
+          if (!widget.hasMessages &&
+              (_cacheHydrated || _persistentCacheHydrated)) {
             return _buildEmptyState();
           }
-          return const SizedBox.shrink();
+          return _buildLoadingState();
         }
 
         final encryptionReady = widget.chatService.isEncryptionReady;
         final messages = snapshot.data?.docs ?? [];
+        if (messages.isNotEmpty) {
+          _latestLiveMessages = List<QueryDocumentSnapshot>.from(messages);
+          _latestLiveMessagesOwnerId = currentUser.uid;
+          _schedulePersistedCacheWriteFromLive();
+        }
         if (!_animationCachePrimed && messages.isNotEmpty) {
           _animationCachePrimed = true;
           _animatedMessageIds.addAll(messages.map((doc) => 'msg_${doc.id}'));
@@ -2390,47 +2926,81 @@ class _MessagesListState extends State<_MessagesList>
               snapshot.connectionState == ConnectionState.active ||
               snapshot.connectionState == ConnectionState.done ||
               snapshot.hasData;
-          if (!widget.hasMessages || streamSettled || _cacheHydrated) {
+          if (!streamSettled && hasPersistedItems) {
+            return _buildPersistedMessagesList(currentUser.uid);
+          }
+          if (streamSettled) {
+            _schedulePersistedCacheClear(currentUser.uid);
+          }
+          if (!widget.hasMessages ||
+              streamSettled ||
+              _cacheHydrated ||
+              _persistentCacheHydrated) {
             return _buildEmptyState();
           }
           return const SizedBox.shrink();
         }
 
-        final pendingText = widget.pendingTextMessages;
-        final pendingUploads = widget.pendingUploads;
-        final totalItems =
-            messages.length + pendingText.length + pendingUploads.length;
+        final pendingItems = <Map<String, dynamic>>[];
+        for (final pending in widget.pendingTextMessages) {
+          pendingItems.add({
+            'type': 'text',
+            'createdAt': pending.createdAt,
+            'payload': pending,
+          });
+        }
+        for (final pending in widget.pendingUploads) {
+          pendingItems.add({
+            'type': 'upload',
+            'createdAt': pending.createdAt,
+            'payload': pending,
+          });
+        }
+        pendingItems.sort(
+          (a, b) => (b['createdAt'] as DateTime).compareTo(
+            a['createdAt'] as DateTime,
+          ),
+        );
+        final orderedMessages = messages.reversed.toList();
+        final totalItems = orderedMessages.length + pendingItems.length;
         _scheduleAutoScrollIfNeeded(totalItems);
 
         return ListView.builder(
           controller: widget.scrollController,
+          reverse: true,
           padding: const EdgeInsets.all(16),
           itemCount: totalItems,
           itemBuilder: (context, index) {
-            if (index >= messages.length) {
-              final pendingIndex = index - messages.length;
-              if (pendingIndex < pendingText.length) {
-                final textMessage = pendingText[pendingIndex];
+            if (index < pendingItems.length) {
+              final item = pendingItems[index];
+              final type = item['type'] as String;
+              final payload = item['payload'];
+              if (type == 'text' && payload is _PendingTextMessage) {
                 return _animateOnFirstPaint(
-                  id: 'pending_text_${textMessage.id}',
+                  id: 'pending_text_${payload.id}',
                   child: _buildPendingTextBubble(
-                    textMessage,
-                    key: ValueKey('pending_text_${textMessage.id}'),
+                    payload,
+                    key: ValueKey('pending_text_${payload.id}'),
                   ),
                 );
               }
-
-              final upload = pendingUploads[pendingIndex - pendingText.length];
-              return _animateOnFirstPaint(
-                id: 'pending_upload_${upload.id}',
-                child: _buildPendingUploadBubble(
-                  upload,
-                  key: ValueKey('pending_upload_${upload.id}'),
-                ),
-              );
+              if (type == 'upload' && payload is _PendingUpload) {
+                return _animateOnFirstPaint(
+                  id: 'pending_upload_${payload.id}',
+                  child: _buildPendingUploadBubble(
+                    payload,
+                    key: ValueKey('pending_upload_${payload.id}'),
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
             }
 
-            final messageDoc = messages[index];
+            final messageIndex = index - pendingItems.length;
+            if (messageIndex < 0 || messageIndex >= orderedMessages.length) {
+              return const SizedBox.shrink();
+            }
+            final messageDoc = orderedMessages[messageIndex];
             final message = messageDoc.data() as Map<String, dynamic>;
             final messageId = messageDoc.id;
             final isMe = message['senderId'] == currentUser.uid;
@@ -2458,11 +3028,27 @@ class _MessagesListState extends State<_MessagesList>
               );
             }
 
-            if (_decryptedCache.containsKey(messageId)) {
+            final signature =
+                '${encryptionReady ? 'ready' : 'not_ready'}||${_decryptSignature(message)}';
+            if (_decryptInputSignature[messageId] != signature) {
+              _decryptInputSignature[messageId] = signature;
+              _decryptFutureCache.remove(messageId);
+              _decryptedCache.remove(messageId);
+            }
+
+            final cachedText = _decryptedCache[messageId]?.trim() ?? '';
+            final persistedText = _persistedTextForMessage(messageId);
+            final immediateText = cachedText.isNotEmpty
+                ? cachedText
+                : persistedText;
+
+            if (!encryptionReady) {
               return _animateOnFirstPaint(
                 id: 'msg_$messageId',
                 child: _buildMessageBubble(
-                  _decryptedCache[messageId]!,
+                  immediateText.isNotEmpty
+                      ? immediateText
+                      : 'Encrypted message',
                   isMe,
                   timestamp,
                   messageId: messageId,
@@ -2475,12 +3061,21 @@ class _MessagesListState extends State<_MessagesList>
               );
             }
 
-            final signature =
-                '${encryptionReady ? 'ready' : 'not_ready'}||${_decryptSignature(message)}';
-            if (_decryptInputSignature[messageId] != signature) {
-              _decryptInputSignature[messageId] = signature;
-              _decryptFutureCache.remove(messageId);
-              _decryptedCache.remove(messageId);
+            if (cachedText.isNotEmpty) {
+              return _animateOnFirstPaint(
+                id: 'msg_$messageId',
+                child: _buildMessageBubble(
+                  cachedText,
+                  isMe,
+                  timestamp,
+                  messageId: messageId,
+                  messageData: message,
+                  isPending: isPending,
+                  isRead: isRead,
+                  readAt: readAt,
+                  key: ValueKey(messageId),
+                ),
+              );
             }
 
             final decryptFuture = _decryptFutureCache.putIfAbsent(
@@ -2493,6 +3088,9 @@ class _MessagesListState extends State<_MessagesList>
                 return future.then((decrypted) {
                   if (encryptionReady && decrypted.isNotEmpty) {
                     _decryptedCache[messageId] = decrypted;
+                    if (mounted) {
+                      _schedulePersistedCacheWriteFromLive();
+                    }
                   }
                   return decrypted;
                 });
@@ -2505,22 +3103,22 @@ class _MessagesListState extends State<_MessagesList>
                 String displayText;
 
                 if (!encryptionReady) {
-                  displayText = _decryptedCache[messageId] ?? '';
+                  displayText = _decryptedCache[messageId] ?? persistedText;
                 } else if (decryptSnapshot.connectionState ==
                     ConnectionState.waiting) {
-                  displayText = _decryptedCache[messageId] ?? '';
+                  displayText = _decryptedCache[messageId] ?? persistedText;
                 } else if (decryptSnapshot.hasError) {
-                  displayText = _decryptedCache[messageId] ?? '';
+                  displayText = _decryptedCache[messageId] ?? persistedText;
                   if (displayText.isEmpty) {
-                    displayText = 'Unable to decrypt this message';
+                    displayText = 'Encrypted message';
                   }
                 } else {
                   displayText = decryptSnapshot.data ?? '';
                   if (displayText.isEmpty) {
-                    displayText = _decryptedCache[messageId] ?? '';
+                    displayText = _decryptedCache[messageId] ?? persistedText;
                   }
                   if (displayText.isEmpty) {
-                    displayText = 'Unable to decrypt this message';
+                    displayText = 'Encrypted message';
                   }
                 }
 
@@ -2541,6 +3139,37 @@ class _MessagesListState extends State<_MessagesList>
               },
             );
           },
+        );
+      },
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return ListView.builder(
+      controller: widget.scrollController,
+      reverse: true,
+      padding: const EdgeInsets.all(16),
+      itemCount: 5,
+      itemBuilder: (context, index) {
+        final isMe = index.isEven;
+        return Align(
+          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            width: MediaQuery.of(context).size.width * 0.45,
+            height: 46,
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: Theme.of(
+                context,
+              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(16),
+                topRight: const Radius.circular(16),
+                bottomLeft: Radius.circular(isMe ? 16 : 4),
+                bottomRight: Radius.circular(isMe ? 4 : 16),
+              ),
+            ),
+          ),
         );
       },
     );
@@ -2861,6 +3490,15 @@ class _MessagesListState extends State<_MessagesList>
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  if (upload.caption != null && upload.caption!.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      upload.caption!,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ],
                   const SizedBox(height: 4),
                   LinearProgressIndicator(
                     value: upload.progress,
@@ -2905,6 +3543,7 @@ class _MessagesListState extends State<_MessagesList>
         : 0;
     final fileUrl = message['fileUrl']?.toString() ?? '';
     final mimeType = message['mimeType']?.toString() ?? '';
+    final caption = message['caption']?.toString().trim() ?? '';
     final isImage = mimeType.toLowerCase().startsWith('image/');
     final isVideo = mimeType.toLowerCase().startsWith('video/');
     final isAudio = mimeType.toLowerCase().startsWith('audio/');
@@ -2976,9 +3615,26 @@ class _MessagesListState extends State<_MessagesList>
                   _buildWindowsVideoPreviewFallback(
                     fileName: fileName,
                     isMe: isMe,
+                    onOpenFullscreen: () => _openVideoViewer(
+                      messageId: messageId,
+                      fileUrl: fileUrl,
+                      localPath: localPath,
+                      fileName: fileName,
+                      fileSize: fileSize,
+                    ),
                   )
                 else
-                  _InlineVideoPlayer(url: fileUrl, messageId: messageId),
+                  _InlineVideoPlayer(
+                    url: fileUrl,
+                    messageId: messageId,
+                    onOpenFullscreen: () => _openVideoViewer(
+                      messageId: messageId,
+                      fileUrl: fileUrl,
+                      localPath: localPath,
+                      fileName: fileName,
+                      fileSize: fileSize,
+                    ),
+                  ),
                 if (timestamp != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
@@ -3021,6 +3677,19 @@ class _MessagesListState extends State<_MessagesList>
                     fileSize: fileSize,
                     isDownloaded: isDownloaded,
                     localPath: localPath,
+                  ),
+                ),
+              if (caption.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, left: 4, right: 4),
+                  child: Text(
+                    caption,
+                    style: TextStyle(
+                      color: isMe
+                          ? colorScheme.onPrimary
+                          : colorScheme.onSurface,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
               _buildReactionsRow(messageId: messageId, message: message),
@@ -3113,6 +3782,7 @@ class _MessagesListState extends State<_MessagesList>
   Widget _buildWindowsVideoPreviewFallback({
     required String fileName,
     required bool isMe,
+    required VoidCallback onOpenFullscreen,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
     final receivedMetaColor = colorScheme.onSurfaceVariant;
@@ -3160,7 +3830,34 @@ class _MessagesListState extends State<_MessagesList>
               fontSize: 12,
             ),
           ),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            onPressed: onOpenFullscreen,
+            icon: const Icon(Icons.fullscreen),
+            label: const Text('Open full screen'),
+          ),
         ],
+      ),
+    );
+  }
+
+  void _openVideoViewer({
+    required String messageId,
+    required String fileUrl,
+    required String? localPath,
+    required String fileName,
+    required int fileSize,
+  }) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoViewerScreen(
+          messageId: messageId,
+          videoUrl: fileUrl,
+          localPath: localPath,
+          fileName: fileName,
+          fileSize: fileSize,
+        ),
       ),
     );
   }
@@ -3394,9 +4091,14 @@ class _MessagesListState extends State<_MessagesList>
 
 class _InlineVideoPlayer extends StatefulWidget {
   final String url;
-  final String messageId; // ADD THIS
+  final String messageId;
+  final VoidCallback? onOpenFullscreen;
 
-  const _InlineVideoPlayer({required this.url, required this.messageId});
+  const _InlineVideoPlayer({
+    required this.url,
+    required this.messageId,
+    this.onOpenFullscreen,
+  });
 
   @override
   State<_InlineVideoPlayer> createState() => _InlineVideoPlayerState();
@@ -3611,52 +4313,55 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
             ),
           );
         }
-        final aspectRatio = controller.value.aspectRatio > 0
-            ? controller.value.aspectRatio
-            : (16 / 9);
+        final size = controller.value.size;
+        final videoWidth = size.width > 0 ? size.width : 16.0;
+        final videoHeight = size.height > 0 ? size.height : 9.0;
 
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            color: Colors.black,
-            child: Stack(
-              children: [
-                AspectRatio(
-                  aspectRatio: aspectRatio,
-                  child: VideoPlayer(controller),
-                ),
-                Positioned.fill(
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(onTap: _togglePlayback),
+        return _buildShell(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  clipBehavior: Clip.hardEdge,
+                  child: SizedBox(
+                    width: videoWidth,
+                    height: videoHeight,
+                    child: VideoPlayer(controller),
                   ),
                 ),
-                if (!controller.value.isPlaying)
-                  const Positioned.fill(
-                    child: Center(
-                      child: Icon(
-                        Icons.play_circle_fill,
-                        color: Colors.white,
-                        size: 54,
-                      ),
-                    ),
-                  ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: VideoProgressIndicator(
-                    controller,
-                    allowScrubbing: true,
-                    colors: VideoProgressColors(
-                      playedColor: Colors.white,
-                      bufferedColor: Colors.white38,
-                      backgroundColor: Colors.black38,
+              ),
+              Positioned.fill(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(onTap: _togglePlayback),
+                ),
+              ),
+              if (!controller.value.isPlaying)
+                const Positioned.fill(
+                  child: Center(
+                    child: Icon(
+                      Icons.play_circle_fill,
+                      color: Colors.white,
+                      size: 54,
                     ),
                   ),
                 ),
-              ],
-            ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: VideoProgressIndicator(
+                  controller,
+                  allowScrubbing: true,
+                  colors: VideoProgressColors(
+                    playedColor: Colors.white,
+                    bufferedColor: Colors.white38,
+                    backgroundColor: Colors.black38,
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -3670,7 +4375,28 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
         width: double.infinity,
         height: 190,
         color: Colors.black87,
-        child: child,
+        child: Stack(
+          children: [
+            Positioned.fill(child: child),
+            if (widget.onOpenFullscreen != null)
+              Positioned(top: 6, right: 6, child: _buildFullscreenButton()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFullscreenButton() {
+    return Material(
+      color: Colors.black45,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: widget.onOpenFullscreen,
+        child: const Padding(
+          padding: EdgeInsets.all(6),
+          child: Icon(Icons.fullscreen, color: Colors.white, size: 18),
+        ),
       ),
     );
   }
@@ -4034,6 +4760,8 @@ class _PendingUpload {
   final String fileName;
   final int fileSize;
   final String mimeType;
+  final DateTime createdAt;
+  final String? caption;
   double progress;
   UploadTask? task;
   StreamSubscription<TaskSnapshot>? sub;
@@ -4043,6 +4771,15 @@ class _PendingUpload {
     required this.fileName,
     required this.fileSize,
     required this.mimeType,
+    required this.createdAt,
+    this.caption,
     required this.progress,
   });
+}
+
+class _MediaComposerResult {
+  final List<XFile> files;
+  final String caption;
+
+  const _MediaComposerResult({required this.files, required this.caption});
 }

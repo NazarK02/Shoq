@@ -17,7 +17,7 @@ class SignalingService {
 
   // Automatic fallback order when SIGNALING_URL is not provided.
   static const List<String> _defaultFallbackUrls = [
-    'ws://10.64.238.12:3000',
+    'ws://10.251.59.12:3000',
     'ws://192.168.1.189:3000',
   ];
 

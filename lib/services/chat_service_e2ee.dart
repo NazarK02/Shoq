@@ -438,6 +438,7 @@ class ChatService {
     required String conversationId,
     required String messageText,
     required List<String> participantIds,
+    String? channelId,
     String? messageId,
     String? replyToMessageId,
     String? replyToText,
@@ -480,6 +481,10 @@ class ChatService {
     }
     if (callSummary != null && callSummary.isNotEmpty) {
       payload['callSummary'] = Map<String, dynamic>.from(callSummary);
+    }
+    final trimmedChannelId = channelId?.trim();
+    if (trimmedChannelId != null && trimmedChannelId.isNotEmpty) {
+      payload['channelId'] = trimmedChannelId;
     }
 
     final messagesRef = _firestore
@@ -550,6 +555,7 @@ class ChatService {
     required String fileName,
     required int fileSize,
     String? mimeType,
+    String? caption,
   }) async {
     final upload = startFileUpload(
       conversationId: conversationId,
@@ -567,6 +573,7 @@ class ChatService {
       fileName: fileName,
       fileSize: fileSize,
       mimeType: upload.contentType,
+      caption: caption,
     );
   }
 
@@ -618,6 +625,7 @@ class ChatService {
     required String fileName,
     required int fileSize,
     String? mimeType,
+    String? caption,
   }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) throw Exception('User not logged in');
@@ -626,6 +634,7 @@ class ChatService {
     final contentType = (mimeType == null || mimeType.trim().isEmpty)
         ? 'application/octet-stream'
         : mimeType.trim();
+    final trimmedCaption = caption?.trim();
 
     final payload = <String, dynamic>{
       'senderId': currentUser.uid,
@@ -643,6 +652,9 @@ class ChatService {
     if (downloadUrl != null && downloadUrl.trim().isNotEmpty) {
       payload['fileUrl'] = downloadUrl.trim();
     }
+    if (trimmedCaption != null && trimmedCaption.isNotEmpty) {
+      payload['caption'] = trimmedCaption;
+    }
 
     await _firestore
         .collection('conversations')
@@ -651,8 +663,11 @@ class ChatService {
         .doc(messageId)
         .set(payload);
 
+    final preview = (trimmedCaption != null && trimmedCaption.isNotEmpty)
+        ? _buildMessagePreview(trimmedCaption)
+        : 'File: $displayName';
     await _firestore.collection('conversations').doc(conversationId).update({
-      'lastMessage': 'File: $displayName',
+      'lastMessage': preview,
       'lastMessageTime': FieldValue.serverTimestamp(),
       'lastSenderId': currentUser.uid,
       'hasMessages': true,

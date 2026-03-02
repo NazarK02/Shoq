@@ -16,6 +16,8 @@ import '../services/conversation_cache_service.dart';
 import '../services/chat_folder_service.dart';
 import 'chat_screen_e2ee.dart';
 
+enum _CreateSheetAction { createFolder, createGroup, createServer, joinServer }
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -84,6 +86,13 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _openScreen(Widget screen) async {
     FocusScope.of(context).unfocus();
     await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
@@ -149,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showCreateSheet() async {
-    await showModalBottomSheet<void>(
+    final action = await showModalBottomSheet<_CreateSheetAction>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) {
@@ -161,24 +170,28 @@ class _HomeScreenState extends State<HomeScreen> {
                 leading: const Icon(Icons.create_new_folder_outlined),
                 title: const Text('Create folder'),
                 onTap: () {
-                  Navigator.pop(sheetContext);
-                  _showCreateFolderDialog();
+                  Navigator.pop(sheetContext, _CreateSheetAction.createFolder);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.groups_outlined),
                 title: const Text('Create group chat'),
                 onTap: () {
-                  Navigator.pop(sheetContext);
-                  _showCreateRoomDialog(type: 'group');
+                  Navigator.pop(sheetContext, _CreateSheetAction.createGroup);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.forum_outlined),
                 title: const Text('Create server'),
                 onTap: () {
-                  Navigator.pop(sheetContext);
-                  _showCreateRoomDialog(type: 'server');
+                  Navigator.pop(sheetContext, _CreateSheetAction.createServer);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.link_outlined),
+                title: const Text('Join server'),
+                onTap: () {
+                  Navigator.pop(sheetContext, _CreateSheetAction.joinServer);
                 },
               ),
             ],
@@ -186,63 +199,62 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     );
+
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _CreateSheetAction.createFolder:
+        await _showCreateFolderDialog();
+        return;
+      case _CreateSheetAction.createGroup:
+        await _showCreateGroupDialog();
+        return;
+      case _CreateSheetAction.createServer:
+        await _showCreateServerDialog();
+        return;
+      case _CreateSheetAction.joinServer:
+        await _showJoinServerDialog();
+        return;
+    }
   }
 
   Future<void> _showCreateFolderDialog() async {
-    final controller = TextEditingController();
-    await showDialog<void>(
+    var draftName = '';
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final folderName = await showDialog<String>(
       context: context,
+      useRootNavigator: true,
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('Create folder'),
           content: TextField(
-            controller: controller,
-            autofocus: true,
+            autofocus: false,
             textCapitalization: TextCapitalization.words,
             maxLength: 24,
             decoration: const InputDecoration(
               labelText: 'Folder name',
               hintText: 'Work, Family, Gaming...',
             ),
+            onChanged: (value) {
+              draftName = value;
+            },
+            onSubmitted: (_) {
+              final name = draftName.trim();
+              if (name.isEmpty) return;
+              navigator.pop(name);
+            },
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
+              onPressed: () {
+                navigator.pop();
+              },
               child: const Text('Cancel'),
             ),
             ElevatedButton(
-              onPressed: () async {
-                final name = controller.text.trim();
+              onPressed: () {
+                final name = draftName.trim();
                 if (name.isEmpty) return;
-
-                final exists = _folders.any(
-                  (folder) => folder.name.toLowerCase() == name.toLowerCase(),
-                );
-                if (exists) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Folder already exists')),
-                    );
-                  }
-                  return;
-                }
-
-                final folder = ChatFolder(
-                  id: 'folder_${DateTime.now().millisecondsSinceEpoch}',
-                  name: name,
-                  colorValue:
-                      _folderPalette[_folders.length % _folderPalette.length]
-                          .toARGB32(),
-                );
-                if (!mounted) return;
-                setState(() {
-                  _folders = [..._folders, folder];
-                  _selectedFolderId = folder.id;
-                });
-                await _saveFolderState();
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext);
-                }
+                navigator.pop(name);
               },
               child: const Text('Create'),
             ),
@@ -250,7 +262,29 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     );
-    controller.dispose();
+
+    final name = folderName?.trim() ?? '';
+    if (!mounted || name.isEmpty) return;
+
+    final exists = _folders.any(
+      (folder) => folder.name.toLowerCase() == name.toLowerCase(),
+    );
+    if (exists) {
+      _showSnack('Folder already exists');
+      return;
+    }
+
+    final folder = ChatFolder(
+      id: 'folder_${DateTime.now().millisecondsSinceEpoch}',
+      name: name,
+      colorValue: _folderPalette[_folders.length % _folderPalette.length]
+          .toARGB32(),
+    );
+    setState(() {
+      _folders = [..._folders, folder];
+      _selectedFolderId = folder.id;
+    });
+    await _saveFolderState();
   }
 
   Future<List<_FriendSeed>> _loadFriendsForRoomCreation() async {
@@ -284,28 +318,28 @@ class _HomeScreenState extends State<HomeScreen> {
     return friends;
   }
 
-  Future<void> _showCreateRoomDialog({required String type}) async {
+  Future<void> _showCreateGroupDialog() async {
     final friends = await _loadFriendsForRoomCreation();
     if (!mounted) return;
 
     if (friends.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Add friends first to create a room')),
-      );
+      _showSnack('Add friends first to create a room');
       return;
     }
 
-    final titleController = TextEditingController();
+    var titleDraft = '';
     final selectedFriendIds = <String>{};
     var isSubmitting = false;
+    final navigator = Navigator.of(context, rootNavigator: true);
 
     await showDialog<void>(
       context: context,
+      useRootNavigator: true,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: Text(type == 'server' ? 'Create server' : 'Create group'),
+              title: const Text('Create group'),
               content: SizedBox(
                 width: 430,
                 child: Column(
@@ -313,17 +347,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     TextField(
-                      controller: titleController,
                       textCapitalization: TextCapitalization.words,
                       maxLength: 40,
-                      decoration: InputDecoration(
-                        labelText: type == 'server'
-                            ? 'Server name'
-                            : 'Group name',
-                        hintText: type == 'server'
-                            ? 'My server'
-                            : 'Weekend project',
+                      decoration: const InputDecoration(
+                        labelText: 'Group name',
+                        hintText: 'Weekend project',
                       ),
+                      onChanged: (value) {
+                        titleDraft = value;
+                      },
                     ),
                     const SizedBox(height: 8),
                     Text(
@@ -377,45 +409,42 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: isSubmitting
-                      ? null
-                      : () => Navigator.pop(dialogContext),
+                  onPressed: isSubmitting ? null : () => navigator.pop(),
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
                   onPressed: isSubmitting
                       ? null
                       : () async {
-                          final title = titleController.text.trim();
+                          final title = titleDraft.trim();
                           if (title.isEmpty) return;
                           if (selectedFriendIds.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Select at least one member'),
-                              ),
-                            );
+                            _showSnack('Select at least one member');
                             return;
                           }
 
+                          if (!dialogContext.mounted) return;
                           setDialogState(() {
                             isSubmitting = true;
                           });
 
                           final conversationId = await _createRoomConversation(
-                            type: type,
+                            type: 'group',
                             title: title,
                             memberIds: selectedFriendIds.toList(),
                           );
                           if (!mounted) return;
                           if (conversationId == null) {
-                            setDialogState(() {
-                              isSubmitting = false;
-                            });
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                isSubmitting = false;
+                              });
+                            }
                             return;
                           }
 
                           if (dialogContext.mounted) {
-                            Navigator.pop(dialogContext);
+                            navigator.pop();
                           }
 
                           final allParticipants = <String>[
@@ -427,7 +456,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             RoomChatScreen(
                               conversationId: conversationId,
                               roomTitle: title,
-                              conversationType: type,
+                              conversationType: 'group',
                               initialParticipants: allParticipants,
                             ),
                           );
@@ -446,8 +475,303 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     );
+  }
 
-    titleController.dispose();
+  Future<void> _showCreateServerDialog() async {
+    var titleDraft = '';
+    var isSubmitting = false;
+    final navigator = Navigator.of(context, rootNavigator: true);
+
+    await showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Create server'),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      textCapitalization: TextCapitalization.words,
+                      maxLength: 40,
+                      decoration: const InputDecoration(
+                        labelText: 'Server name',
+                        hintText: 'My server',
+                      ),
+                      onChanged: (value) {
+                        titleDraft = value;
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'You can personalize the server icon from Server profile.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting ? null : () => navigator.pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          final title = titleDraft.trim();
+                          if (title.isEmpty) return;
+
+                          if (!dialogContext.mounted) return;
+                          setDialogState(() {
+                            isSubmitting = true;
+                          });
+
+                          final conversationId = await _createRoomConversation(
+                            type: 'server',
+                            title: title,
+                            memberIds: const [],
+                          );
+                          if (!mounted) return;
+                          if (conversationId == null) {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                isSubmitting = false;
+                              });
+                            }
+                            return;
+                          }
+
+                          if (dialogContext.mounted) {
+                            navigator.pop();
+                          }
+
+                          final currentUid = _auth.currentUser?.uid ?? '';
+                          final initialParticipants = currentUid.isEmpty
+                              ? <String>[]
+                              : <String>[currentUid];
+
+                          await _openScreen(
+                            RoomChatScreen(
+                              conversationId: conversationId,
+                              roomTitle: title,
+                              conversationType: 'server',
+                              initialParticipants: initialParticipants,
+                            ),
+                          );
+                        },
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Create'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showJoinServerDialog() async {
+    var inviteDraft = '';
+    var isJoining = false;
+    final navigator = Navigator.of(context, rootNavigator: true);
+
+    await showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Join server'),
+              content: SizedBox(
+                width: 420,
+                child: TextField(
+                  autofocus: false,
+                  textCapitalization: TextCapitalization.none,
+                  decoration: const InputDecoration(
+                    labelText: 'Invite link or code',
+                    hintText: 'Paste invite link',
+                  ),
+                  onChanged: (value) {
+                    inviteDraft = value;
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isJoining ? null : () => navigator.pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isJoining
+                      ? null
+                      : () async {
+                          final code = _extractInviteCode(inviteDraft);
+                          if (code.isEmpty) {
+                            _showSnack('Enter a valid invite link or code');
+                            return;
+                          }
+
+                          if (!dialogContext.mounted) return;
+                          setDialogState(() {
+                            isJoining = true;
+                          });
+
+                          final joined = await _joinServerWithInvite(code);
+                          if (!mounted) return;
+                          if (joined == null) {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                isJoining = false;
+                              });
+                            }
+                            return;
+                          }
+
+                          if (dialogContext.mounted) {
+                            navigator.pop();
+                          }
+
+                          await _openScreen(
+                            RoomChatScreen(
+                              conversationId: joined.conversationId,
+                              roomTitle: joined.title,
+                              conversationType: 'server',
+                              initialParticipants: joined.participants,
+                            ),
+                          );
+                        },
+                  child: isJoining
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Join'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String _extractInviteCode(String rawInput) {
+    var raw = rawInput.trim();
+    if (raw.isEmpty) return '';
+
+    final uri = Uri.tryParse(raw);
+    if (uri != null) {
+      final queryCode = uri.queryParameters['code']?.trim() ?? '';
+      if (queryCode.isNotEmpty) {
+        raw = queryCode;
+      } else if (uri.pathSegments.isNotEmpty) {
+        raw = uri.pathSegments.last.trim();
+      }
+    } else if (raw.contains('/')) {
+      final parts = raw.split('/').where((part) => part.trim().isNotEmpty);
+      if (parts.isNotEmpty) {
+        raw = parts.last.trim();
+      }
+    }
+
+    return raw.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+  }
+
+  Future<_JoinedServerResult?> _joinServerWithInvite(String code) async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+
+    try {
+      final inviteRef = _firestore.collection('serverInvites').doc(code);
+      final inviteSnap = await inviteRef.get(
+        const GetOptions(source: Source.server),
+      );
+      final inviteData = inviteSnap.data();
+      if (inviteData == null) {
+        _showSnack('Invite link is invalid');
+        return null;
+      }
+
+      if (inviteData['revokedAt'] != null) {
+        _showSnack('This invite link has expired');
+        return null;
+      }
+
+      final conversationId = inviteData['serverId']?.toString().trim() ?? '';
+      if (conversationId.isEmpty) {
+        _showSnack('Invite link is invalid');
+        return null;
+      }
+
+      final conversationRef = _firestore
+          .collection('conversations')
+          .doc(conversationId);
+      final conversationSnap = await conversationRef.get(
+        const GetOptions(source: Source.server),
+      );
+      final conversationData = conversationSnap.data();
+      if (conversationData == null ||
+          conversationData['type']?.toString().trim().toLowerCase() !=
+              'server') {
+        _showSnack('Server not found for this invite');
+        return null;
+      }
+
+      final participants = _participantsFromConversation(conversationData);
+      final alreadyJoined = participants.contains(user.uid);
+      if (!alreadyJoined) {
+        await conversationRef.set({
+          'participants': FieldValue.arrayUnion([user.uid]),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        await inviteRef.set({
+          'useCount': FieldValue.increment(1),
+          'lastAcceptedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        participants.add(user.uid);
+      }
+
+      final title = conversationData['title']?.toString().trim();
+      final resolvedTitle = (title == null || title.isEmpty) ? 'Server' : title;
+      return _JoinedServerResult(
+        conversationId: conversationId,
+        title: resolvedTitle,
+        participants: participants,
+      );
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        _showSnack(
+          'Permission denied while joining server. Update Firestore rules for server invites.',
+        );
+        return null;
+      }
+      final detail = e.message?.trim();
+      _showSnack(
+        detail == null || detail.isEmpty
+            ? 'Could not join server (${e.code})'
+            : 'Could not join server: $detail',
+      );
+      return null;
+    } catch (e) {
+      _showSnack('Could not join server: $e');
+      return null;
+    }
   }
 
   Future<String?> _createRoomConversation({
@@ -458,15 +782,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = _auth.currentUser;
     if (user == null) return null;
 
+    final isServer = type == 'server';
     final participants = {user.uid, ...memberIds.map((id) => id.trim())}
       ..removeWhere((id) => id.isEmpty);
 
-    if (participants.length < 2) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('At least 2 members are required')),
-        );
-      }
+    if (!isServer && participants.length < 2) {
+      _showSnack('At least 2 members are required');
       return null;
     }
 
@@ -475,9 +796,17 @@ class _HomeScreenState extends State<HomeScreen> {
       await ref.set({
         'type': type,
         'title': title,
+        'description': '',
+        'avatarUrl': null,
         'participants': participants.toList(),
         'createdBy': user.uid,
+        if (isServer) 'admins': [user.uid],
+        if (isServer) 'activeInviteCode': null,
         'createdAt': FieldValue.serverTimestamp(),
+        if (isServer)
+          'channels': [
+            {'id': 'general', 'name': 'general'},
+          ],
         'lastMessage': null,
         'lastMessageTime': null,
         'lastSenderId': null,
@@ -485,12 +814,22 @@ class _HomeScreenState extends State<HomeScreen> {
         'encrypted': true,
       });
       return ref.id;
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to create room: $e')));
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        _showSnack(
+          'Permission denied while creating room. Check Firestore rules for conversations.',
+        );
+        return null;
       }
+      final detail = e.message?.trim();
+      _showSnack(
+        detail == null || detail.isEmpty
+            ? 'Failed to create room (${e.code})'
+            : 'Failed to create room: $detail',
+      );
+      return null;
+    } catch (e) {
+      _showSnack('Failed to create room: $e');
       return null;
     }
   }
@@ -519,7 +858,7 @@ class _HomeScreenState extends State<HomeScreen> {
     required String conversationName,
   }) async {
     final currentFolderId = _folderAssignments[conversationId];
-    await showModalBottomSheet<void>(
+    final shouldCreateFolder = await showModalBottomSheet<bool>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) {
@@ -573,8 +912,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 leading: const Icon(Icons.create_new_folder_outlined),
                 title: const Text('Create folder'),
                 onTap: () {
-                  Navigator.pop(sheetContext);
-                  _showCreateFolderDialog();
+                  Navigator.pop(sheetContext, true);
                 },
               ),
             ],
@@ -582,6 +920,9 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     );
+
+    if (!mounted || shouldCreateFolder != true) return;
+    await _showCreateFolderDialog();
   }
 
   String _folderName(String folderId) {
@@ -1159,10 +1500,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: Colors.grey),
                     ),
-                    trailing: SizedBox(
-                      width: 72,
+                    trailing: ConstrainedBox(
+                      constraints: const BoxConstraints(minWidth: 36),
                       child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           if (chatData['lastMessageTime'] is Timestamp)
@@ -1178,7 +1519,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           PopupMenuButton<String>(
                             tooltip: 'Chat options',
                             padding: EdgeInsets.zero,
-                            icon: const Icon(Icons.more_vert, size: 20),
+                            iconSize: 18,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 30,
+                              height: 30,
+                            ),
+                            icon: const Icon(Icons.more_vert),
                             onSelected: (value) {
                               if (value == 'move') {
                                 _showMoveConversationSheet(
@@ -1469,5 +1815,17 @@ class _FriendSeed {
     required this.userId,
     required this.displayName,
     required this.photoUrl,
+  });
+}
+
+class _JoinedServerResult {
+  final String conversationId;
+  final String title;
+  final List<String> participants;
+
+  const _JoinedServerResult({
+    required this.conversationId,
+    required this.title,
+    required this.participants,
   });
 }

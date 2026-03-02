@@ -1,6 +1,41 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function conversationExists(conversationId) {
+      return exists(
+        /databases/$(database)/documents/conversations/$(conversationId)
+      );
+    }
+
+    function conversationDoc(conversationId) {
+      return get(
+        /databases/$(database)/documents/conversations/$(conversationId)
+      );
+    }
+
+    function isConversationParticipant(conversationId) {
+      let conversation = conversationDoc(conversationId);
+      return isSignedIn() &&
+        conversationExists(conversationId) &&
+        conversation.data.participants is list &&
+        request.auth.uid in conversation.data.participants;
+    }
+
+    function isServerManager(conversationId) {
+      let conversation = conversationDoc(conversationId);
+      let admins = conversation.data.admins is list ? conversation.data.admins : [];
+      return isSignedIn() &&
+        conversationExists(conversationId) &&
+        conversation.data.type == 'server' &&
+        (
+          conversation.data.createdBy == request.auth.uid ||
+          request.auth.uid in admins
+        );
+    }
 
     // Users collection
     match /users/{userId} {
@@ -49,6 +84,44 @@ service cloud.firestore {
     // Notifications settings
     match /users/{userId}/settings/{document} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Server invite links
+    match /serverInvites/{inviteCode} {
+      function hasServerId(data) {
+        return data.serverId is string && data.serverId.size() > 0;
+      }
+
+      function isJoinCounterUpdateOnly() {
+        let diff = request.resource.data.diff(resource.data);
+        let beforeCount = resource.data.useCount is number ? resource.data.useCount : 0;
+        return diff.affectedKeys().hasOnly(['useCount', 'lastAcceptedAt']) &&
+          request.resource.data.useCount is number &&
+          request.resource.data.useCount >= beforeCount;
+      }
+
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+        request.resource.data.code == inviteCode &&
+        request.resource.data.createdBy == request.auth.uid &&
+        hasServerId(request.resource.data) &&
+        isServerManager(request.resource.data.serverId);
+
+      allow update: if isSignedIn() &&
+        hasServerId(resource.data) &&
+        (
+          isServerManager(resource.data.serverId) ||
+          (
+            resource.data.revokedAt == null &&
+            isConversationParticipant(resource.data.serverId) &&
+            isJoinCounterUpdateOnly()
+          )
+        );
+
+      allow delete: if isSignedIn() &&
+        hasServerId(resource.data) &&
+        isServerManager(resource.data.serverId);
     }
 
     // Conversations
