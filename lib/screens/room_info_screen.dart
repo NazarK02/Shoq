@@ -10,8 +10,10 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/server_channel.dart';
+import '../services/server_invite_service.dart';
 import '../services/user_cache_service.dart';
 import 'image_viewer_screen.dart';
 import 'photo_editor_screen.dart';
@@ -37,6 +39,7 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final UserCacheService _userCache = UserCacheService();
+  final ServerInviteService _inviteService = ServerInviteService();
   final Random _random = Random.secure();
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -157,7 +160,16 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
   }
 
   String _inviteLinkForCode(String code) {
-    return 'shoq://join-server?code=$code';
+    return _inviteService.buildInviteLink(code);
+  }
+
+  Future<void> _openInviteLink(String link) async {
+    final uri = Uri.tryParse(link);
+    if (uri == null) return;
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      _showSnack('Could not open invite link');
+    }
   }
 
   String _randomInviteCode() {
@@ -259,6 +271,14 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
     await Clipboard.setData(ClipboardData(text: link));
     if (!mounted) return;
     _showSnack('Invite link copied');
+  }
+
+  Future<void> _copyInviteCode() async {
+    final code = _activeInviteCode();
+    if (code.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!mounted) return;
+    _showSnack('Server code copied');
   }
 
   Future<void> _revokeInviteLink() async {
@@ -1059,11 +1079,27 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
                 ),
               ),
             ] else ...[
-              SelectableText(
-                link,
+              InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => _openInviteLink(link),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text(
+                    link,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Theme.of(context).colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ),
+              Text(
+                'Server code: $code',
                 style: TextStyle(
-                  fontSize: 13,
-                  color: Theme.of(context).colorScheme.primary,
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
               const SizedBox(height: 8),
@@ -1075,6 +1111,11 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
                     onPressed: _copyInviteLink,
                     icon: const Icon(Icons.copy),
                     label: const Text('Copy'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _copyInviteCode,
+                    icon: const Icon(Icons.password),
+                    label: const Text('Copy code'),
                   ),
                   if (_canManage)
                     TextButton.icon(

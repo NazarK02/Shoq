@@ -27,7 +27,7 @@ class ThemeService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final isDark = prefs.getBool(_isDarkModeKey) ?? false;
     _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
-    _uiScale = (prefs.getDouble(_uiScaleKey) ?? 1.0).clamp(0.85, 1.35);
+    _uiScale = (prefs.getDouble(_uiScaleKey) ?? 1.0).clamp(0.65, 1.65);
     _showLinkPreviews = prefs.getBool(_showLinkPreviewsKey) ?? true;
     _reduceMotion = prefs.getBool(_reduceMotionKey) ?? false;
     notifyListeners();
@@ -56,7 +56,7 @@ class ThemeService extends ChangeNotifier {
   }
 
   Future<void> setUiScale(double value) async {
-    final next = value.clamp(0.85, 1.35);
+    final next = value.clamp(0.65, 1.65);
     if ((_uiScale - next).abs() < 0.001) return;
     _uiScale = next;
     final prefs = await SharedPreferences.getInstance();

@@ -6,10 +6,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mime/mime.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:provider/provider.dart';
 
+import '../models/chat_sticker.dart';
 import '../models/server_channel.dart';
 import '../services/chat_service_e2ee.dart';
 import '../services/file_download_service.dart';
@@ -43,28 +45,6 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   static final Map<String, QuerySnapshot> _sessionMessageCache = {};
   static final Map<String, List<Map<String, dynamic>>>
   _sessionPersistedMessages = {};
-  static const List<String> _stickers = [
-    '😀',
-    '😎',
-    '🥳',
-    '🤯',
-    '🤖',
-    '🫶',
-    '💖',
-    '🔥',
-    '💯',
-    '🎉',
-    '👑',
-    '🚀',
-    '🌈',
-    '🐱',
-    '🐶',
-    '🐸',
-    '🍕',
-    '☕',
-    '⚽',
-    '🎮',
-  ];
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final ChatService _chatService = ChatService();
@@ -79,6 +59,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   final Map<String, Future<String>> _decryptFutures = {};
   final Map<String, String> _decryptInputSignatures = {};
   final Map<String, Map<String, dynamic>> _persistedById = {};
+  final Map<String, String> _optimisticTextByMessageId = {};
   QuerySnapshot? _cachedMessagesSnapshot;
   List<Map<String, dynamic>> _persistedMessages = [];
   List<QueryDocumentSnapshot> _latestLiveMessages = const [];
@@ -100,6 +81,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   bool _isInitializing = true;
   bool _isSending = false;
   bool _openingVoiceChannel = false;
+  bool _showChannelModeHeader = true;
   String? _error;
 
   bool get _isServer => widget.conversationType == 'server';
@@ -623,6 +605,11 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   }
 
   Future<void> _activateChannel(ServerChannel channel) async {
+    if (ServerChannelType.normalize(channel.type) == ServerChannelType.voice) {
+      await _openVoiceChannel(channel: channel);
+      return;
+    }
+
     final wasActive = _activeChannelId == channel.id;
     if (!wasActive) {
       setState(() {
@@ -634,11 +621,6 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
           _selectedFolderId = folders.first.id;
         }
       });
-    }
-
-    if (ServerChannelType.normalize(channel.type) == ServerChannelType.voice) {
-      await _openVoiceChannel(channel: channel);
-      return;
     }
 
     if (!wasActive) {
@@ -733,6 +715,12 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
 
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
+    final messageId = _firestore
+        .collection('conversations')
+        .doc(widget.conversationId)
+        .collection('messages')
+        .doc()
+        .id;
 
     final participants = _participants.toSet().toList();
     if (!participants.contains(currentUser.uid)) {
@@ -741,6 +729,13 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
 
     setState(() {
       _isSending = true;
+      _optimisticTextByMessageId[messageId] = text;
+    });
+    Timer(const Duration(seconds: 45), () {
+      if (!mounted) return;
+      setState(() {
+        _optimisticTextByMessageId.remove(messageId);
+      });
     });
     _messageController.clear();
 
@@ -750,6 +745,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         messageText: text,
         participantIds: participants,
         channelId: _isServer ? _activeChannelId : null,
+        messageId: messageId,
       );
       _scrollToBottom(force: true, animated: true);
     } catch (e) {
@@ -761,6 +757,9 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to send: $e')));
+      setState(() {
+        _optimisticTextByMessageId.remove(messageId);
+      });
     } finally {
       if (mounted) {
         setState(() {
@@ -770,7 +769,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     }
   }
 
-  Future<void> _sendSticker(String sticker) async {
+  Future<void> _sendSticker(ChatSticker sticker) async {
     if (_isSending) return;
     if (_isServer && !_channelSupportsTextComposer()) {
       _showSnack('This channel does not support sticker messages.');
@@ -778,8 +777,14 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     }
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
-    final value = sticker.trim();
+    final value = sticker.fallback.trim();
     if (value.isEmpty) return;
+    final messageId = _firestore
+        .collection('conversations')
+        .doc(widget.conversationId)
+        .collection('messages')
+        .doc()
+        .id;
 
     final participants = _participants.toSet().toList();
     if (!participants.contains(currentUser.uid)) {
@@ -788,6 +793,13 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
 
     setState(() {
       _isSending = true;
+      _optimisticTextByMessageId[messageId] = value;
+    });
+    Timer(const Duration(seconds: 45), () {
+      if (!mounted) return;
+      setState(() {
+        _optimisticTextByMessageId.remove(messageId);
+      });
     });
     try {
       await _chatService.sendRoomMessage(
@@ -795,10 +807,25 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         messageText: value,
         participantIds: participants,
         channelId: _isServer ? _activeChannelId : null,
+        messageId: messageId,
+        messageType: 'sticker',
+        extraData: <String, dynamic>{
+          'sticker': value,
+          'stickerFallback': value,
+          'stickerId': sticker.id,
+          'stickerUrl': sticker.imageUrl,
+          'stickerPack': sticker.pack,
+          'stickerLabel': sticker.label,
+        },
       );
       _scrollToBottom(force: true, animated: true);
     } catch (e) {
       _showSnack('Failed to send sticker: $e');
+      if (mounted) {
+        setState(() {
+          _optimisticTextByMessageId.remove(messageId);
+        });
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -818,7 +845,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
             child: GridView.builder(
               shrinkWrap: true,
-              itemCount: _stickers.length,
+              itemCount: kDefaultChatStickers.length,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 5,
                 mainAxisSpacing: 8,
@@ -826,7 +853,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                 childAspectRatio: 1,
               ),
               itemBuilder: (context, index) {
-                final sticker = _stickers[index];
+                final sticker = kDefaultChatStickers[index];
                 return InkWell(
                   borderRadius: BorderRadius.circular(12),
                   onTap: () {
@@ -842,7 +869,19 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     alignment: Alignment.center,
-                    child: Text(sticker, style: const TextStyle(fontSize: 34)),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: CachedNetworkImage(
+                        imageUrl: sticker.imageUrl,
+                        width: 46,
+                        height: 46,
+                        fit: BoxFit.cover,
+                        errorWidget: (context, url, error) => Text(
+                          sticker.fallback,
+                          style: const TextStyle(fontSize: 30),
+                        ),
+                      ),
+                    ),
                   ),
                 );
               },
@@ -1478,6 +1517,22 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
               onPressed: _showChannelPicker,
               icon: const Icon(Icons.tag),
             ),
+          if (_isServer)
+            IconButton(
+              tooltip: _showChannelModeHeader
+                  ? 'Hide channel info'
+                  : 'Show channel info',
+              onPressed: () {
+                setState(() {
+                  _showChannelModeHeader = !_showChannelModeHeader;
+                });
+              },
+              icon: Icon(
+                _showChannelModeHeader
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+              ),
+            ),
           IconButton(
             tooltip: 'Room profile',
             onPressed: _openRoomInfo,
@@ -1500,7 +1555,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         Expanded(
           child: Column(
             children: [
-              _buildChannelModeHeader(),
+              if (_showChannelModeHeader) _buildChannelModeHeader(),
               if (_activeChannelType() == ServerChannelType.file)
                 _buildFileChannelFoldersBar(),
               if (_activeChannelType() == ServerChannelType.assignments)
@@ -1523,7 +1578,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     return Column(
       children: [
         if (_isServer) _buildServerChannelBar(),
-        if (_isServer) _buildChannelModeHeader(),
+        if (_isServer && _showChannelModeHeader) _buildChannelModeHeader(),
         if (_isServer && _activeChannelType() == ServerChannelType.file)
           _buildFileChannelFoldersBar(),
         if (_isServer && _activeChannelType() == ServerChannelType.assignments)
@@ -1723,6 +1778,15 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
               icon: const Icon(Icons.call, size: 18),
               label: const Text('Join voice'),
             ),
+          IconButton(
+            tooltip: 'Hide channel info',
+            onPressed: () {
+              setState(() {
+                _showChannelModeHeader = false;
+              });
+            },
+            icon: const Icon(Icons.close, size: 18),
+          ),
         ],
       ),
     );
@@ -1993,6 +2057,9 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         _decryptInputSignatures.removeWhere(
           (id, _) => !visibleIds.contains(id),
         );
+        _optimisticTextByMessageId.removeWhere(
+          (id, _) => !visibleIds.contains(id),
+        );
 
         if (visibleDocs.isEmpty) {
           if (_persistedMessages.isNotEmpty &&
@@ -2218,6 +2285,65 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
       );
     }
 
+    Widget buildStickerBody(String fallbackText) {
+      final stickerUrl = data['stickerUrl']?.toString().trim() ?? '';
+      final displayFallback = fallbackText.trim().isEmpty
+          ? (data['sticker']?.toString().trim() ?? '\u{1F44D}')
+          : fallbackText.trim();
+
+      if (stickerUrl.isEmpty) {
+        return Text(
+          displayFallback,
+          style: TextStyle(
+            fontSize: displayFallback.runes.length <= 2 ? 44 : 36,
+            height: 1.05,
+          ),
+        );
+      }
+
+      final fileName = _stickerFileName(stickerUrl);
+      return GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) =>
+                  ImageViewerScreen(imageUrl: stickerUrl, fileName: fileName),
+            ),
+          );
+        },
+        onLongPress: () => _copyStickerLink(stickerUrl),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: CachedNetworkImage(
+            imageUrl: stickerUrl,
+            width: 134,
+            height: 134,
+            fit: BoxFit.cover,
+            errorWidget: (context, url, error) => Container(
+              width: 134,
+              height: 134,
+              alignment: Alignment.center,
+              color: Colors.black12,
+              child: Text(
+                displayFallback,
+                style: const TextStyle(fontSize: 40, height: 1.05),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (type == 'sticker') {
+      _optimisticTextByMessageId.remove(messageId);
+      final fallback =
+          data['stickerFallback']?.toString().trim() ??
+          data['sticker']?.toString().trim() ??
+          '';
+      return buildStickerBody(fallback);
+    }
+
     if (type == 'file') {
       final fileName = data['fileName']?.toString().trim();
       final caption = data['caption']?.toString().trim() ?? '';
@@ -2265,18 +2391,19 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                         ? Image.network(
                             fileUrl,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              color: Colors.black12,
-                              height: 160,
-                              width: double.infinity,
-                              alignment: Alignment.center,
-                              child: const Icon(Icons.broken_image),
-                            ),
+                            errorBuilder: (context, error, stackTrace) =>
+                                Container(
+                                  color: Colors.black12,
+                                  height: 160,
+                                  width: double.infinity,
+                                  alignment: Alignment.center,
+                                  child: const Icon(Icons.broken_image),
+                                ),
                           )
                         : CachedNetworkImage(
                             imageUrl: fileUrl,
                             fit: BoxFit.cover,
-                            errorWidget: (_, __, ___) => Container(
+                            errorWidget: (context, url, error) => Container(
                               color: Colors.black12,
                               height: 160,
                               width: double.infinity,
@@ -2367,8 +2494,10 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
 
     final persistedText = _persistedTextForMessage(messageId);
     final cachedText = _decryptedCache[messageId]?.trim() ?? '';
+    final optimisticText = _optimisticTextByMessageId[messageId]?.trim() ?? '';
 
     if (cachedText.isNotEmpty) {
+      _optimisticTextByMessageId.remove(messageId);
       return buildTextBody(cachedText);
     }
 
@@ -2391,6 +2520,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         final text = value.trim();
         if (text.isNotEmpty) {
           _decryptedCache[messageId] = text;
+          _optimisticTextByMessageId.remove(messageId);
           final uid = _auth.currentUser?.uid ?? '';
           if (uid.isNotEmpty) {
             _schedulePersistedCacheWriteFromLive(uid);
@@ -2406,10 +2536,24 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         final text =
             snapshot.data?.trim() ??
             _decryptedCache[messageId]?.trim() ??
-            persistedText;
+            (persistedText.isNotEmpty ? persistedText : optimisticText);
         return buildTextBody(text.isNotEmpty ? text : 'Encrypted message');
       },
     );
+  }
+
+  String _stickerFileName(String stickerUrl) {
+    final uri = Uri.tryParse(stickerUrl);
+    if (uri == null || uri.pathSegments.isEmpty) return 'sticker.png';
+    final tail = uri.pathSegments.last.trim();
+    if (tail.isEmpty) return 'sticker.png';
+    return tail;
+  }
+
+  Future<void> _copyStickerLink(String url) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    _showSnack('Sticker link copied');
   }
 
   Widget _buildInputBar() {

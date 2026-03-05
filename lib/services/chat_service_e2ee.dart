@@ -451,20 +451,44 @@ class ChatService {
   Future<void> sendStickerMessage({
     required String conversationId,
     required String recipientId,
-    required String sticker,
+    required String stickerText,
+    String? stickerId,
+    String? stickerUrl,
+    String? stickerPack,
+    String? stickerLabel,
     String? messageId,
   }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) throw Exception('User not logged in');
-    final trimmedSticker = sticker.trim();
+    final trimmedSticker = stickerText.trim();
     if (trimmedSticker.isEmpty) return;
 
+    final trimmedStickerId = stickerId?.trim();
+    final trimmedStickerUrl = stickerUrl?.trim();
+    final trimmedStickerPack = stickerPack?.trim();
+    final trimmedStickerLabel = stickerLabel?.trim();
+
     try {
+      final extraData = <String, dynamic>{'sticker': trimmedSticker};
+      if (trimmedStickerId != null && trimmedStickerId.isNotEmpty) {
+        extraData['stickerId'] = trimmedStickerId;
+      }
+      if (trimmedStickerUrl != null && trimmedStickerUrl.isNotEmpty) {
+        extraData['stickerUrl'] = trimmedStickerUrl;
+      }
+      if (trimmedStickerPack != null && trimmedStickerPack.isNotEmpty) {
+        extraData['stickerPack'] = trimmedStickerPack;
+      }
+      if (trimmedStickerLabel != null && trimmedStickerLabel.isNotEmpty) {
+        extraData['stickerLabel'] = trimmedStickerLabel;
+      }
+      extraData['stickerFallback'] = trimmedSticker;
+
       final payload = await _buildEncryptedTextPayload(
         messageText: trimmedSticker,
         recipientId: recipientId,
         messageType: 'sticker',
-        extraData: {'sticker': trimmedSticker},
+        extraData: extraData,
       );
 
       final messagesRef = _firestore
@@ -500,6 +524,8 @@ class ChatService {
     String? replyToText,
     String? replyToSenderId,
     Map<String, dynamic>? callSummary,
+    String messageType = 'text',
+    Map<String, dynamic>? extraData,
   }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) throw Exception('User not logged in');
@@ -521,6 +547,8 @@ class ChatService {
       messageText: trimmedText,
       recipientIds: effectiveRecipientIds,
       includeCurrentUserInRecipients: selfOnlyConversation,
+      messageType: messageType,
+      extraData: extraData,
     );
 
     final trimmedReplyId = replyToMessageId?.trim();
@@ -556,7 +584,9 @@ class ChatService {
     await messageRef.set(payload);
 
     await _firestore.collection('conversations').doc(conversationId).set({
-      'lastMessage': _buildMessagePreview(trimmedText),
+      'lastMessage': messageType == 'sticker'
+          ? 'Sticker'
+          : _buildMessagePreview(trimmedText),
       'lastMessageTime': FieldValue.serverTimestamp(),
       'lastSenderId': currentUser.uid,
       'hasMessages': true,

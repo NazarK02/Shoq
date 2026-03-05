@@ -1,8 +1,10 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../screens/image_viewer_screen.dart';
 import '../services/link_preview_service.dart';
 
 class ChatMessageText extends StatefulWidget {
@@ -128,9 +130,17 @@ class _ChatMessageTextState extends State<ChatMessageText> {
   @override
   Widget build(BuildContext context) {
     final links = _previewService.extractLinks(widget.text, maxCount: 4);
+    final standaloneMediaLink = _resolveStandaloneMediaLink(links);
     final previewLinks = widget.showPreviews
         ? links.take(widget.maxPreviewCards).toList()
         : const <String>[];
+
+    if (standaloneMediaLink != null) {
+      return _StandaloneMediaLink(
+        url: standaloneMediaLink,
+        previewService: _previewService,
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -152,6 +162,122 @@ class _ChatMessageTextState extends State<ChatMessageText> {
             onOpenLink: _openLink,
           ),
       ],
+    );
+  }
+
+  String? _resolveStandaloneMediaLink(List<String> links) {
+    if (links.length != 1) return null;
+    final raw = links.first.trim();
+    if (raw.isEmpty) return null;
+    final normalized = _previewService.normalizeUri(raw);
+    if (normalized == null) return null;
+    final normalizedText = normalized.toString();
+    if (!_previewService.isLikelyImageUrl(normalizedText)) {
+      return null;
+    }
+    final trimmedText = widget.text.trim();
+    if (trimmedText == raw || trimmedText == normalizedText) {
+      return normalizedText;
+    }
+    return null;
+  }
+}
+
+class _StandaloneMediaLink extends StatelessWidget {
+  final String url;
+  final LinkPreviewService previewService;
+
+  const _StandaloneMediaLink({required this.url, required this.previewService});
+
+  @override
+  Widget build(BuildContext context) {
+    final isGif = previewService.isLikelyGifUrl(url);
+    final fileName = _fileNameFromUrl(url, isGif: isGif);
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                ImageViewerScreen(imageUrl: url, fileName: fileName),
+          ),
+        );
+      },
+      onLongPress: () async {
+        await Clipboard.setData(ClipboardData(text: url));
+        if (context.mounted) {
+          ScaffoldMessenger.maybeOf(
+            context,
+          )?.showSnackBar(const SnackBar(content: Text('Media link copied')));
+        }
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 260, minWidth: 120),
+              child: isGif
+                  ? Image.network(
+                      url,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) =>
+                          _imageError(),
+                    )
+                  : CachedNetworkImage(
+                      imageUrl: url,
+                      fit: BoxFit.cover,
+                      errorWidget: (context, url, error) => _imageError(),
+                    ),
+            ),
+            if (isGif)
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    'GIF',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _fileNameFromUrl(String rawUrl, {required bool isGif}) {
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null || uri.pathSegments.isEmpty) {
+      return isGif ? 'gif.gif' : 'image.jpg';
+    }
+    final tail = uri.pathSegments.last.trim();
+    if (tail.isEmpty) {
+      return isGif ? 'gif.gif' : 'image.jpg';
+    }
+    return tail;
+  }
+
+  Widget _imageError() {
+    return Container(
+      height: 140,
+      color: Colors.black12,
+      alignment: Alignment.center,
+      child: const Icon(Icons.broken_image, color: Colors.white70),
     );
   }
 }
@@ -224,7 +350,8 @@ class _LinkPreviewCard extends StatelessWidget {
                               : CachedNetworkImage(
                                   imageUrl: imageUrl,
                                   fit: BoxFit.cover,
-                                  errorWidget: (_, __, ___) => _imageFallback(),
+                                  errorWidget: (context, url, error) =>
+                                      _imageFallback(),
                                 ),
                         ),
                         if (isYouTube)

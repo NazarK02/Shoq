@@ -27,7 +27,8 @@ class ImageViewerScreen extends StatefulWidget {
 }
 
 class _ImageViewerScreenState extends State<ImageViewerScreen> {
-  final TransformationController _transformationController = TransformationController();
+  final TransformationController _transformationController =
+      TransformationController();
   bool _showControls = true;
   String? _currentLocalPath;
   bool _isDownloading = false;
@@ -53,9 +54,9 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
 
   Future<void> _downloadImage() async {
     if (_currentLocalPath != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Image already downloaded')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Image already downloaded')));
       return;
     }
 
@@ -127,7 +128,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
     final safeName = _sanitizeFileName(widget.fileName);
     final picturesDir = await _getPicturesDirectory();
     final shoqFolder = Directory(p.join(picturesDir.path, 'Shoq'));
-    
+
     if (!shoqFolder.existsSync()) {
       await shoqFolder.create(recursive: true);
     }
@@ -137,7 +138,8 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
 
   Future<Directory> _getPicturesDirectory() async {
     if (Platform.isWindows) {
-      final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'];
+      final home =
+          Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'];
       if (home != null) {
         final pictures = Directory(p.join(home, 'Pictures'));
         if (pictures.existsSync()) {
@@ -145,11 +147,13 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
         }
       }
     }
-    
+
     if (Platform.isAndroid) {
       final externalDir = await getExternalStorageDirectory();
       if (externalDir != null) {
-        final pictures = Directory(p.join(externalDir.path.split('Android')[0], 'Pictures'));
+        final pictures = Directory(
+          p.join(externalDir.path.split('Android')[0], 'Pictures'),
+        );
         if (!pictures.existsSync()) {
           await pictures.create(recursive: true);
         }
@@ -167,14 +171,14 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
 
   String _findUniquePath(String directory, String fileName) {
     final basePath = p.join(directory, fileName);
-    
+
     if (!File(basePath).existsSync()) {
       return basePath;
     }
 
     final name = p.basenameWithoutExtension(fileName);
     final ext = p.extension(fileName);
-    
+
     int counter = 1;
     while (true) {
       final newPath = p.join(directory, '$name ($counter)$ext');
@@ -194,9 +198,9 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
     }
 
     // TODO: Implement share functionality with share_plus package
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Share feature coming soon')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Share feature coming soon')));
   }
 
   Future<void> _editImage() async {
@@ -214,9 +218,9 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
   Future<void> _openInExternalApp(String path) async {
     final result = await OpenFilex.open(path);
     if (result.type != ResultType.done && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result.message)));
     }
   }
 
@@ -225,8 +229,17 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
 
     await Clipboard.setData(ClipboardData(text: _currentLocalPath!));
     if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Path copied to clipboard')));
+    }
+  }
+
+  Future<void> _copyImageUrl() async {
+    await Clipboard.setData(ClipboardData(text: widget.imageUrl));
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Path copied to clipboard')),
+        const SnackBar(content: Text('Image link copied to clipboard')),
       );
     }
   }
@@ -290,9 +303,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
       body: Stack(
         children: [
           // Blurred background image
-          Positioned.fill(
-            child: _buildBlurredBackground(),
-          ),
+          Positioned.fill(child: _buildBlurredBackground()),
 
           // Interactive image viewer with full-area zoom
           Positioned.fill(
@@ -302,21 +313,14 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                 transformationController: _transformationController,
                 minScale: 0.5,
                 maxScale: 4.0,
-                child: Center(
-                  child: _buildImage(),
-                ),
+                child: Center(child: _buildImage()),
               ),
             ),
           ),
 
           // Top app bar (overlays on top)
           if (_showControls)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: _buildTopBar(),
-            ),
+            Positioned(top: 0, left: 0, right: 0, child: _buildTopBar()),
 
           // Bottom controls (overlays on top)
           if (_showControls)
@@ -344,9 +348,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
               fit: BoxFit.cover,
             ),
           ),
-          child: Container(
-            color: Colors.black.withOpacity(0.3),
-          ),
+          child: Container(color: Colors.black.withValues(alpha: 0.3)),
         ),
       ),
     );
@@ -358,10 +360,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withOpacity(0.7),
-            Colors.transparent,
-          ],
+          colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
         ),
       ),
       child: SafeArea(
@@ -376,23 +375,38 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
           ),
           iconTheme: const IconThemeData(color: Colors.white),
           actions: [
-            if (_currentLocalPath != null)
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, color: Colors.white),
-                onSelected: (value) {
-                  switch (value) {
-                    case 'copy_path':
-                      _copyImagePath();
-                      break;
-                    case 'open_external':
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, color: Colors.white),
+              onSelected: (value) {
+                switch (value) {
+                  case 'copy_link':
+                    _copyImageUrl();
+                    break;
+                  case 'copy_path':
+                    _copyImagePath();
+                    break;
+                  case 'open_external':
+                    if (_currentLocalPath != null) {
                       _openInExternalApp(_currentLocalPath!);
-                      break;
-                    case 'delete':
-                      _deleteLocalImage();
-                      break;
-                  }
-                },
-                itemBuilder: (context) => [
+                    }
+                    break;
+                  case 'delete':
+                    _deleteLocalImage();
+                    break;
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'copy_link',
+                  child: Row(
+                    children: [
+                      Icon(Icons.link, size: 20),
+                      SizedBox(width: 12),
+                      Text('Copy link'),
+                    ],
+                  ),
+                ),
+                if (_currentLocalPath != null)
                   const PopupMenuItem(
                     value: 'copy_path',
                     child: Row(
@@ -403,6 +417,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                       ],
                     ),
                   ),
+                if (_currentLocalPath != null)
                   const PopupMenuItem(
                     value: 'open_external',
                     child: Row(
@@ -413,18 +428,22 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                       ],
                     ),
                   ),
+                if (_currentLocalPath != null)
                   const PopupMenuItem(
                     value: 'delete',
                     child: Row(
                       children: [
                         Icon(Icons.delete, size: 20, color: Colors.red),
                         SizedBox(width: 12),
-                        Text('Delete from device', style: TextStyle(color: Colors.red)),
+                        Text(
+                          'Delete from device',
+                          style: TextStyle(color: Colors.red),
+                        ),
                       ],
                     ),
                   ),
-                ],
-              ),
+              ],
+            ),
           ],
         ),
       ),
@@ -437,10 +456,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
         gradient: LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
-          colors: [
-            Colors.black.withOpacity(0.7),
-            Colors.transparent,
-          ],
+          colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
         ),
       ),
       child: SafeArea(
@@ -463,7 +479,10 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                       const SizedBox(height: 8),
                       Text(
                         'Downloading... ${(_downloadProgress * 100).toStringAsFixed(0)}%',
-                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
@@ -473,9 +492,11 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                 children: [
                   _buildActionButton(
                     icon: Icons.download,
-                    label: _currentLocalPath != null ? 'Downloaded' : 'Download',
-                    onPressed: _currentLocalPath != null || _isDownloading 
-                        ? null 
+                    label: _currentLocalPath != null
+                        ? 'Downloaded'
+                        : 'Download',
+                    onPressed: _currentLocalPath != null || _isDownloading
+                        ? null
                         : _downloadImage,
                   ),
                   _buildActionButton(
@@ -522,11 +543,12 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
       fit: BoxFit.contain,
       loadingBuilder: (context, child, loadingProgress) {
         if (loadingProgress == null) return child;
-        
+
         return Center(
           child: CircularProgressIndicator(
             value: loadingProgress.expectedTotalBytes != null
-                ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                ? loadingProgress.cumulativeBytesLoaded /
+                      loadingProgress.expectedTotalBytes!
                 : null,
             color: Colors.white,
           ),
@@ -560,7 +582,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
     required VoidCallback? onPressed,
   }) {
     final isEnabled = onPressed != null;
-    
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [

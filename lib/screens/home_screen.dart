@@ -15,6 +15,7 @@ import '../services/user_service_e2ee.dart';
 import '../services/user_cache_service.dart';
 import '../services/conversation_cache_service.dart';
 import '../services/chat_folder_service.dart';
+import '../services/server_invite_service.dart';
 import 'chat_screen_e2ee.dart';
 
 enum _CreateSheetAction { createFolder, createGroup, createServer, joinServer }
@@ -43,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final ConversationCacheService _conversationCache =
       ConversationCacheService();
   final ChatFolderService _folderService = ChatFolderService();
+  final ServerInviteService _inviteService = ServerInviteService();
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   Timer? _rebuildTimer;
@@ -54,6 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<ChatFolder> _folders = [];
   Map<String, String> _folderAssignments = {};
   String? _selectedFolderId;
+  bool _launchInviteHandled = false;
 
   @override
   void initState() {
@@ -61,6 +64,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _userCache.addListener(_onUserCacheUpdated);
     _loadCachedConversations();
     _loadFolderState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_handleInitialInviteLink());
+    });
     _rebuildTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
@@ -92,6 +98,26 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.maybeOf(
       context,
     )?.showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _handleInitialInviteLink() async {
+    if (_launchInviteHandled || !mounted) return;
+    _launchInviteHandled = true;
+
+    final code = _inviteService.extractInitialInviteCode();
+    if (code == null || code.isEmpty) return;
+
+    final joined = await _joinServerWithInvite(code);
+    if (!mounted || joined == null) return;
+
+    await _openScreen(
+      RoomChatScreen(
+        conversationId: joined.conversationId,
+        roomTitle: joined.title,
+        conversationType: 'server',
+        initialParticipants: joined.participants,
+      ),
+    );
   }
 
   Future<void> _openScreen(Widget screen) async {
@@ -605,7 +631,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   textCapitalization: TextCapitalization.none,
                   decoration: const InputDecoration(
                     labelText: 'Invite link or code',
-                    hintText: 'Paste invite link',
+                    hintText: 'Paste invite link or server code',
                   ),
                   onChanged: (value) {
                     inviteDraft = value;
@@ -673,25 +699,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _extractInviteCode(String rawInput) {
-    var raw = rawInput.trim();
-    if (raw.isEmpty) return '';
-
-    final uri = Uri.tryParse(raw);
-    if (uri != null) {
-      final queryCode = uri.queryParameters['code']?.trim() ?? '';
-      if (queryCode.isNotEmpty) {
-        raw = queryCode;
-      } else if (uri.pathSegments.isNotEmpty) {
-        raw = uri.pathSegments.last.trim();
-      }
-    } else if (raw.contains('/')) {
-      final parts = raw.split('/').where((part) => part.trim().isNotEmpty);
-      if (parts.isNotEmpty) {
-        raw = parts.last.trim();
-      }
-    }
-
-    return raw.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    return _inviteService.extractInviteCode(rawInput);
   }
 
   Future<_JoinedServerResult?> _joinServerWithInvite(String code) async {

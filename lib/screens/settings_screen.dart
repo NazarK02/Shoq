@@ -120,9 +120,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Slider(
-              min: 0.85,
-              max: 1.35,
-              divisions: 10,
+              min: 0.65,
+              max: 1.65,
+              divisions: 20,
               label: '${(themeService.uiScale * 100).round()}%',
               value: themeService.uiScale,
               onChanged: (value) {

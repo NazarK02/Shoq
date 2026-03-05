@@ -98,8 +98,8 @@ class MyApp extends StatelessWidget {
         final mediaQuery = MediaQuery.of(context);
         final systemScale = mediaQuery.textScaler.scale(1.0);
         final effectiveScale = (systemScale * themeService.uiScale).clamp(
-          0.85,
-          1.7,
+          0.65,
+          2.0,
         );
         final scaledChild = MediaQuery(
           data: mediaQuery.copyWith(

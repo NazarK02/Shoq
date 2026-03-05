@@ -18,6 +18,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:video_player/video_player.dart';
+import '../models/chat_sticker.dart';
 import '../services/notification_service.dart';
 import '../services/video_cache_service.dart';
 import '../services/presence_service.dart';
@@ -56,28 +57,6 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   static const int _videoMessageFps = 24;
   static const int _videoMessageBitrate = 1200000;
   static const int _videoMessageAudioBitrate = 64000;
-  static const List<String> _stickers = [
-    '😀',
-    '😎',
-    '🥳',
-    '🤯',
-    '🤖',
-    '🫶',
-    '💖',
-    '🔥',
-    '💯',
-    '🎉',
-    '👑',
-    '🚀',
-    '🌈',
-    '🐱',
-    '🐶',
-    '🐸',
-    '🍕',
-    '☕',
-    '⚽',
-    '🎮',
-  ];
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -118,6 +97,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   _ReplyDraft? _replyDraft;
   final List<_PendingTextMessage> _pendingTextMessages = [];
   final List<_PendingUpload> _pendingUploads = [];
+  final Map<String, String> _optimisticTextByMessageId = {};
 
   @override
   void initState() {
@@ -274,6 +254,17 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     final messageText = _messageController.text.trim();
     if (messageText.isEmpty) return;
     final replyDraft = _replyDraft;
+    final messageId = _firestore
+        .collection('conversations')
+        .doc(_conversationId)
+        .collection('messages')
+        .doc()
+        .id;
+    final pending = _PendingTextMessage(
+      id: messageId,
+      text: messageText,
+      createdAt: DateTime.now(),
+    );
 
     try {
       _messageController.clear();
@@ -282,8 +273,16 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         setState(() {
           _sendPulse = true;
           _replyDraft = null;
+          _pendingTextMessages.add(pending);
+          _optimisticTextByMessageId[messageId] = messageText;
         });
       }
+      Timer(const Duration(seconds: 45), () {
+        if (!mounted) return;
+        setState(() {
+          _optimisticTextByMessageId.remove(messageId);
+        });
+      });
       Future.delayed(const Duration(milliseconds: 170), () {
         if (!mounted) return;
         setState(() {
@@ -295,6 +294,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         conversationId: _conversationId!,
         messageText: messageText,
         recipientId: widget.recipientId,
+        messageId: messageId,
         replyToMessageId: replyDraft?.messageId,
         replyToText: replyDraft?.previewText,
         replyToSenderId: replyDraft?.senderId,
@@ -323,6 +323,8 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         }
         setState(() {
           _replyDraft = replyDraft;
+          _pendingTextMessages.removeWhere((item) => item.id == messageId);
+          _optimisticTextByMessageId.remove(messageId);
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to send message: ${e.toString()}')),
@@ -331,18 +333,22 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     }
   }
 
-  Future<void> _sendSticker(String sticker) async {
+  Future<void> _sendSticker(ChatSticker sticker) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null || _conversationId == null) return;
-    final trimmedSticker = sticker.trim();
-    if (trimmedSticker.isEmpty) return;
+    final fallback = sticker.fallback.trim();
+    if (fallback.isEmpty) return;
 
     try {
       _messageFocusNode.requestFocus();
       await _chatService.sendStickerMessage(
         conversationId: _conversationId!,
         recipientId: widget.recipientId,
-        sticker: trimmedSticker,
+        stickerText: fallback,
+        stickerId: sticker.id,
+        stickerUrl: sticker.imageUrl,
+        stickerPack: sticker.pack,
+        stickerLabel: sticker.label,
       );
       try {
         final senderName = currentUser.displayName ?? 'Someone';
@@ -375,7 +381,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
             child: GridView.builder(
               shrinkWrap: true,
-              itemCount: _stickers.length,
+              itemCount: kDefaultChatStickers.length,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 5,
                 mainAxisSpacing: 8,
@@ -383,7 +389,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                 childAspectRatio: 1,
               ),
               itemBuilder: (context, index) {
-                final sticker = _stickers[index];
+                final sticker = kDefaultChatStickers[index];
                 return InkWell(
                   borderRadius: BorderRadius.circular(12),
                   onTap: () {
@@ -399,7 +405,19 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                       borderRadius: BorderRadius.circular(12),
                     ),
                     alignment: Alignment.center,
-                    child: Text(sticker, style: const TextStyle(fontSize: 34)),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: CachedNetworkImage(
+                        imageUrl: sticker.imageUrl,
+                        width: 46,
+                        height: 46,
+                        fit: BoxFit.cover,
+                        errorWidget: (context, url, error) => Text(
+                          sticker.fallback,
+                          style: const TextStyle(fontSize: 30),
+                        ),
+                      ),
+                    ),
                   ),
                 );
               },
@@ -490,6 +508,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                     recipientId: widget.recipientId,
                     pendingTextMessages: _pendingTextMessages,
                     pendingUploads: _pendingUploads,
+                    optimisticTextByMessageId: _optimisticTextByMessageId,
                     onPendingTextDelivered: _ackPendingTextMessages,
                     onCancelUpload: _cancelPendingUpload,
                     onReplyRequested: _setReplyDraft,
@@ -1910,6 +1929,7 @@ class _MessagesList extends StatefulWidget {
   final bool hasMessages;
   final List<_PendingTextMessage> pendingTextMessages;
   final List<_PendingUpload> pendingUploads;
+  final Map<String, String> optimisticTextByMessageId;
   final void Function(Set<String> ids) onPendingTextDelivered;
   final void Function(String id) onCancelUpload;
   final void Function(_ReplyDraft draft) onReplyRequested;
@@ -1926,6 +1946,7 @@ class _MessagesList extends StatefulWidget {
     required this.hasMessages,
     required this.pendingTextMessages,
     required this.pendingUploads,
+    required this.optimisticTextByMessageId,
     required this.onPendingTextDelivered,
     required this.onCancelUpload,
     required this.onReplyRequested,
@@ -3275,9 +3296,11 @@ class _MessagesListState extends State<_MessagesList>
 
             final cachedText = _decryptedCache[messageId]?.trim() ?? '';
             final persistedText = _persistedTextForMessage(messageId);
+            final optimisticText =
+                widget.optimisticTextByMessageId[messageId]?.trim() ?? '';
             var immediateText = cachedText.isNotEmpty
                 ? cachedText
-                : persistedText;
+                : (persistedText.isNotEmpty ? persistedText : optimisticText);
             if (immediateText.isEmpty && type == 'sticker') {
               immediateText = message['sticker']?.toString().trim() ?? '';
             }
@@ -3302,6 +3325,7 @@ class _MessagesListState extends State<_MessagesList>
             }
 
             if (cachedText.isNotEmpty) {
+              widget.optimisticTextByMessageId.remove(messageId);
               return _animateOnFirstPaint(
                 id: 'msg_$messageId',
                 child: _buildMessageBubble(
@@ -3328,6 +3352,7 @@ class _MessagesListState extends State<_MessagesList>
                 return future.then((decrypted) {
                   if (encryptionReady && decrypted.isNotEmpty) {
                     _decryptedCache[messageId] = decrypted;
+                    widget.optimisticTextByMessageId.remove(messageId);
                     if (mounted) {
                       _schedulePersistedCacheWriteFromLive();
                     }
@@ -3343,19 +3368,35 @@ class _MessagesListState extends State<_MessagesList>
                 String displayText;
 
                 if (!encryptionReady) {
-                  displayText = _decryptedCache[messageId] ?? persistedText;
+                  displayText =
+                      _decryptedCache[messageId] ??
+                      (persistedText.isNotEmpty
+                          ? persistedText
+                          : optimisticText);
                 } else if (decryptSnapshot.connectionState ==
                     ConnectionState.waiting) {
-                  displayText = _decryptedCache[messageId] ?? persistedText;
+                  displayText =
+                      _decryptedCache[messageId] ??
+                      (persistedText.isNotEmpty
+                          ? persistedText
+                          : optimisticText);
                 } else if (decryptSnapshot.hasError) {
-                  displayText = _decryptedCache[messageId] ?? persistedText;
+                  displayText =
+                      _decryptedCache[messageId] ??
+                      (persistedText.isNotEmpty
+                          ? persistedText
+                          : optimisticText);
                   if (displayText.isEmpty) {
                     displayText = 'Encrypted message';
                   }
                 } else {
                   displayText = decryptSnapshot.data ?? '';
                   if (displayText.isEmpty) {
-                    displayText = _decryptedCache[messageId] ?? persistedText;
+                    displayText =
+                        _decryptedCache[messageId] ??
+                        (persistedText.isNotEmpty
+                            ? persistedText
+                            : optimisticText);
                   }
                   if (displayText.isEmpty && type == 'sticker') {
                     displayText = message['sticker']?.toString().trim() ?? '';
@@ -3587,13 +3628,7 @@ class _MessagesListState extends State<_MessagesList>
                   incomingMetaColor: receivedMetaColor,
                 )
               else if (isSticker)
-                Text(
-                  text,
-                  style: TextStyle(
-                    fontSize: text.runes.length <= 2 ? 46 : 38,
-                    height: 1.05,
-                  ),
-                )
+                _buildStickerBody(text: text, messageData: messageData)
               else
                 ChatMessageText(
                   text: text,
@@ -3663,6 +3698,78 @@ class _MessagesListState extends State<_MessagesList>
         ),
       ),
     );
+  }
+
+  Widget _buildStickerBody({
+    required String text,
+    required Map<String, dynamic> messageData,
+  }) {
+    final stickerUrl = messageData['stickerUrl']?.toString().trim() ?? '';
+    final fallbackText =
+        (messageData['stickerFallback']?.toString().trim().isNotEmpty == true)
+        ? messageData['stickerFallback'].toString().trim()
+        : text.trim();
+
+    if (stickerUrl.isEmpty) {
+      return Text(
+        fallbackText,
+        style: TextStyle(
+          fontSize: fallbackText.runes.length <= 2 ? 46 : 38,
+          height: 1.05,
+        ),
+      );
+    }
+
+    final fileName = _stickerFileName(stickerUrl);
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                ImageViewerScreen(imageUrl: stickerUrl, fileName: fileName),
+          ),
+        );
+      },
+      onLongPress: () => _copyStickerLink(stickerUrl),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: CachedNetworkImage(
+          imageUrl: stickerUrl,
+          width: 134,
+          height: 134,
+          fit: BoxFit.cover,
+          errorWidget: (context, url, error) => Container(
+            width: 134,
+            height: 134,
+            alignment: Alignment.center,
+            color: Colors.black12,
+            child: Text(
+              fallbackText,
+              style: const TextStyle(fontSize: 42, height: 1.05),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _stickerFileName(String stickerUrl) {
+    final uri = Uri.tryParse(stickerUrl);
+    if (uri == null || uri.pathSegments.isEmpty) {
+      return 'sticker.png';
+    }
+    final tail = uri.pathSegments.last.trim();
+    if (tail.isEmpty) return 'sticker.png';
+    return tail;
+  }
+
+  Future<void> _copyStickerLink(String url) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(const SnackBar(content: Text('Sticker link copied')));
   }
 
   Widget _buildPendingTextBubble(_PendingTextMessage pending, {Key? key}) {
@@ -4043,7 +4150,7 @@ class _MessagesListState extends State<_MessagesList>
                   ? Image.network(
                       fileUrl,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
+                      errorBuilder: (context, error, stackTrace) => Container(
                         height: 200,
                         color: Colors.grey[800],
                         child: const Center(
