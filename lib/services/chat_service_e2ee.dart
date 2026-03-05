@@ -191,6 +191,9 @@ class ChatService {
     required String messageText,
     required List<String> recipientIds,
     bool includeTimestamps = true,
+    bool includeCurrentUserInRecipients = false,
+    String messageType = 'text',
+    Map<String, dynamic>? extraData,
   }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) throw Exception('User not logged in');
@@ -203,7 +206,11 @@ class ChatService {
 
     final uniqueRecipientIds = recipientIds
         .map((id) => id.trim())
-        .where((id) => id.isNotEmpty && id != currentUser.uid)
+        .where(
+          (id) =>
+              id.isNotEmpty &&
+              (includeCurrentUserInRecipients || id != currentUser.uid),
+        )
         .toSet()
         .toList();
     if (uniqueRecipientIds.isEmpty) {
@@ -307,7 +314,7 @@ class ChatService {
       'senderDeviceId': senderDeviceId,
       'read': false,
       'encrypted': true,
-      'type': 'text',
+      'type': messageType,
       'encryptionVersion': 3,
     };
     if (includeTimestamps) {
@@ -338,6 +345,9 @@ class ChatService {
     if (legacySenderCiphertext != null) {
       payload['senderCiphertext'] = legacySenderCiphertext;
     }
+    if (extraData != null && extraData.isNotEmpty) {
+      payload.addAll(extraData);
+    }
 
     return payload;
   }
@@ -346,11 +356,15 @@ class ChatService {
     required String messageText,
     required String recipientId,
     bool includeTimestamps = true,
+    String messageType = 'text',
+    Map<String, dynamic>? extraData,
   }) {
     return _buildEncryptedTextPayloadForRecipients(
       messageText: messageText,
       recipientIds: [recipientId],
       includeTimestamps: includeTimestamps,
+      messageType: messageType,
+      extraData: extraData,
     );
   }
 
@@ -434,6 +448,48 @@ class ChatService {
     }
   }
 
+  Future<void> sendStickerMessage({
+    required String conversationId,
+    required String recipientId,
+    required String sticker,
+    String? messageId,
+  }) async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) throw Exception('User not logged in');
+    final trimmedSticker = sticker.trim();
+    if (trimmedSticker.isEmpty) return;
+
+    try {
+      final payload = await _buildEncryptedTextPayload(
+        messageText: trimmedSticker,
+        recipientId: recipientId,
+        messageType: 'sticker',
+        extraData: {'sticker': trimmedSticker},
+      );
+
+      final messagesRef = _firestore
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages');
+      final trimmedMessageId = messageId?.trim();
+      final messageRef =
+          (trimmedMessageId != null && trimmedMessageId.isNotEmpty)
+          ? messagesRef.doc(trimmedMessageId)
+          : messagesRef.doc();
+      await messageRef.set(payload);
+
+      await _firestore.collection('conversations').doc(conversationId).set({
+        'lastMessage': 'Sticker',
+        'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastSenderId': currentUser.uid,
+        'hasMessages': true,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      print('Failed to send sticker message: $e');
+      rethrow;
+    }
+  }
+
   Future<void> sendRoomMessage({
     required String conversationId,
     required String messageText,
@@ -456,13 +512,15 @@ class ChatService {
         .where((id) => id.isNotEmpty && id != currentUser.uid)
         .toSet()
         .toList();
-    if (recipientIds.isEmpty) {
-      throw Exception('Conversation has no recipients');
-    }
+    final selfOnlyConversation = recipientIds.isEmpty;
+    final effectiveRecipientIds = selfOnlyConversation
+        ? [currentUser.uid]
+        : recipientIds;
 
     final payload = await _buildEncryptedTextPayloadForRecipients(
       messageText: trimmedText,
-      recipientIds: recipientIds,
+      recipientIds: effectiveRecipientIds,
+      includeCurrentUserInRecipients: selfOnlyConversation,
     );
 
     final trimmedReplyId = replyToMessageId?.trim();
@@ -550,12 +608,15 @@ class ChatService {
 
   Future<void> sendFileMessage({
     required String conversationId,
-    required String recipientId,
+    String? recipientId,
     required String filePath,
     required String fileName,
     required int fileSize,
     String? mimeType,
     String? caption,
+    String? channelId,
+    String? fileFolderId,
+    String? fileFolderName,
   }) async {
     final upload = startFileUpload(
       conversationId: conversationId,
@@ -574,6 +635,9 @@ class ChatService {
       fileSize: fileSize,
       mimeType: upload.contentType,
       caption: caption,
+      channelId: channelId,
+      fileFolderId: fileFolderId,
+      fileFolderName: fileFolderName,
     );
   }
 
@@ -626,6 +690,9 @@ class ChatService {
     required int fileSize,
     String? mimeType,
     String? caption,
+    String? channelId,
+    String? fileFolderId,
+    String? fileFolderName,
   }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) throw Exception('User not logged in');
@@ -635,6 +702,9 @@ class ChatService {
         ? 'application/octet-stream'
         : mimeType.trim();
     final trimmedCaption = caption?.trim();
+    final trimmedChannelId = channelId?.trim();
+    final trimmedFolderId = fileFolderId?.trim();
+    final trimmedFolderName = fileFolderName?.trim();
 
     final payload = <String, dynamic>{
       'senderId': currentUser.uid,
@@ -649,8 +719,17 @@ class ChatService {
       'storagePath': storagePath,
     };
 
+    if (trimmedChannelId != null && trimmedChannelId.isNotEmpty) {
+      payload['channelId'] = trimmedChannelId;
+    }
     if (downloadUrl != null && downloadUrl.trim().isNotEmpty) {
       payload['fileUrl'] = downloadUrl.trim();
+    }
+    if (trimmedFolderId != null && trimmedFolderId.isNotEmpty) {
+      payload['fileFolderId'] = trimmedFolderId;
+    }
+    if (trimmedFolderName != null && trimmedFolderName.isNotEmpty) {
+      payload['fileFolderName'] = trimmedFolderName;
     }
     if (trimmedCaption != null && trimmedCaption.isNotEmpty) {
       payload['caption'] = trimmedCaption;

@@ -17,6 +17,15 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   bool _isResending = false;
   int _resendCountdown = 0;
 
+  void _handleVerifiedState() {
+    _timer?.cancel();
+    if (!mounted) return;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (navigator.canPop()) {
+      navigator.popUntil((route) => route.isFirst);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -71,10 +80,8 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
       final user = _auth.currentUser;
       if (user != null) {
         await user.reload(); // Refresh emailVerified status
-        // Do NOT navigate from here. AuthWrapper listens to userChanges()
-        // and will handle routing when `emailVerified` becomes true.
         if (_auth.currentUser?.emailVerified == true) {
-          timer.cancel();
+          _handleVerifiedState();
         }
       }
     });
@@ -180,7 +187,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                       // so we stop polling and give the StreamBuilder a chance
                       // to react to the auth change.
                       if (_auth.currentUser?.emailVerified == true) {
-                        _timer?.cancel();
+                        _handleVerifiedState();
                       } else {
                         if (!mounted) return;
                         messenger.showSnackBar(

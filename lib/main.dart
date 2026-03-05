@@ -18,8 +18,12 @@ import 'services/app_prefetch_service.dart';
 import 'services/user_cache_service.dart';
 import 'services/conversation_cache_service.dart';
 import 'services/video_cache_service.dart';
+import 'services/app_route_service.dart';
 import 'screens/call_screen.dart';
 import 'services/signaling_service.dart';
+import 'widgets/active_session_banner.dart';
+
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
 /// Background notification handler
 @pragma('vm:entry-point')
@@ -83,11 +87,35 @@ class MyApp extends StatelessWidget {
     final themeService = context.watch<ThemeService>();
 
     return MaterialApp(
+      navigatorKey: appNavigatorKey,
+      navigatorObservers: [AppRouteService()],
       title: 'Shoq App',
       debugShowCheckedModeBanner: false,
       theme: ThemeService.lightTheme,
       darkTheme: ThemeService.darkTheme,
       themeMode: themeService.themeMode,
+      builder: (context, child) {
+        final mediaQuery = MediaQuery.of(context);
+        final systemScale = mediaQuery.textScaler.scale(1.0);
+        final effectiveScale = (systemScale * themeService.uiScale).clamp(
+          0.85,
+          1.7,
+        );
+        final scaledChild = MediaQuery(
+          data: mediaQuery.copyWith(
+            textScaler: TextScaler.linear(effectiveScale),
+            disableAnimations:
+                mediaQuery.disableAnimations || themeService.reduceMotion,
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+        return Stack(
+          children: [
+            scaledChild,
+            ActiveSessionBanner(navigatorKey: appNavigatorKey),
+          ],
+        );
+      },
       home: const AuthWrapper(),
     );
   }
@@ -110,8 +138,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
   bool _e2eeInitialized = false;
   String? _verificationCheckUid;
-  bool _verificationCheckInProgress = false;
-  bool _verificationCheckCompleted = false;
+  Timer? _verificationPollTimer;
 
   @override
   void initState() {
@@ -122,11 +149,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       user,
     ) async {
       if (user != null) {
-        if (_verificationCheckUid != user.uid) {
-          _verificationCheckUid = user.uid;
-          _verificationCheckInProgress = false;
-          _verificationCheckCompleted = false;
-        }
+        _verificationCheckUid = user.uid;
 
         await UserService().saveUserToFirestore(user: user);
         UserService().loadCachedProfile();
@@ -146,51 +169,58 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         UserCacheService().clear();
         ConversationCacheService().clearAll();
         _stopIncomingCallListener();
+        _stopVerificationPolling();
         _e2eeInitialized = false;
         _verificationCheckUid = null;
-        _verificationCheckInProgress = false;
-        _verificationCheckCompleted = false;
       }
     });
   }
 
-  void _scheduleVerificationRefresh(User user) {
-    if (_verificationCheckInProgress && _verificationCheckUid == user.uid) {
+  void _startVerificationPolling(User user) {
+    final uid = user.uid;
+    if (_verificationCheckUid == uid && _verificationPollTimer != null) {
       return;
     }
 
-    _verificationCheckUid = user.uid;
-    _verificationCheckInProgress = true;
-    _verificationCheckCompleted = false;
+    _stopVerificationPolling();
+    _verificationCheckUid = uid;
+    _verificationPollTimer = Timer.periodic(const Duration(seconds: 3), (
+      timer,
+    ) async {
+      final current = FirebaseAuth.instance.currentUser;
+      if (!mounted || current == null || current.uid != uid) {
+        _stopVerificationPolling();
+        return;
+      }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (current.emailVerified) {
+        _stopVerificationPolling();
+        if (mounted) setState(() {});
+        return;
+      }
+
       try {
-        await user.reload().timeout(const Duration(seconds: 4));
+        await current.reload().timeout(const Duration(seconds: 5));
       } catch (_) {
-        // Ignore timeout/errors and gracefully continue.
+        // Keep polling; transient network errors should not break flow.
       }
 
       if (!mounted) return;
-      setState(() {
-        _verificationCheckInProgress = false;
-        _verificationCheckCompleted = true;
-      });
+      final refreshed = FirebaseAuth.instance.currentUser;
+      if (refreshed == null || refreshed.uid != uid) {
+        _stopVerificationPolling();
+        return;
+      }
+      if (refreshed.emailVerified) {
+        _stopVerificationPolling();
+      }
+      setState(() {});
     });
   }
 
-  Widget _buildStartupLoader() {
-    return const Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 12),
-            Text('Loading your account...'),
-          ],
-        ),
-      ),
-    );
+  void _stopVerificationPolling() {
+    _verificationPollTimer?.cancel();
+    _verificationPollTimer = null;
   }
 
   void _startIncomingCallListener(String uid) {
@@ -274,6 +304,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.cancel();
     _stopIncomingCallListener();
+    _stopVerificationPolling();
     _presenceService.stopPresenceTracking();
     _presenceService.dispose();
     super.dispose();
@@ -321,30 +352,28 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             (p) => p.providerId == 'google.com',
           );
 
-          if (isGoogleUser) return const HomeScreen();
-
-          if (activeUser.emailVerified) return const HomeScreen();
-
-          final shouldRefreshVerification =
-              _verificationCheckUid != activeUser.uid ||
-              (!_verificationCheckCompleted && !_verificationCheckInProgress);
-          if (shouldRefreshVerification) {
-            _scheduleVerificationRefresh(activeUser);
+          if (isGoogleUser) {
+            _stopVerificationPolling();
+            return const HomeScreen();
           }
 
-          if (_verificationCheckInProgress &&
-              _verificationCheckUid == activeUser.uid) {
-            return _buildStartupLoader();
+          if (activeUser.emailVerified) {
+            _stopVerificationPolling();
+            return const HomeScreen();
           }
+
+          _startVerificationPolling(activeUser);
 
           final refreshedUser = FirebaseAuth.instance.currentUser;
           if (refreshedUser != null && refreshedUser.emailVerified) {
+            _stopVerificationPolling();
             return const HomeScreen();
           }
 
           return const EmailVerificationScreen();
         }
 
+        _stopVerificationPolling();
         return const LoginScreen();
       },
     );

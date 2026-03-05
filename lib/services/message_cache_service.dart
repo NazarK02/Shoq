@@ -134,7 +134,7 @@ class MessageCacheService {
     final readAtMs = _asInt(input['readAtMs']);
     if (readAtMs != null) item['readAtMs'] = readAtMs;
 
-    final reactions = _normalizeStringMap(input['reactions']);
+    final reactions = _normalizeReactionsMap(input['reactions']);
     if (reactions.isNotEmpty) item['reactions'] = reactions;
 
     final caption = input['caption']?.toString().trim();
@@ -197,14 +197,27 @@ class MessageCacheService {
     return int.tryParse(value?.toString() ?? '');
   }
 
-  Map<String, String> _normalizeStringMap(dynamic raw) {
+  Map<String, List<String>> _normalizeReactionsMap(dynamic raw) {
     if (raw is! Map) return const {};
-    final normalized = <String, String>{};
+    final normalized = <String, List<String>>{};
     raw.forEach((key, value) {
       final k = key.toString().trim();
-      final v = value?.toString().trim() ?? '';
-      if (k.isEmpty || v.isEmpty) return;
-      normalized[k] = v;
+      if (k.isEmpty) return;
+      final emojis = <String>{};
+      if (value is String) {
+        final v = value.trim();
+        if (v.isNotEmpty) emojis.add(v);
+      } else if (value is List) {
+        for (final item in value) {
+          final v = item?.toString().trim() ?? '';
+          if (v.isNotEmpty) emojis.add(v);
+        }
+      } else {
+        final v = value?.toString().trim() ?? '';
+        if (v.isNotEmpty) emojis.add(v);
+      }
+      if (emojis.isEmpty) return;
+      normalized[k] = emojis.toList();
     });
     return normalized;
   }

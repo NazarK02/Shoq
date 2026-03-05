@@ -41,5 +41,8 @@
   ],
   "firestore": {
     "rules": "tools/signaling-server/Firebaserules.txt"
+  },
+  "storage": {
+    "rules": "tools/signaling-server/Storagerules.txt"
   }
 }

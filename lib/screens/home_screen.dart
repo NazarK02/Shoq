@@ -8,6 +8,7 @@ import 'friends_list_screen.dart';
 import 'profile_screen.dart';
 import 'settings_screen.dart';
 import 'room_chat_screen.dart';
+import '../models/server_channel.dart';
 import '../services/notification_service.dart';
 import '../services/presence_service.dart';
 import '../services/user_service_e2ee.dart';
@@ -803,10 +804,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (isServer) 'admins': [user.uid],
         if (isServer) 'activeInviteCode': null,
         'createdAt': FieldValue.serverTimestamp(),
-        if (isServer)
-          'channels': [
-            {'id': 'general', 'name': 'general'},
-          ],
+        if (isServer) 'channels': [ServerChannel.general.toMap()],
         'lastMessage': null,
         'lastMessageTime': null,
         'lastSenderId': null,
@@ -1414,6 +1412,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 ? PresenceService.isUserOnline(userData)
                 : false;
             final lastMessageText = _resolveLastMessagePreview(chatData);
+            final rawLastMessageTime = chatData['lastMessageTime'];
+            final lastMessageTimeLabel = rawLastMessageTime is Timestamp
+                ? _formatTime(rawLastMessageTime)
+                : null;
             final assignedFolderId = _folderAssignments[conversationId];
             final typeLabel = _conversationTypeLabel(type);
 
@@ -1494,66 +1496,62 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                       ],
                     ),
-                    subtitle: Text(
-                      lastMessageText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.grey),
-                    ),
-                    trailing: ConstrainedBox(
-                      constraints: const BoxConstraints(minWidth: 36),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          if (chatData['lastMessageTime'] is Timestamp)
-                            Text(
-                              _formatTime(
-                                chatData['lastMessageTime'] as Timestamp,
-                              ),
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 12,
-                              ),
-                            ),
-                          PopupMenuButton<String>(
-                            tooltip: 'Chat options',
-                            padding: EdgeInsets.zero,
-                            iconSize: 18,
-                            constraints: const BoxConstraints.tightFor(
-                              width: 30,
-                              height: 30,
-                            ),
-                            icon: const Icon(Icons.more_vert),
-                            onSelected: (value) {
-                              if (value == 'move') {
-                                _showMoveConversationSheet(
-                                  conversationId: conversationId,
-                                  conversationName: title,
-                                );
-                                return;
-                              }
-                              if (value == 'remove_folder') {
-                                _assignConversationToFolder(
-                                  conversationId,
-                                  null,
-                                );
-                              }
-                            },
-                            itemBuilder: (menuContext) => [
-                              const PopupMenuItem(
-                                value: 'move',
-                                child: Text('Move to folder'),
-                              ),
-                              if (assignedFolderId != null)
-                                PopupMenuItem(
-                                  value: 'remove_folder',
-                                  child: Text(
-                                    'Remove from ${_folderName(assignedFolderId)}',
-                                  ),
-                                ),
-                            ],
+                    subtitle: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            lastMessageText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.grey),
                           ),
+                        ),
+                        if (lastMessageTimeLabel != null) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            lastMessageTimeLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    trailing: SizedBox(
+                      width: 32,
+                      child: PopupMenuButton<String>(
+                        tooltip: 'Chat options',
+                        padding: EdgeInsets.zero,
+                        iconSize: 18,
+                        splashRadius: 18,
+                        icon: const Icon(Icons.more_vert),
+                        onSelected: (value) {
+                          if (value == 'move') {
+                            _showMoveConversationSheet(
+                              conversationId: conversationId,
+                              conversationName: title,
+                            );
+                            return;
+                          }
+                          if (value == 'remove_folder') {
+                            _assignConversationToFolder(conversationId, null);
+                          }
+                        },
+                        itemBuilder: (menuContext) => [
+                          const PopupMenuItem(
+                            value: 'move',
+                            child: Text('Move to folder'),
+                          ),
+                          if (assignedFolderId != null)
+                            PopupMenuItem(
+                              value: 'remove_folder',
+                              child: Text(
+                                'Remove from ${_folderName(assignedFolderId)}',
+                              ),
+                            ),
                         ],
                       ),
                     ),

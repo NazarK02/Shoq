@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'home_screen.dart';
+import '../services/active_session_service.dart';
 import '../services/call_config.dart';
 import '../services/chat_service_e2ee.dart';
 import '../services/notification_service.dart';
@@ -65,6 +67,7 @@ class _CallScreenState extends State<CallScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final SignalingService _signaling = SignalingService();
   final ChatService _chatService = ChatService();
+  late final String _sessionId;
 
   // Video renderers are initialized lazily. This allows audio calls to
   // upgrade to video later without rebuilding the entire call flow.
@@ -135,8 +138,22 @@ class _CallScreenState extends State<CallScreen> {
     _peerPhotoUrl = widget.peerPhotoUrl;
     _remoteOffer = widget.invite?.offer;
     _callId = widget.invite?.callId;
+    _sessionId =
+        'call_${DateTime.now().microsecondsSinceEpoch}_${_peerId ?? _callId ?? 'session'}';
+
+    ActiveSessionService().setCallSession(
+      sessionId: _sessionId,
+      peerName: _peerDisplayName,
+      isVideo: _isVideo,
+    );
 
     _initialize();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    ActiveSessionService().bindRoute(context, sessionId: _sessionId);
   }
 
   Future<void> _initialize() async {
@@ -232,6 +249,7 @@ class _CallScreenState extends State<CallScreen> {
     _cleanupRtc();
     _localRenderer?.dispose();
     _remoteRenderer?.dispose();
+    ActiveSessionService().clearSession(sessionId: _sessionId);
     super.dispose();
   }
 
@@ -846,9 +864,15 @@ class _CallScreenState extends State<CallScreen> {
     _cleanupRtc();
 
     Future.delayed(const Duration(milliseconds: 300), () {
-      if (mounted) {
-        debugPrint('👋 Popping call screen');
-        Navigator.pop(context);
+      if (!mounted) return;
+      final route = ModalRoute.of(context);
+      final navigator = Navigator.of(context, rootNavigator: true);
+      if (route == null || !route.isActive) return;
+      debugPrint('👋 Closing call screen route');
+      if (route.isCurrent) {
+        navigator.pop();
+      } else {
+        navigator.removeRoute(route);
       }
     });
   }
@@ -1039,6 +1063,13 @@ class _CallScreenState extends State<CallScreen> {
     } catch (e) {
       debugPrint('Failed to send call summary message: $e');
     }
+  }
+
+  Future<void> _minimizeToHome() async {
+    await Navigator.of(
+      context,
+      rootNavigator: true,
+    ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
   }
 
   void _toggleMute() {
@@ -1307,6 +1338,41 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
+  Widget _buildTopActions() {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _peerDisplayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: _minimizeToHome,
+                tooltip: 'Open chats',
+                icon: const Icon(Icons.open_in_new, color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildControls() {
     if (widget.isIncoming && _phase == _CallPhase.ringing) {
       return Container(
@@ -1439,6 +1505,7 @@ class _CallScreenState extends State<CallScreen> {
         child: Stack(
           children: [
             Positioned.fill(child: _buildRemoteView()),
+            _buildTopActions(),
             _buildLocalPreview(),
             Positioned(left: 0, right: 0, bottom: 0, child: _buildControls()),
           ],

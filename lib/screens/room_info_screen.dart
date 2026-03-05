@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -10,7 +9,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 
+import '../models/server_channel.dart';
 import '../services/user_cache_service.dart';
 import 'image_viewer_screen.dart';
 import 'photo_editor_screen.dart';
@@ -37,10 +38,11 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final UserCacheService _userCache = UserCacheService();
   final Random _random = Random.secure();
+  final ImagePicker _imagePicker = ImagePicker();
 
   Map<String, dynamic>? _conversation;
   List<String> _participants = [];
-  List<_ServerChannel> _channels = const [_ServerChannel.general];
+  List<ServerChannel> _channels = const [ServerChannel.general];
   bool _isUploadingIcon = false;
   bool _isSaving = false;
   bool _isInviteBusy = false;
@@ -125,26 +127,25 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
         .toList();
   }
 
-  List<_ServerChannel> _parseChannels(dynamic raw) {
-    final parsed = <_ServerChannel>[];
+  List<ServerChannel> _parseChannels(dynamic raw) {
+    final parsed = <ServerChannel>[];
     if (raw is List) {
       for (final item in raw) {
         if (item is! Map) continue;
         final map = Map<String, dynamic>.from(item);
-        final id = map['id']?.toString().trim() ?? '';
-        final name = map['name']?.toString().trim() ?? '';
-        if (id.isEmpty || name.isEmpty) continue;
-        parsed.add(_ServerChannel(id: id, name: name));
+        final channel = ServerChannel.fromMap(map);
+        if (channel.id.isEmpty || channel.name.isEmpty) continue;
+        parsed.add(channel);
       }
     }
-    if (parsed.isEmpty) return const [_ServerChannel.general];
+    if (parsed.isEmpty) return const [ServerChannel.general];
 
-    final byId = <String, _ServerChannel>{};
+    final byId = <String, ServerChannel>{};
     for (final channel in parsed) {
       byId[channel.id] = channel;
     }
-    if (!byId.containsKey(_ServerChannel.general.id)) {
-      byId[_ServerChannel.general.id] = _ServerChannel.general;
+    if (!byId.containsKey(ServerChannel.general.id)) {
+      byId[ServerChannel.general.id] = ServerChannel.general;
     }
     return byId.values.toList();
   }
@@ -407,38 +408,30 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
 
   Future<void> _pickAndUploadIcon() async {
     if (_isUploadingIcon || !_canEditIcon) return;
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-      withData: false,
-    );
-    if (result == null || result.files.isEmpty) return;
-
-    final file = result.files.first;
-    final pickedPath = await _resolvePickedImagePath(file);
-    if (pickedPath == null || pickedPath.isEmpty) {
-      _showSnack('Could not access selected image');
-      return;
-    }
-
-    if (!mounted) return;
-    final editedPath = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PhotoEditorScreen(
-          filePath: pickedPath,
-          title: _isServer ? 'Edit server icon' : 'Edit group icon',
-        ),
-      ),
-    );
-    final pathToUpload = editedPath?.trim() ?? '';
-    if (pathToUpload.isEmpty) return;
-
-    setState(() {
-      _isUploadingIcon = true;
-    });
-
     try {
+      final pickedPath = await _pickImagePathForIconEdit();
+      if (pickedPath == null || pickedPath.isEmpty) {
+        _showSnack('Could not access selected image');
+        return;
+      }
+
+      if (!mounted) return;
+      final editedPath = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PhotoEditorScreen(
+            filePath: pickedPath,
+            title: _isServer ? 'Edit server icon' : 'Edit group icon',
+          ),
+        ),
+      );
+      final pathToUpload = editedPath?.trim() ?? '';
+      if (pathToUpload.isEmpty) return;
+
+      setState(() {
+        _isUploadingIcon = true;
+      });
+
       final ref = _storage.ref().child(
         'chat_files/${widget.conversationId}/room_icon_${DateTime.now().millisecondsSinceEpoch}.png',
       );
@@ -455,8 +448,15 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
       final uploadResult = await uploadTask;
       final downloadUrl = await uploadResult.ref.getDownloadURL();
       await _updateConversation({'avatarUrl': downloadUrl});
+    } on FirebaseException catch (e) {
+      final detail = e.message?.trim();
+      _showSnack(
+        detail == null || detail.isEmpty
+            ? 'Could not upload icon (${e.code})'
+            : 'Could not upload icon: $detail',
+      );
     } catch (e) {
-      _showSnack('Could not upload icon: $e');
+      _showSnack('Could not update icon: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -464,6 +464,29 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
         });
       }
     }
+  }
+
+  Future<String?> _pickImagePathForIconEdit() async {
+    if (Platform.isAndroid || Platform.isIOS) {
+      final picked = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 95,
+      );
+      if (picked == null) return null;
+      final path = picked.path.trim();
+      if (path.isEmpty) return null;
+      final file = File(path);
+      return file.existsSync() ? file.path : null;
+    }
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return null;
+    final file = result.files.first;
+    return _resolvePickedImagePath(file);
   }
 
   Future<String?> _resolvePickedImagePath(PlatformFile file) async {
@@ -607,38 +630,71 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
   Future<void> _showAddChannelDialog() async {
     if (!_canManage) return;
     var channelDraft = '';
+    var selectedType = ServerChannelType.text;
     final navigator = Navigator.of(context, rootNavigator: true);
-    final result = await showDialog<String>(
+    final result = await showDialog<_CreateChannelDraft>(
       context: context,
       useRootNavigator: true,
-      builder: (context) => AlertDialog(
-        title: const Text('Create text channel'),
-        content: TextField(
-          maxLength: 24,
-          decoration: const InputDecoration(hintText: 'news, clips, memes'),
-          onChanged: (value) {
-            channelDraft = value;
-          },
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Create channel'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                maxLength: 24,
+                decoration: const InputDecoration(
+                  hintText: 'general-chat, homework, resources',
+                ),
+                onChanged: (value) {
+                  channelDraft = value;
+                },
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: selectedType,
+                decoration: const InputDecoration(labelText: 'Channel type'),
+                items: ServerChannelType.values
+                    .map(
+                      (type) => DropdownMenuItem<String>(
+                        value: type,
+                        child: Text(ServerChannelType.label(type)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value == null) return;
+                  setDialogState(() {
+                    selectedType = value;
+                  });
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => navigator.pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => navigator.pop(
+                _CreateChannelDraft(
+                  name: channelDraft.trim(),
+                  type: selectedType,
+                ),
+              ),
+              child: const Text('Create'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => navigator.pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => navigator.pop(channelDraft.trim()),
-            child: const Text('Create'),
-          ),
-        ],
       ),
     );
 
-    final raw = result?.trim() ?? '';
+    final raw = result?.name.trim() ?? '';
     if (raw.isEmpty) return;
-    final normalizedId = raw.toLowerCase().replaceAll(
-      RegExp(r'[^a-z0-9_-]'),
-      '-',
-    );
+    final channelType = ServerChannelType.normalize(result?.type);
+    final normalizedId = _buildUniqueChannelId(raw);
     final name = raw.replaceAll(RegExp(r'\s+'), '-').toLowerCase();
     if (normalizedId.isEmpty) return;
 
@@ -651,18 +707,34 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
 
     final updated = [
       ..._channels,
-      _ServerChannel(id: normalizedId, name: name),
+      ServerChannel(id: normalizedId, name: name, type: channelType),
     ];
     await _updateConversation({
-      'channels': updated
-          .map((channel) => {'id': channel.id, 'name': channel.name})
-          .toList(),
+      'channels': updated.map((channel) => channel.toMap()).toList(),
     });
   }
 
-  Future<void> _removeChannel(_ServerChannel channel) async {
+  String _buildUniqueChannelId(String raw) {
+    final slug = raw
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'-{2,}'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    final base = slug.isEmpty ? 'channel' : slug;
+    var candidate = base;
+    var suffix = 2;
+    final existing = _channels.map((c) => c.id).toSet();
+    while (existing.contains(candidate)) {
+      candidate = '$base-$suffix';
+      suffix++;
+    }
+    return candidate;
+  }
+
+  Future<void> _removeChannel(ServerChannel channel) async {
     if (!_canManage) return;
-    if (channel.id == _ServerChannel.general.id) return;
+    if (channel.id == ServerChannel.general.id) return;
 
     final navigator = Navigator.of(context, rootNavigator: true);
     final confirm = await showDialog<bool>(
@@ -689,8 +761,20 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
     if (confirm != true) return;
 
     final updated = _channels.where((c) => c.id != channel.id).toList();
+    final foldersRaw = _conversation?['channelFolders'];
+    final assignmentsRaw = _conversation?['channelAssignments'];
+    final channelFolders = foldersRaw is Map
+        ? Map<String, dynamic>.from(foldersRaw)
+        : <String, dynamic>{};
+    final channelAssignments = assignmentsRaw is Map
+        ? Map<String, dynamic>.from(assignmentsRaw)
+        : <String, dynamic>{};
+    channelFolders.remove(channel.id);
+    channelAssignments.remove(channel.id);
     await _updateConversation({
-      'channels': updated.map((c) => {'id': c.id, 'name': c.name}).toList(),
+      'channels': updated.map((c) => c.toMap()).toList(),
+      'channelFolders': channelFolders,
+      'channelAssignments': channelAssignments,
     });
   }
 
@@ -712,7 +796,27 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
     if (text.isEmpty || text.toLowerCase() == 'null') return null;
     final uri = Uri.tryParse(text);
     if (uri == null || !uri.hasScheme) return null;
+    final scheme = uri.scheme.toLowerCase();
+    if ((scheme != 'http' && scheme != 'https') || uri.host.isEmpty) {
+      return null;
+    }
     return text;
+  }
+
+  IconData _channelIcon(String type) {
+    switch (ServerChannelType.normalize(type)) {
+      case ServerChannelType.voice:
+        return Icons.volume_up_outlined;
+      case ServerChannelType.forum:
+        return Icons.forum_outlined;
+      case ServerChannelType.file:
+        return Icons.folder_shared_outlined;
+      case ServerChannelType.assignments:
+        return Icons.assignment_outlined;
+      case ServerChannelType.text:
+      default:
+        return Icons.tag;
+    }
   }
 
   @override
@@ -774,19 +878,38 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
           children: [
             Stack(
               children: [
-                CircleAvatar(
-                  radius: 36,
-                  backgroundColor: Colors.grey[300],
-                  backgroundImage: avatarUrl != null
-                      ? CachedNetworkImageProvider(avatarUrl)
-                      : null,
-                  child: avatarUrl == null
-                      ? Icon(
-                          _isServer ? Icons.hub : Icons.group,
-                          size: 34,
-                          color: Colors.grey[700],
-                        )
-                      : null,
+                ClipOval(
+                  child: SizedBox(
+                    width: 72,
+                    height: 72,
+                    child: avatarUrl == null
+                        ? Container(
+                            color: Colors.grey[300],
+                            alignment: Alignment.center,
+                            child: Icon(
+                              _isServer ? Icons.hub : Icons.group,
+                              size: 34,
+                              color: Colors.grey[700],
+                            ),
+                          )
+                        : CachedNetworkImage(
+                            imageUrl: avatarUrl,
+                            fit: BoxFit.cover,
+                            memCacheWidth: 220,
+                            memCacheHeight: 220,
+                            placeholder: (context, url) =>
+                                Container(color: Colors.grey[300]),
+                            errorWidget: (context, url, error) => Container(
+                              color: Colors.grey[300],
+                              alignment: Alignment.center,
+                              child: Icon(
+                                _isServer ? Icons.hub : Icons.group,
+                                size: 34,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                          ),
+                  ),
                 ),
                 if (_canEditIcon)
                   Positioned(
@@ -1134,7 +1257,7 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
             Row(
               children: [
                 const Text(
-                  'Text channels',
+                  'Channels',
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const Spacer(),
@@ -1151,10 +1274,13 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
               ListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.tag, size: 18),
+                leading: Icon(_channelIcon(channel.type), size: 18),
                 title: Text(channel.name),
-                trailing:
-                    (_canManage && channel.id != _ServerChannel.general.id)
+                subtitle: Text(
+                  ServerChannelType.label(channel.type),
+                  style: const TextStyle(fontSize: 11),
+                ),
+                trailing: (_canManage && channel.id != ServerChannel.general.id)
                     ? IconButton(
                         icon: const Icon(Icons.delete_outline, size: 18),
                         onPressed: () => _removeChannel(channel),
@@ -1168,16 +1294,11 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
   }
 }
 
-class _ServerChannel {
-  final String id;
+class _CreateChannelDraft {
   final String name;
+  final String type;
 
-  const _ServerChannel({required this.id, required this.name});
-
-  static const _ServerChannel general = _ServerChannel(
-    id: 'general',
-    name: 'general',
-  );
+  const _CreateChannelDraft({required this.name, required this.type});
 }
 
 class _FriendSeed {

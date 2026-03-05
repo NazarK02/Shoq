@@ -26,6 +26,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   static const double _minZoom = 1.0;
   static const double _maxZoom = 5.0;
   static const double _outputSize = 1024.0;
+  static const int _maxDecodeDimension = 2048;
   static const List<Color> _pencilPalette = [
     Color(0xFFFFFFFF),
     Color(0xFFFF3B30),
@@ -90,19 +91,53 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   }
 
   Future<ui.Image> _decodeImage(Uint8List bytes) {
-    final completer = Completer<ui.Image>();
-    ui.decodeImageFromList(bytes, completer.complete);
-    return completer.future;
+    return _decodeImageWithDownscale(bytes);
+  }
+
+  Future<ui.Image> _decodeImageWithDownscale(Uint8List bytes) async {
+    final probeCodec = await ui.instantiateImageCodec(bytes);
+    final probeFrame = await probeCodec.getNextFrame();
+    final sourceWidth = probeFrame.image.width;
+    final sourceHeight = probeFrame.image.height;
+    probeFrame.image.dispose();
+    probeCodec.dispose();
+
+    final sourceMax = math.max(sourceWidth, sourceHeight);
+    if (sourceMax <= _maxDecodeDimension) {
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      codec.dispose();
+      return frame.image;
+    }
+
+    final scale = _maxDecodeDimension / sourceMax;
+    final targetWidth = math.max(1, (sourceWidth * scale).round());
+    final targetHeight = math.max(1, (sourceHeight * scale).round());
+    final codec = await ui.instantiateImageCodec(
+      bytes,
+      targetWidth: targetWidth,
+      targetHeight: targetHeight,
+    );
+    final frame = await codec.getNextFrame();
+    codec.dispose();
+    return frame.image;
   }
 
   Rect _imageRectForCanvas(Size size, ui.Image image, double zoom, Offset pan) {
     final imageWidth = image.width.toDouble();
     final imageHeight = image.height.toDouble();
-    final baseScale = math.max(size.width / imageWidth, size.height / imageHeight);
+    final baseScale = math.max(
+      size.width / imageWidth,
+      size.height / imageHeight,
+    );
     final drawWidth = imageWidth * baseScale * zoom;
     final drawHeight = imageHeight * baseScale * zoom;
     final center = size.center(Offset.zero) + pan;
-    return Rect.fromCenter(center: center, width: drawWidth, height: drawHeight);
+    return Rect.fromCenter(
+      center: center,
+      width: drawWidth,
+      height: drawHeight,
+    );
   }
 
   Offset _clampPan({
@@ -112,8 +147,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     required Offset candidate,
   }) {
     final rect = _imageRectForCanvas(canvasSize, image, zoom, Offset.zero);
-    final maxX = math.max(0.0, (rect.width - canvasSize.width) / 2);
-    final maxY = math.max(0.0, (rect.height - canvasSize.height) / 2);
+    final cropDiameter = canvasSize.width * _circleScale;
+    final maxX = math.max(0.0, (rect.width - cropDiameter) / 2);
+    final maxY = math.max(0.0, (rect.height - cropDiameter) / 2);
     return Offset(
       candidate.dx.clamp(-maxX, maxX).toDouble(),
       candidate.dy.clamp(-maxY, maxY).toDouble(),
@@ -125,10 +161,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     required Rect imageRect,
     required ui.Image image,
   }) {
-    final normalizedX =
-        ((canvasPoint.dx - imageRect.left) / imageRect.width).clamp(0.0, 1.0);
-    final normalizedY =
-        ((canvasPoint.dy - imageRect.top) / imageRect.height).clamp(0.0, 1.0);
+    final normalizedX = ((canvasPoint.dx - imageRect.left) / imageRect.width)
+        .clamp(0.0, 1.0);
+    final normalizedY = ((canvasPoint.dy - imageRect.top) / imageRect.height)
+        .clamp(0.0, 1.0);
     return Offset(
       normalizedX * image.width.toDouble(),
       normalizedY * image.height.toDouble(),
@@ -136,40 +172,65 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   }
 
   void _onScaleStart(ScaleStartDetails details) {
-    if (_tool != _EditorTool.move || _image == null || _canvasSize.isEmpty) return;
-    _startZoom = _zoom;
-    _startPan = _pan;
-    _startFocalPoint = details.localFocalPoint;
+    final image = _image;
+    if (image == null || _canvasSize.isEmpty) return;
+
+    if (_tool == _EditorTool.move) {
+      _startZoom = _zoom;
+      _startPan = _pan;
+      _startFocalPoint = details.localFocalPoint;
+      return;
+    }
+
+    if (_tool != _EditorTool.pencil && _tool != _EditorTool.eraser) return;
+    if (details.pointerCount != 1) return;
+    _startStrokeAt(details.localFocalPoint);
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
     final image = _image;
-    if (_tool != _EditorTool.move || image == null || _canvasSize.isEmpty) return;
+    if (image == null || _canvasSize.isEmpty) return;
 
-    final nextZoom = (_startZoom * details.scale).clamp(_minZoom, _maxZoom);
-    final delta = details.localFocalPoint - _startFocalPoint;
-    final nextPan = _clampPan(
-      canvasSize: _canvasSize,
-      image: image,
-      zoom: nextZoom,
-      candidate: _startPan + delta,
-    );
-    setState(() {
-      _zoom = nextZoom;
-      _pan = nextPan;
-    });
+    if (_tool == _EditorTool.move) {
+      final nextZoom = (_startZoom * details.scale).clamp(_minZoom, _maxZoom);
+      final delta = details.localFocalPoint - _startFocalPoint;
+      final nextPan = _clampPan(
+        canvasSize: _canvasSize,
+        image: image,
+        zoom: nextZoom,
+        candidate: _startPan + delta,
+      );
+      setState(() {
+        _zoom = nextZoom;
+        _pan = nextPan;
+      });
+      return;
+    }
+
+    if (_tool != _EditorTool.pencil && _tool != _EditorTool.eraser) return;
+    if (details.pointerCount != 1) {
+      _endStroke();
+      return;
+    }
+    _appendStrokeAt(details.localFocalPoint);
   }
 
-  void _startStroke(DragStartDetails details) {
+  void _onScaleEnd(ScaleEndDetails details) {
+    if (_tool == _EditorTool.pencil || _tool == _EditorTool.eraser) {
+      _endStroke();
+    }
+  }
+
+  void _startStrokeAt(Offset localPosition) {
     final image = _image;
     if (image == null || _canvasSize.isEmpty) return;
     if (_tool != _EditorTool.pencil && _tool != _EditorTool.eraser) return;
 
     final rect = _imageRectForCanvas(_canvasSize, image, _zoom, _pan);
-    if (!rect.contains(details.localPosition)) return;
+    if (!rect.contains(localPosition)) return;
 
     final point = _canvasToImagePoint(
-      canvasPoint: details.localPosition,
+      canvasPoint: localPosition,
       imageRect: rect,
       image: image,
     );
@@ -183,13 +244,13 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     });
   }
 
-  void _appendStroke(DragUpdateDetails details) {
+  void _appendStrokeAt(Offset localPosition) {
     final image = _image;
     if (image == null || !_isDrawing || _activeStrokePoints.isEmpty) return;
 
     final rect = _imageRectForCanvas(_canvasSize, image, _zoom, _pan);
     final point = _canvasToImagePoint(
-      canvasPoint: details.localPosition,
+      canvasPoint: localPosition,
       imageRect: rect,
       image: image,
     );
@@ -199,7 +260,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     });
   }
 
-  void _endStroke([DragEndDetails? _]) {
+  void _endStroke() {
     if (!_isDrawing || _activeStrokePoints.isEmpty) return;
     final points = List<Offset>.from(_activeStrokePoints);
     if (points.length == 1) {
@@ -283,7 +344,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     );
 
     canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: center, radius: radius)));
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: center, radius: radius)),
+    );
 
     final src = Rect.fromLTWH(
       0,
@@ -311,9 +374,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
 
     canvas.restore();
 
-    final outImage = await recorder
-        .endRecording()
-        .toImage(_outputSize.toInt(), _outputSize.toInt());
+    final outImage = await recorder.endRecording().toImage(
+      _outputSize.toInt(),
+      _outputSize.toInt(),
+    );
     final bytes = await outImage.toByteData(format: ui.ImageByteFormat.png);
     if (bytes == null) {
       throw Exception('Could not encode edited image');
@@ -394,10 +458,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                               behavior: HitTestBehavior.opaque,
                               onScaleStart: _onScaleStart,
                               onScaleUpdate: _onScaleUpdate,
-                              onPanStart: _startStroke,
-                              onPanUpdate: _appendStroke,
-                              onPanEnd: _endStroke,
-                              onPanCancel: _endStroke,
+                              onScaleEnd: _onScaleEnd,
                               child: Stack(
                                 fit: StackFit.expand,
                                 children: [
@@ -415,7 +476,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                                   ),
                                   IgnorePointer(
                                     child: CustomPaint(
-                                      painter: _CircleOverlayPainter(radius: radius),
+                                      painter: _CircleOverlayPainter(
+                                        radius: radius,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -463,40 +526,71 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             },
           ),
           const SizedBox(height: 4),
-          Row(
-            children: [
-              _buildToolButton(
-                label: 'Move',
-                icon: Icons.open_with,
-                selected: _tool == _EditorTool.move,
-                onTap: () => setState(() => _tool = _EditorTool.move),
-              ),
-              const SizedBox(width: 8),
-              _buildToolButton(
-                label: 'Pencil',
-                icon: Icons.edit,
-                selected: _tool == _EditorTool.pencil,
-                onTap: () => setState(() => _tool = _EditorTool.pencil),
-              ),
-              const SizedBox(width: 8),
-              _buildToolButton(
-                label: 'Eraser',
-                icon: Icons.auto_fix_off,
-                selected: _tool == _EditorTool.eraser,
-                onTap: () => setState(() => _tool = _EditorTool.eraser),
-              ),
-              const Spacer(),
-              IconButton(
-                onPressed: canUndo ? _undo : null,
-                icon: const Icon(Icons.undo),
-                tooltip: 'Undo',
-              ),
-              IconButton(
-                onPressed: canRedo ? _redo : null,
-                icon: const Icon(Icons.redo),
-                tooltip: 'Redo',
-              ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final tools = Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _buildToolButton(
+                    label: 'Move',
+                    icon: Icons.open_with,
+                    selected: _tool == _EditorTool.move,
+                    onTap: () => setState(() => _tool = _EditorTool.move),
+                  ),
+                  _buildToolButton(
+                    label: 'Pencil',
+                    icon: Icons.edit,
+                    selected: _tool == _EditorTool.pencil,
+                    onTap: () => setState(() => _tool = _EditorTool.pencil),
+                  ),
+                  _buildToolButton(
+                    label: 'Eraser',
+                    icon: Icons.auto_fix_off,
+                    selected: _tool == _EditorTool.eraser,
+                    onTap: () => setState(() => _tool = _EditorTool.eraser),
+                  ),
+                ],
+              );
+
+              final historyButtons = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    onPressed: canUndo ? _undo : null,
+                    icon: const Icon(Icons.undo),
+                    tooltip: 'Undo',
+                  ),
+                  IconButton(
+                    onPressed: canRedo ? _redo : null,
+                    icon: const Icon(Icons.redo),
+                    tooltip: 'Redo',
+                  ),
+                ],
+              );
+
+              if (constraints.maxWidth < 430) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    tools,
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [historyButtons],
+                    ),
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: tools),
+                  const SizedBox(width: 8),
+                  historyButtons,
+                ],
+              );
+            },
           ),
           if (_tool == _EditorTool.pencil) ...[
             const SizedBox(height: 8),
@@ -504,7 +598,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: _pencilPalette.map((color) {
-                  final selected = color.value == _activeColor.value;
+                  final selected = color.toARGB32() == _activeColor.toARGB32();
                   return Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: GestureDetector(
@@ -567,11 +661,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: selected ? Colors.white.withValues(alpha: 0.2) : Colors.white12,
+          color: selected
+              ? Colors.white.withValues(alpha: 0.2)
+              : Colors.white12,
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: selected ? Colors.white70 : Colors.white24,
-          ),
+          border: Border.all(color: selected ? Colors.white70 : Colors.white24),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -676,7 +770,11 @@ void _paintStrokes({
 
   void drawStroke(_Stroke stroke) {
     if (stroke.points.length < 2) return;
-    final path = Path()..moveTo(toCanvas(stroke.points.first).dx, toCanvas(stroke.points.first).dy);
+    final path = Path()
+      ..moveTo(
+        toCanvas(stroke.points.first).dx,
+        toCanvas(stroke.points.first).dy,
+      );
     for (var i = 1; i < stroke.points.length; i++) {
       final point = toCanvas(stroke.points[i]);
       path.lineTo(point.dx, point.dy);
@@ -727,7 +825,10 @@ class _CircleOverlayPainter extends CustomPainter {
     final center = size.center(Offset.zero);
 
     canvas.saveLayer(bounds, Paint());
-    canvas.drawRect(bounds, Paint()..color = Colors.black.withValues(alpha: 0.52));
+    canvas.drawRect(
+      bounds,
+      Paint()..color = Colors.black.withValues(alpha: 0.52),
+    );
     canvas.drawCircle(center, radius, Paint()..blendMode = BlendMode.clear);
     canvas.restore();
 

@@ -15,6 +15,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:video_player/video_player.dart';
 import '../services/notification_service.dart';
@@ -24,6 +25,8 @@ import '../services/chat_service_e2ee.dart';
 import '../services/user_cache_service.dart';
 import '../services/file_download_service.dart';
 import '../services/message_cache_service.dart';
+import '../services/theme_service.dart';
+import '../widgets/chat_message_text.dart';
 import 'user_profile_view_screen.dart';
 import 'image_viewer_screen.dart';
 import 'video_viewer_screen.dart';
@@ -53,6 +56,28 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   static const int _videoMessageFps = 24;
   static const int _videoMessageBitrate = 1200000;
   static const int _videoMessageAudioBitrate = 64000;
+  static const List<String> _stickers = [
+    '😀',
+    '😎',
+    '🥳',
+    '🤯',
+    '🤖',
+    '🫶',
+    '💖',
+    '🔥',
+    '💯',
+    '🎉',
+    '👑',
+    '🚀',
+    '🌈',
+    '🐱',
+    '🐶',
+    '🐸',
+    '🍕',
+    '☕',
+    '⚽',
+    '🎮',
+  ];
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -304,6 +329,85 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         );
       }
     }
+  }
+
+  Future<void> _sendSticker(String sticker) async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null || _conversationId == null) return;
+    final trimmedSticker = sticker.trim();
+    if (trimmedSticker.isEmpty) return;
+
+    try {
+      _messageFocusNode.requestFocus();
+      await _chatService.sendStickerMessage(
+        conversationId: _conversationId!,
+        recipientId: widget.recipientId,
+        sticker: trimmedSticker,
+      );
+      try {
+        final senderName = currentUser.displayName ?? 'Someone';
+        await _notificationService.sendMessageNotification(
+          recipientId: widget.recipientId,
+          senderName: senderName,
+          messageText: 'Sent a sticker',
+          conversationId: _conversationId,
+        );
+      } catch (notificationError) {
+        debugPrint('Error sending notification: $notificationError');
+      }
+      _scrollToBottom();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send sticker: ${e.toString()}')),
+      );
+    }
+  }
+
+  Future<void> _showStickerPicker() async {
+    if (_conversationId == null) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+            child: GridView.builder(
+              shrinkWrap: true,
+              itemCount: _stickers.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 5,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                childAspectRatio: 1,
+              ),
+              itemBuilder: (context, index) {
+                final sticker = _stickers[index];
+                return InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _sendSticker(sticker);
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest
+                          .withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(sticker, style: const TextStyle(fontSize: 34)),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _setReplyDraft(_ReplyDraft draft) {
@@ -1406,6 +1510,18 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                   ),
                 ),
                 const SizedBox(width: 6),
+                Material(
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.55,
+                  ),
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    icon: const Icon(Icons.emoji_emotions_outlined),
+                    onPressed: _showStickerPicker,
+                    tooltip: 'Stickers',
+                  ),
+                ),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Container(
                     constraints: const BoxConstraints(minHeight: 42),
@@ -1836,6 +1952,7 @@ class _MessagesListState extends State<_MessagesList>
   final Map<String, Map<String, dynamic>> _persistedById = {};
   bool _animationCachePrimed = false;
   int _lastTotalItems = 0;
+  bool _pendingInitialBottomSnap = true;
   bool _markReadInFlight = false;
   QuerySnapshot? _cachedMessagesSnapshot;
   List<Map<String, dynamic>> _persistedMessages = [];
@@ -1875,6 +1992,7 @@ class _MessagesListState extends State<_MessagesList>
     _latestLiveMessagesOwnerId = null;
     _animationCachePrimed = false;
     _lastTotalItems = 0;
+    _pendingInitialBottomSnap = true;
     _markReadInFlight = false;
     _cachedMessagesSnapshot = null;
     _persistedMessages = [];
@@ -2058,19 +2176,29 @@ class _MessagesListState extends State<_MessagesList>
   void _scheduleAutoScrollIfNeeded(int totalItems) {
     if (totalItems <= 0) {
       _lastTotalItems = 0;
+      _pendingInitialBottomSnap = true;
       return;
     }
 
-    final firstLoad = _lastTotalItems == 0;
+    final firstLoad = _pendingInitialBottomSnap || _lastTotalItems == 0;
     final hasNewItems = totalItems > _lastTotalItems;
     final shouldAutoScroll =
         firstLoad || (hasNewItems && widget.shouldAutoScroll());
     _lastTotalItems = totalItems;
+    if (firstLoad) {
+      _pendingInitialBottomSnap = false;
+    }
 
     if (!shouldAutoScroll) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       widget.onAutoScrollToBottom();
+      if (firstLoad) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          widget.onAutoScrollToBottom();
+        });
+      }
     });
   }
 
@@ -2173,7 +2301,9 @@ class _MessagesListState extends State<_MessagesList>
       item['readAtMs'] = readAt.millisecondsSinceEpoch;
     }
     if (reactions.isNotEmpty) {
-      item['reactions'] = reactions;
+      item['reactions'] = reactions.map(
+        (uid, emojis) => MapEntry(uid, emojis.toList()),
+      );
     }
 
     final caption = message['caption']?.toString().trim();
@@ -2215,6 +2345,13 @@ class _MessagesListState extends State<_MessagesList>
       );
       if (callSummary.isNotEmpty) {
         item['callSummary'] = callSummary;
+      }
+    }
+
+    if (type == 'sticker') {
+      final sticker = message['sticker']?.toString().trim() ?? '';
+      if (sticker.isNotEmpty) {
+        item['text'] = sticker;
       }
     }
 
@@ -2331,15 +2468,28 @@ class _MessagesListState extends State<_MessagesList>
     );
   }
 
-  Map<String, String> _extractReactions(Map<String, dynamic> message) {
+  Map<String, Set<String>> _extractReactions(Map<String, dynamic> message) {
     final raw = message['reactions'];
-    if (raw is! Map) return const <String, String>{};
-    final result = <String, String>{};
+    if (raw is! Map) return const <String, Set<String>>{};
+    final result = <String, Set<String>>{};
     raw.forEach((key, value) {
       final uid = key.toString().trim();
-      final emoji = value?.toString().trim() ?? '';
-      if (uid.isEmpty || emoji.isEmpty) return;
-      result[uid] = emoji;
+      if (uid.isEmpty) return;
+      final emojis = <String>{};
+      if (value is String) {
+        final emoji = value.trim();
+        if (emoji.isNotEmpty) emojis.add(emoji);
+      } else if (value is List) {
+        for (final item in value) {
+          final emoji = item?.toString().trim() ?? '';
+          if (emoji.isNotEmpty) emojis.add(emoji);
+        }
+      } else {
+        final emoji = value?.toString().trim() ?? '';
+        if (emoji.isNotEmpty) emojis.add(emoji);
+      }
+      if (emojis.isEmpty) return;
+      result[uid] = emojis;
     });
     return result;
   }
@@ -2350,17 +2500,25 @@ class _MessagesListState extends State<_MessagesList>
     return DateFormat('MMM d, yyyy • h:mm a').format(date);
   }
 
-  Future<void> _applyReaction({
+  Future<void> _toggleReaction({
     required String messageId,
     required Map<String, dynamic> message,
     required String emoji,
-    bool toggleIfSame = false,
   }) async {
     final conversationId = widget.conversationId;
     final currentUserId = _auth.currentUser?.uid;
     if (conversationId == null || currentUserId == null) return;
+    final normalizedEmoji = emoji.trim();
+    if (normalizedEmoji.isEmpty) return;
 
-    final currentReaction = _extractReactions(message)[currentUserId];
+    final myReactions = Set<String>.from(
+      _extractReactions(message)[currentUserId] ?? const <String>{},
+    );
+    if (myReactions.contains(normalizedEmoji)) {
+      myReactions.remove(normalizedEmoji);
+    } else {
+      myReactions.add(normalizedEmoji);
+    }
     try {
       final ref = _firestore
           .collection('conversations')
@@ -2368,11 +2526,11 @@ class _MessagesListState extends State<_MessagesList>
           .collection('messages')
           .doc(messageId);
 
-      if (toggleIfSame && currentReaction == emoji) {
+      if (myReactions.isEmpty) {
         await ref.update({'reactions.$currentUserId': FieldValue.delete()});
       } else {
         await ref.set({
-          'reactions': {currentUserId: emoji},
+          'reactions': {currentUserId: myReactions.toList()},
         }, SetOptions(merge: true));
       }
     } catch (e) {
@@ -2381,6 +2539,34 @@ class _MessagesListState extends State<_MessagesList>
         context,
       ).showSnackBar(SnackBar(content: Text('Could not save reaction: $e')));
     }
+  }
+
+  Future<void> _clearMyReactions({
+    required String messageId,
+    required String currentUserId,
+  }) async {
+    final conversationId = widget.conversationId;
+    if (conversationId == null) return;
+    final ref = _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .doc(messageId);
+    await ref.update({'reactions.$currentUserId': FieldValue.delete()});
+  }
+
+  void _handleDoubleTapReaction({
+    required String messageId,
+    required Map<String, dynamic> message,
+  }) {
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) return;
+    final myReactions = _extractReactions(message)[currentUserId] ?? const {};
+    if (myReactions.isNotEmpty) {
+      _clearMyReactions(messageId: messageId, currentUserId: currentUserId);
+      return;
+    }
+    _toggleReaction(messageId: messageId, message: message, emoji: '❤️');
   }
 
   Future<void> _showEditDialog({
@@ -2445,8 +2631,27 @@ class _MessagesListState extends State<_MessagesList>
     final currentUserId = _auth.currentUser?.uid;
     if (conversationId == null || currentUserId == null) return;
 
-    const emojis = ['👍', '❤️', '😂', '🔥', '😮', '😢', '🙏'];
-    final currentReaction = _extractReactions(message)[currentUserId];
+    const emojis = [
+      '??',
+      '??',
+      '??',
+      '??',
+      '??',
+      '??',
+      '??',
+      '??',
+      '??',
+      '??',
+      '??',
+      '??',
+      '??',
+      '?',
+      '??',
+      '??',
+      '??',
+      '??',
+    ];
+    final myReactions = _extractReactions(message)[currentUserId] ?? const {};
 
     await showModalBottomSheet<void>(
       context: context,
@@ -2454,23 +2659,46 @@ class _MessagesListState extends State<_MessagesList>
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-            child: Wrap(
-              spacing: 8,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final emoji in emojis)
-                  ChoiceChip(
-                    label: Text(emoji, style: const TextStyle(fontSize: 22)),
-                    selected: currentReaction == emoji,
-                    onSelected: (_) async {
+                if (myReactions.isNotEmpty)
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    leading: const Icon(Icons.remove_circle_outline),
+                    title: const Text('Remove my reactions'),
+                    subtitle: Text(myReactions.join(' ')),
+                    onTap: () async {
                       Navigator.pop(context);
-                      await _applyReaction(
+                      await _clearMyReactions(
                         messageId: messageId,
-                        message: message,
-                        emoji: emoji,
-                        toggleIfSame: true,
+                        currentUserId: currentUserId,
                       );
                     },
                   ),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final emoji in emojis)
+                      ChoiceChip(
+                        label: Text(
+                          emoji,
+                          style: const TextStyle(fontSize: 22),
+                        ),
+                        selected: myReactions.contains(emoji),
+                        onSelected: (_) async {
+                          Navigator.pop(context);
+                          await _toggleReaction(
+                            messageId: messageId,
+                            message: message,
+                            emoji: emoji,
+                          );
+                        },
+                      ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -2792,12 +3020,22 @@ class _MessagesListState extends State<_MessagesList>
     final reactions = _extractReactions(message);
     if (reactions.isEmpty) return const SizedBox.shrink();
     final currentUserId = _auth.currentUser?.uid;
-    final myReaction = currentUserId == null ? null : reactions[currentUserId];
+    final myReactions = currentUserId == null
+        ? const <String>{}
+        : (reactions[currentUserId] ?? const <String>{});
 
     final counts = <String, int>{};
-    for (final emoji in reactions.values) {
-      counts[emoji] = (counts[emoji] ?? 0) + 1;
+    for (final emojis in reactions.values) {
+      for (final emoji in emojis) {
+        counts[emoji] = (counts[emoji] ?? 0) + 1;
+      }
     }
+    final entries = counts.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        if (byCount != 0) return byCount;
+        return a.key.compareTo(b.key);
+      });
 
     return Padding(
       padding: const EdgeInsets.only(top: 6),
@@ -2805,15 +3043,14 @@ class _MessagesListState extends State<_MessagesList>
         spacing: 4,
         runSpacing: 4,
         children: [
-          for (final entry in counts.entries)
+          for (final entry in entries)
             InkWell(
               borderRadius: BorderRadius.circular(10),
               onTap: () {
-                _applyReaction(
+                _toggleReaction(
                   messageId: messageId,
                   message: message,
                   emoji: entry.key,
-                  toggleIfSame: true,
                 );
               },
               child: Container(
@@ -2821,7 +3058,7 @@ class _MessagesListState extends State<_MessagesList>
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(10),
-                  border: myReaction == entry.key
+                  border: myReactions.contains(entry.key)
                       ? Border.all(
                           color: Theme.of(context).colorScheme.primary,
                           width: 1.1,
@@ -3038,9 +3275,12 @@ class _MessagesListState extends State<_MessagesList>
 
             final cachedText = _decryptedCache[messageId]?.trim() ?? '';
             final persistedText = _persistedTextForMessage(messageId);
-            final immediateText = cachedText.isNotEmpty
+            var immediateText = cachedText.isNotEmpty
                 ? cachedText
                 : persistedText;
+            if (immediateText.isEmpty && type == 'sticker') {
+              immediateText = message['sticker']?.toString().trim() ?? '';
+            }
 
             if (!encryptionReady) {
               return _animateOnFirstPaint(
@@ -3116,6 +3356,9 @@ class _MessagesListState extends State<_MessagesList>
                   displayText = decryptSnapshot.data ?? '';
                   if (displayText.isEmpty) {
                     displayText = _decryptedCache[messageId] ?? persistedText;
+                  }
+                  if (displayText.isEmpty && type == 'sticker') {
+                    displayText = message['sticker']?.toString().trim() ?? '';
                   }
                   if (displayText.isEmpty) {
                     displayText = 'Encrypted message';
@@ -3211,6 +3454,7 @@ class _MessagesListState extends State<_MessagesList>
     if (text.isEmpty) {
       return const SizedBox.shrink();
     }
+    final themeService = context.watch<ThemeService>();
     final colorScheme = Theme.of(context).colorScheme;
     final isDarkTheme = Theme.of(context).brightness == Brightness.dark;
     final receivedTextColor = colorScheme.onSurface;
@@ -3227,6 +3471,9 @@ class _MessagesListState extends State<_MessagesList>
     final isEdited = messageData['edited'] == true;
     final callSummary = _extractCallSummaryData(messageData);
     final isCallSummary = callSummary != null;
+    final isSticker =
+        (messageData['type']?.toString().trim().toLowerCase() ?? 'text') ==
+        'sticker';
     final sentAtText = timestamp != null
         ? DateFormat('HH:mm').format(timestamp.toDate())
         : '';
@@ -3245,7 +3492,7 @@ class _MessagesListState extends State<_MessagesList>
       key: key,
       behavior: HitTestBehavior.translucent,
       onDoubleTap: () {
-        _applyReaction(messageId: messageId, message: messageData, emoji: '❤️');
+        _handleDoubleTapReaction(messageId: messageId, message: messageData);
       },
       onLongPress: () {
         _showMessageActions(
@@ -3339,15 +3586,44 @@ class _MessagesListState extends State<_MessagesList>
                   incomingTextColor: receivedTextColor,
                   incomingMetaColor: receivedMetaColor,
                 )
-              else
+              else if (isSticker)
                 Text(
                   text,
+                  style: TextStyle(
+                    fontSize: text.runes.length <= 2 ? 46 : 38,
+                    height: 1.05,
+                  ),
+                )
+              else
+                ChatMessageText(
+                  text: text,
                   style: TextStyle(
                     color: isMe ? colorScheme.onPrimary : receivedTextColor,
                     fontSize: 15,
                   ),
+                  linkStyle: TextStyle(
+                    color: isMe
+                        ? colorScheme.onPrimary.withValues(alpha: 0.95)
+                        : colorScheme.primary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    decoration: TextDecoration.underline,
+                  ),
+                  showPreviews: themeService.showLinkPreviews,
+                  previewBackgroundColor: isMe
+                      ? colorScheme.onPrimary.withValues(alpha: 0.14)
+                      : colorScheme.surfaceContainerHighest,
+                  previewBorderColor: isMe
+                      ? colorScheme.onPrimary.withValues(alpha: 0.25)
+                      : colorScheme.outlineVariant.withValues(alpha: 0.45),
+                  previewTitleColor: isMe
+                      ? colorScheme.onPrimary
+                      : receivedTextColor,
+                  previewMetaColor: isMe
+                      ? colorScheme.onPrimary.withValues(alpha: 0.82)
+                      : receivedMetaColor,
                 ),
-              if (!isCallSummary && isEdited) ...[
+              if (!isCallSummary && !isSticker && isEdited) ...[
                 const SizedBox(height: 2),
                 Text(
                   'edited',
@@ -3555,6 +3831,7 @@ class _MessagesListState extends State<_MessagesList>
     final isDownloaded = downloadProgress?.status == DownloadStatus.completed;
     final localPath = downloadProgress?.localPath;
     final progress = downloadProgress?.progress ?? 0;
+    final themeService = context.watch<ThemeService>();
     final colorScheme = Theme.of(context).colorScheme;
     final isDarkTheme = Theme.of(context).brightness == Brightness.dark;
     final incomingBubbleColor = isDarkTheme
@@ -3565,7 +3842,7 @@ class _MessagesListState extends State<_MessagesList>
       key: key,
       behavior: HitTestBehavior.translucent,
       onDoubleTap: () {
-        _applyReaction(messageId: messageId, message: message, emoji: '❤️');
+        _handleDoubleTapReaction(messageId: messageId, message: message);
       },
       onLongPress: () {
         _showMessageActions(
@@ -3606,6 +3883,7 @@ class _MessagesListState extends State<_MessagesList>
                   fileUrl: fileUrl,
                   fileName: fileName,
                   fileSize: fileSize,
+                  mimeType: mimeType,
                   localPath: localPath,
                   timestamp: timestamp,
                   isMe: isMe,
@@ -3627,6 +3905,10 @@ class _MessagesListState extends State<_MessagesList>
                   _InlineVideoPlayer(
                     url: fileUrl,
                     messageId: messageId,
+                    onInitialized: () {
+                      if (!mounted || !widget.shouldAutoScroll()) return;
+                      widget.onAutoScrollToBottom();
+                    },
                     onOpenFullscreen: () => _openVideoViewer(
                       messageId: messageId,
                       fileUrl: fileUrl,
@@ -3682,14 +3964,36 @@ class _MessagesListState extends State<_MessagesList>
               if (caption.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 8, left: 4, right: 4),
-                  child: Text(
-                    caption,
+                  child: ChatMessageText(
+                    text: caption,
                     style: TextStyle(
                       color: isMe
                           ? colorScheme.onPrimary
                           : colorScheme.onSurface,
                       fontSize: 14,
                     ),
+                    linkStyle: TextStyle(
+                      color: isMe
+                          ? colorScheme.onPrimary.withValues(alpha: 0.95)
+                          : colorScheme.primary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      decoration: TextDecoration.underline,
+                    ),
+                    showPreviews: themeService.showLinkPreviews,
+                    maxPreviewCards: 1,
+                    previewBackgroundColor: isMe
+                        ? colorScheme.onPrimary.withValues(alpha: 0.14)
+                        : colorScheme.surfaceContainerHighest,
+                    previewBorderColor: isMe
+                        ? colorScheme.onPrimary.withValues(alpha: 0.25)
+                        : colorScheme.outlineVariant.withValues(alpha: 0.45),
+                    previewTitleColor: isMe
+                        ? colorScheme.onPrimary
+                        : colorScheme.onSurface,
+                    previewMetaColor: isMe
+                        ? colorScheme.onPrimary.withValues(alpha: 0.82)
+                        : colorScheme.onSurfaceVariant,
                   ),
                 ),
               _buildReactionsRow(messageId: messageId, message: message),
@@ -3704,10 +4008,14 @@ class _MessagesListState extends State<_MessagesList>
     required String fileUrl,
     required String fileName,
     required int fileSize,
+    required String mimeType,
     required String? localPath,
     required Timestamp? timestamp,
     required bool isMe,
   }) {
+    final isGif =
+        mimeType.toLowerCase().contains('gif') ||
+        fileUrl.toLowerCase().split('?').first.endsWith('.gif');
     return GestureDetector(
       onTap: () {
         Navigator.push(
@@ -3731,26 +4039,42 @@ class _MessagesListState extends State<_MessagesList>
                 maxWidth: MediaQuery.of(context).size.width * 0.75,
                 maxHeight: 400,
               ),
-              child: CachedNetworkImage(
-                imageUrl: fileUrl,
-                fit: BoxFit.cover,
-                placeholder: (_, url) => Container(
-                  height: 200,
-                  color: Colors.grey[800],
-                  child: const Center(child: CircularProgressIndicator()),
-                ),
-                errorWidget: (_, url, error) => Container(
-                  height: 200,
-                  color: Colors.grey[800],
-                  child: const Center(
-                    child: Icon(
-                      Icons.broken_image,
-                      size: 48,
-                      color: Colors.white54,
+              child: isGif
+                  ? Image.network(
+                      fileUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        height: 200,
+                        color: Colors.grey[800],
+                        child: const Center(
+                          child: Icon(
+                            Icons.broken_image,
+                            size: 48,
+                            color: Colors.white54,
+                          ),
+                        ),
+                      ),
+                    )
+                  : CachedNetworkImage(
+                      imageUrl: fileUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (_, url) => Container(
+                        height: 200,
+                        color: Colors.grey[800],
+                        child: const Center(child: CircularProgressIndicator()),
+                      ),
+                      errorWidget: (_, url, error) => Container(
+                        height: 200,
+                        color: Colors.grey[800],
+                        child: const Center(
+                          child: Icon(
+                            Icons.broken_image,
+                            size: 48,
+                            color: Colors.white54,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              ),
             ),
           ),
           // Timestamp overlay
@@ -4092,11 +4416,13 @@ class _MessagesListState extends State<_MessagesList>
 class _InlineVideoPlayer extends StatefulWidget {
   final String url;
   final String messageId;
+  final VoidCallback? onInitialized;
   final VoidCallback? onOpenFullscreen;
 
   const _InlineVideoPlayer({
     required this.url,
     required this.messageId,
+    this.onInitialized,
     this.onOpenFullscreen,
   });
 
@@ -4112,6 +4438,7 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
   bool _checkingCache = true; // NEW
   String? _cachedPath; // NEW
   int _setupToken = 0;
+  bool _didNotifyInitialized = false;
 
   @override
   void initState() {
@@ -4131,6 +4458,8 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
     if (oldWidget.url != widget.url ||
         oldWidget.messageId != widget.messageId) {
       _checkingCache = true;
+      _userRequestedPlay = false;
+      _didNotifyInitialized = false;
       _checkCache();
     }
   }
@@ -4147,10 +4476,6 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       _cachedPath = cached;
       _checkingCache = false;
     });
-    // If already cached, initialize immediately — no tap needed
-    if (cached != null) {
-      _setupControllerFromPath(cached);
-    }
   }
 
   Future<void> _setupControllerFromPath(String localPath) async {
@@ -4179,6 +4504,10 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
 
     try {
       await future;
+      if (!_didNotifyInitialized) {
+        _didNotifyInitialized = true;
+        widget.onInitialized?.call();
+      }
     } catch (_) {
       if (!mounted || setupToken != _setupToken) return;
       controller.removeListener(_videoListener);
@@ -4226,6 +4555,9 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
     }
 
     if (!mounted || setupToken != _setupToken) return;
+    setState(() {
+      _cachedPath = cachePath;
+    });
     await _setupControllerFromPath(cachePath);
   }
 
@@ -4234,10 +4566,13 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       _togglePlayback();
       return;
     }
-    if (!_userRequestedPlay) {
-      setState(() => _userRequestedPlay = true);
-      _setupControllerFromNetwork();
+    if (_userRequestedPlay) return;
+    setState(() => _userRequestedPlay = true);
+    if (_cachedPath != null && _cachedPath!.isNotEmpty) {
+      _setupControllerFromPath(_cachedPath!);
+      return;
     }
+    _setupControllerFromNetwork();
   }
 
   Future<void> _togglePlayback() async {
@@ -4280,16 +4615,28 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
     final controller = _controller;
     final initFuture = _initializeFuture;
 
-    // Not yet requested by user AND not cached — show tap-to-play
-    if (!_userRequestedPlay && _cachedPath == null) {
+    if (!_userRequestedPlay) {
       return _buildShell(
         child: GestureDetector(
           onTap: _onTapPlay,
-          child: const Center(
-            child: Icon(
-              Icons.play_circle_outline,
-              color: Colors.white70,
-              size: 54,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.play_circle_outline,
+                  color: Colors.white70,
+                  size: 54,
+                ),
+                if (_cachedPath != null)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Ready offline',
+                      style: TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),

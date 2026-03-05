@@ -133,6 +133,18 @@ service cloud.firestore {
       allow read, update: if request.auth != null &&
         request.auth.uid in resource.data.participants;
 
+      match /voiceChannels/{channelId} {
+        function isConversationParticipant() {
+          return request.auth != null &&
+            request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        }
+
+        allow read: if isConversationParticipant();
+        allow create, update: if isConversationParticipant();
+
+        allow delete: if false;
+      }
+
       match /messages/{messageId} {
         function isConversationParticipant() {
           return request.auth != null &&
@@ -141,6 +153,14 @@ service cloud.firestore {
 
         function reactionsOrEmpty(data) {
           return data.reactions is map ? data.reactions : {};
+        }
+
+        function isValidReactionValue(value) {
+          return value is string ||
+            (value is list &&
+             value.size() > 0 &&
+             value.size() <= 12 &&
+             value[0] is string);
         }
 
         function isReadReceiptUpdate() {
@@ -158,7 +178,7 @@ service cloud.firestore {
             reactionDiff.removedKeys().hasOnly([request.auth.uid]) &&
             (
               !(request.auth.uid in after) ||
-              after[request.auth.uid] is string
+              isValidReactionValue(after[request.auth.uid])
             );
         }
 
@@ -170,7 +190,8 @@ service cloud.firestore {
           request.auth.uid == request.resource.data.senderId &&
           (
             // Encrypted text
-            (request.resource.data.type == 'text' &&
+            ((request.resource.data.type == 'text' ||
+              request.resource.data.type == 'sticker') &&
              request.resource.data.encrypted == true &&
              (
                request.resource.data.ciphertext is string ||
@@ -184,10 +205,14 @@ service cloud.firestore {
                !('senderCiphertexts' in request.resource.data) ||
                request.resource.data.senderCiphertexts is map
              ) &&
-             (
-               !('senderPublicKey' in request.resource.data) ||
-               request.resource.data.senderPublicKey is string
-             ))
+              (
+                !('senderPublicKey' in request.resource.data) ||
+                request.resource.data.senderPublicKey is string
+              ) &&
+              (
+                request.resource.data.type != 'sticker' ||
+                request.resource.data.sticker is string
+              ))
 
             ||
 

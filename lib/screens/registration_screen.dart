@@ -8,7 +8,6 @@ import '../services/user_service_e2ee.dart';
 import '../services/theme_service.dart';
 import '../services/windows_google_auth_service.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'email_verification_screen.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
@@ -116,13 +115,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           ),
         );
 
-        // Navigate to email verification screen
-        // Using pushReplacement to prevent going back to registration
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => const EmailVerificationScreen(),
-          ),
-        );
+        // Return to the app root and let AuthWrapper display the proper screen.
+        Navigator.of(
+          context,
+          rootNavigator: true,
+        ).popUntil((route) => route.isFirst);
       }
     } on FirebaseAuthException catch (e) {
       print('❌ Firebase Auth Error: ${e.code} - ${e.message}');

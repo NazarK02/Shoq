@@ -5,17 +5,31 @@ class ThemeService extends ChangeNotifier {
   static final ThemeService _instance = ThemeService._internal();
   factory ThemeService() => _instance;
   ThemeService._internal();
+  static const String _isDarkModeKey = 'isDarkMode';
+  static const String _uiScaleKey = 'uiScale';
+  static const String _showLinkPreviewsKey = 'showLinkPreviews';
+  static const String _reduceMotionKey = 'reduceMotion';
 
   ThemeMode _themeMode = ThemeMode.light;
   ThemeMode get themeMode => _themeMode;
 
   bool get isDarkMode => _themeMode == ThemeMode.dark;
+  double _uiScale = 1.0;
+  bool _showLinkPreviews = true;
+  bool _reduceMotion = false;
+
+  double get uiScale => _uiScale;
+  bool get showLinkPreviews => _showLinkPreviews;
+  bool get reduceMotion => _reduceMotion;
 
   // Initialize theme from saved preference
   Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
-    final isDark = prefs.getBool('isDarkMode') ?? false;
+    final isDark = prefs.getBool(_isDarkModeKey) ?? false;
     _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+    _uiScale = (prefs.getDouble(_uiScaleKey) ?? 1.0).clamp(0.85, 1.35);
+    _showLinkPreviews = prefs.getBool(_showLinkPreviewsKey) ?? true;
+    _reduceMotion = prefs.getBool(_reduceMotionKey) ?? false;
     notifyListeners();
   }
 
@@ -26,7 +40,7 @@ class ThemeService extends ChangeNotifier {
         : ThemeMode.light;
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isDarkMode', _themeMode == ThemeMode.dark);
+    await prefs.setBool(_isDarkModeKey, _themeMode == ThemeMode.dark);
 
     notifyListeners();
   }
@@ -36,8 +50,33 @@ class ThemeService extends ChangeNotifier {
     _themeMode = mode;
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isDarkMode', mode == ThemeMode.dark);
+    await prefs.setBool(_isDarkModeKey, mode == ThemeMode.dark);
 
+    notifyListeners();
+  }
+
+  Future<void> setUiScale(double value) async {
+    final next = value.clamp(0.85, 1.35);
+    if ((_uiScale - next).abs() < 0.001) return;
+    _uiScale = next;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_uiScaleKey, _uiScale);
+    notifyListeners();
+  }
+
+  Future<void> setShowLinkPreviews(bool value) async {
+    if (_showLinkPreviews == value) return;
+    _showLinkPreviews = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_showLinkPreviewsKey, value);
+    notifyListeners();
+  }
+
+  Future<void> setReduceMotion(bool value) async {
+    if (_reduceMotion == value) return;
+    _reduceMotion = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_reduceMotionKey, value);
     notifyListeners();
   }
 

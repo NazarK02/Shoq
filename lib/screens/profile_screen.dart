@@ -12,6 +12,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/user_service_e2ee.dart';
 import '../services/theme_service.dart';
+import 'photo_editor_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -110,33 +111,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await user.reload();
       final XFile? image = await _picker.pickImage(
         source: source,
-        maxWidth: 512,
-        maxHeight: 512,
-        imageQuality: 75,
+        imageQuality: 95,
       );
 
       if (image == null) return;
+      final sourcePath = image.path.trim();
+      if (sourcePath.isEmpty || !File(sourcePath).existsSync()) {
+        throw Exception('Could not access selected image');
+      }
 
-      setState(() => _isUploading = true);
+      await _editAndUploadProfileImage(sourcePath);
+    } catch (e) {
+      final message = e is FirebaseException && e.code == 'unauthorized'
+          ? 'Not authorized to upload. Please re-login or verify your email.'
+          : 'Error: ${e.toString()}';
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
+    }
+  }
 
-      // Upload to Firebase Storage
-      final ref = _storage.ref().child('profile_pictures/${user.uid}');
+  Future<void> _editAndUploadProfileImage(String sourcePath) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    if (!mounted) return;
+
+    final editedPath = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PhotoEditorScreen(
+          filePath: sourcePath,
+          title: 'Edit profile photo',
+        ),
+      ),
+    );
+    final pathToUpload = editedPath?.trim() ?? '';
+    if (pathToUpload.isEmpty) return;
+
+    setState(() => _isUploading = true);
+    try {
+      final uploadFile = File(pathToUpload);
+      if (!uploadFile.existsSync()) {
+        throw Exception('Edited image file does not exist');
+      }
+
+      final ref = _storage.ref().child(
+        'profile_pictures/${user.uid}/avatar_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
       final uploadTask = await ref.putFile(
-        File(image.path),
-        SettableMetadata(contentType: 'image/jpeg'),
+        uploadFile,
+        SettableMetadata(contentType: 'image/png'),
       );
       final downloadUrl = await uploadTask.ref.getDownloadURL();
 
-      // Update Firestore
       await _firestore.collection('users').doc(user.uid).update({
         'photoUrl': downloadUrl,
       });
-
-      // Update Firebase Auth
       await user.updatePhotoURL(downloadUrl);
       await user.reload();
-
-      // Reload user data
       await _loadUserData();
 
       if (mounted) {
@@ -154,7 +188,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ).showSnackBar(SnackBar(content: Text(message)));
       }
     } finally {
-      setState(() => _isUploading = false);
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
     }
   }
 
@@ -247,49 +283,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
 
       if (result == null || result.files.isEmpty) return;
-
-      final file = result.files.first;
-
-      setState(() => _isUploading = true);
-
-      // Upload to Firebase Storage
-      final ref = _storage.ref().child('profile_pictures/${user.uid}');
-
-      UploadTask uploadTask;
-      if (file.path != null) {
-        uploadTask = ref.putFile(
-          File(file.path!),
-          SettableMetadata(contentType: 'image/*'),
-        );
-      } else if (file.bytes != null) {
-        uploadTask = ref.putData(
-          file.bytes!,
-          SettableMetadata(contentType: 'image/*'),
-        );
-      } else {
-        throw Exception('Selected file has no data');
+      final sourcePath = await _resolvePickedImagePath(result.files.first);
+      if (sourcePath == null || sourcePath.isEmpty) {
+        throw Exception('Could not access selected image');
       }
 
-      final uploadResult = await uploadTask;
-      final downloadUrl = await uploadResult.ref.getDownloadURL();
-
-      // Update Firestore
-      await _firestore.collection('users').doc(user.uid).update({
-        'photoUrl': downloadUrl,
-      });
-
-      // Update Firebase Auth
-      await user.updatePhotoURL(downloadUrl);
-      await user.reload();
-
-      // Reload user data
-      await _loadUserData();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Profile picture updated!')),
-        );
-      }
+      await _editAndUploadProfileImage(sourcePath);
     } catch (e) {
       final message = e is FirebaseException && e.code == 'unauthorized'
           ? 'Not authorized to upload. Please re-login or verify your email.'
@@ -299,9 +298,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
           context,
         ).showSnackBar(SnackBar(content: Text(message)));
       }
-    } finally {
-      setState(() => _isUploading = false);
     }
+  }
+
+  Future<String?> _resolvePickedImagePath(PlatformFile file) async {
+    final path = file.path?.trim() ?? '';
+    if (path.isNotEmpty && File(path).existsSync()) return path;
+
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) return null;
+    return _writeTempImageBytes(
+      bytes: bytes,
+      extension: _fileExtension(file.name),
+    );
+  }
+
+  Future<String> _writeTempImageBytes({
+    required List<int> bytes,
+    required String extension,
+  }) async {
+    final tempDir = await Directory.systemTemp.createTemp(
+      'shoq_profile_photo_',
+    );
+    final ext = extension.startsWith('.') ? extension : '.$extension';
+    final path =
+        '${tempDir.path}${Platform.pathSeparator}picked_${DateTime.now().millisecondsSinceEpoch}$ext';
+    final file = File(path);
+    await file.writeAsBytes(bytes, flush: true);
+    return file.path;
+  }
+
+  String _fileExtension(String fileName) {
+    final value = fileName.trim();
+    if (value.isEmpty) return '.png';
+    final dot = value.lastIndexOf('.');
+    if (dot <= 0 || dot >= value.length - 1) return '.png';
+    final ext = value.substring(dot).toLowerCase();
+    if (!RegExp(r'^\.[a-z0-9]+$').hasMatch(ext) || ext.length > 6) {
+      return '.png';
+    }
+    return ext;
   }
 
   Future<void> _removeProfilePicture() async {
@@ -313,8 +349,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       // Delete from Storage
       try {
-        final ref = _storage.ref().child('profile_pictures/${user.uid}');
-        await ref.delete();
+        final folderRef = _storage.ref().child('profile_pictures/${user.uid}');
+        final listing = await folderRef.listAll();
+        for (final item in listing.items) {
+          await item.delete();
+        }
       } catch (e) {
         debugPrint('No profile picture to delete: $e');
       }
