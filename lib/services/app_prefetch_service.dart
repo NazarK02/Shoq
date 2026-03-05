@@ -53,7 +53,22 @@ class AppPrefetchService {
         if (friendId is String && friendId.isNotEmpty) {
           userIds.add(friendId);
           // Seed cache with friend list data to avoid blank UI.
-          UserCacheService().mergeUserData(friendId, data);
+          // Ignore empty avatar/display values so valid cached profile data
+          // does not get overwritten by sparse contact docs.
+          final seed = Map<String, dynamic>.from(data);
+          final photo = (seed['photoUrl'] ?? seed['photoURL'])
+              ?.toString()
+              .trim()
+              .toLowerCase();
+          if (photo == null || photo.isEmpty || photo == 'null') {
+            seed.remove('photoUrl');
+            seed.remove('photoURL');
+          }
+          final displayName = seed['displayName']?.toString().trim() ?? '';
+          if (displayName.isEmpty) {
+            seed.remove('displayName');
+          }
+          UserCacheService().mergeUserData(friendId, seed);
         }
       }
 

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
-import '../services/user_service_e2ee.dart';
 import '../services/theme_service.dart';
 import '../services/windows_google_auth_service.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -92,16 +91,6 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
       // Get the refreshed user object
       User? refreshedUser = _auth.currentUser;
-
-      print('🔵 Saving user to Firestore...');
-
-      // Save user to Firestore (basic info only, no E2EE yet)
-      if (refreshedUser != null) {
-        await UserService().saveUserToFirestore(user: refreshedUser);
-        await UserService().initializeE2EE();
-      }
-
-      print('✅ User saved to Firestore');
 
       // Send verification email
       print('📧 Sending verification email...');
@@ -226,14 +215,6 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       }
 
       print('Signed in: ${userCredential.user?.uid}');
-
-      // Save user to Firestore (basic info only, no E2EE yet)
-      if (userCredential.user != null) {
-        print('Saving Google user to Firestore...');
-        await UserService().saveUserToFirestore(user: userCredential.user!);
-        await UserService().initializeE2EE();
-        print('Google user saved to Firestore');
-      }
 
       // AuthWrapper will automatically navigate to HomeScreen
       // No need to manually navigate here

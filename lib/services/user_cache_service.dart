@@ -20,6 +20,7 @@ class UserCacheService extends ChangeNotifier {
   final Map<String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
   _subs = {};
   final Map<String, Future<void>> _inflight = {};
+  final Set<String> _fetchedFromFirestore = <String>{};
 
   Map<String, dynamic>? getCachedUser(String uid) => _cache[uid];
 
@@ -45,6 +46,7 @@ class UserCacheService extends ChangeNotifier {
     }
     _subs.clear();
     _cache.clear();
+    _fetchedFromFirestore.clear();
     notifyListeners();
   }
 
@@ -60,7 +62,7 @@ class UserCacheService extends ChangeNotifier {
   }
 
   Future<void> _loadUserInternal(String uid, {bool listen = true}) async {
-    if (_cache.containsKey(uid)) {
+    if (_cache.containsKey(uid) && _fetchedFromFirestore.contains(uid)) {
       if (listen) _ensureListener(uid);
       return;
     }
@@ -80,6 +82,7 @@ class UserCacheService extends ChangeNotifier {
           .get(const GetOptions(source: Source.cache));
       if (cachedDoc.exists && cachedDoc.data() != null) {
         _updateFromFirestore(uid, cachedDoc.data()!);
+        _fetchedFromFirestore.add(uid);
       }
     } catch (_) {}
 
@@ -87,6 +90,7 @@ class UserCacheService extends ChangeNotifier {
       final doc = await _firestore.collection('users').doc(uid).get();
       if (doc.exists && doc.data() != null) {
         _updateFromFirestore(uid, doc.data()!);
+        _fetchedFromFirestore.add(uid);
       }
     } catch (_) {}
 
@@ -100,6 +104,7 @@ class UserCacheService extends ChangeNotifier {
     ) {
       final data = snapshot.data();
       if (data == null) return;
+      _fetchedFromFirestore.add(uid);
       _updateFromFirestore(uid, data, notify: true);
     });
   }
@@ -119,8 +124,10 @@ class UserCacheService extends ChangeNotifier {
   Map<String, dynamic> _normalizeUserData(Map<String, dynamic> data) {
     final normalized = <String, dynamic>{};
 
-    final photo = data['photoUrl'] ?? data['photoURL'];
-    if (photo != null) normalized['photoUrl'] = photo;
+    final photo = (data['photoUrl'] ?? data['photoURL'])?.toString().trim();
+    if (photo != null && photo.isNotEmpty && photo.toLowerCase() != 'null') {
+      normalized['photoUrl'] = photo;
+    }
 
     for (final key in [
       'displayName',
@@ -134,7 +141,9 @@ class UserCacheService extends ChangeNotifier {
       'socialLinks',
     ]) {
       final value = data[key];
-      if (value != null) normalized[key] = value;
+      if (value == null) continue;
+      if (value is String && value.trim().isEmpty) continue;
+      normalized[key] = value;
     }
 
     for (final key in ['createdAt', 'lastSeen', 'lastHeartbeat']) {

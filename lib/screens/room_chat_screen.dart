@@ -81,7 +81,6 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   bool _isInitializing = true;
   bool _isSending = false;
   bool _openingVoiceChannel = false;
-  bool _showChannelModeHeader = true;
   String? _error;
 
   bool get _isServer => widget.conversationType == 'server';
@@ -1517,22 +1516,6 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
               onPressed: _showChannelPicker,
               icon: const Icon(Icons.tag),
             ),
-          if (_isServer)
-            IconButton(
-              tooltip: _showChannelModeHeader
-                  ? 'Hide channel info'
-                  : 'Show channel info',
-              onPressed: () {
-                setState(() {
-                  _showChannelModeHeader = !_showChannelModeHeader;
-                });
-              },
-              icon: Icon(
-                _showChannelModeHeader
-                    ? Icons.visibility_off_outlined
-                    : Icons.visibility_outlined,
-              ),
-            ),
           IconButton(
             tooltip: 'Room profile',
             onPressed: _openRoomInfo,
@@ -1555,7 +1538,6 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         Expanded(
           child: Column(
             children: [
-              if (_showChannelModeHeader) _buildChannelModeHeader(),
               if (_activeChannelType() == ServerChannelType.file)
                 _buildFileChannelFoldersBar(),
               if (_activeChannelType() == ServerChannelType.assignments)
@@ -1578,7 +1560,6 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     return Column(
       children: [
         if (_isServer) _buildServerChannelBar(),
-        if (_isServer && _showChannelModeHeader) _buildChannelModeHeader(),
         if (_isServer && _activeChannelType() == ServerChannelType.file)
           _buildFileChannelFoldersBar(),
         if (_isServer && _activeChannelType() == ServerChannelType.assignments)
@@ -1702,93 +1683,6 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
       subtitle: isOwner
           ? const Text('Owner', style: TextStyle(fontSize: 11))
           : null,
-    );
-  }
-
-  Widget _buildChannelModeHeader() {
-    if (!_isServer) return const SizedBox.shrink();
-    final type = _activeChannelType();
-    final colorScheme = Theme.of(context).colorScheme;
-    String description;
-    switch (type) {
-      case ServerChannelType.voice:
-        description = 'Voice room for live discussions.';
-        break;
-      case ServerChannelType.forum:
-        description = 'Forum-style posts and threaded discussion.';
-        break;
-      case ServerChannelType.file:
-        description = 'Organize folders and share downloadable files.';
-        break;
-      case ServerChannelType.assignments:
-        description = 'Track assignments similar to team tasks.';
-        break;
-      case ServerChannelType.text:
-      default:
-        description = 'Standard text chat channel.';
-        break;
-    }
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLowest,
-        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
-      ),
-      child: Row(
-        children: [
-          Icon(_channelIcon(type), size: 18, color: colorScheme.primary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '${ServerChannelType.label(type)} channel',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
-                ),
-                Text(
-                  description,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (type == ServerChannelType.forum)
-            TextButton.icon(
-              onPressed: _isSending ? null : _createForumPost,
-              icon: const Icon(Icons.post_add, size: 18),
-              label: const Text('New post'),
-            ),
-          if (type == ServerChannelType.voice)
-            FilledButton.icon(
-              onPressed: _openingVoiceChannel
-                  ? null
-                  : () => unawaited(_openVoiceChannel()),
-              icon: const Icon(Icons.call, size: 18),
-              label: const Text('Join voice'),
-            ),
-          IconButton(
-            tooltip: 'Hide channel info',
-            onPressed: () {
-              setState(() {
-                _showChannelModeHeader = false;
-              });
-            },
-            icon: const Icon(Icons.close, size: 18),
-          ),
-        ],
-      ),
     );
   }
 

@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
-import '../services/user_service_e2ee.dart';
-import '../services/notification_service.dart';
 import '../services/theme_service.dart';
 import '../services/windows_google_auth_service.dart';
 import 'registration_screen.dart';
@@ -65,18 +63,6 @@ class _LoginScreenState extends State<LoginScreen> {
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
-
-      final currentUser = _auth.currentUser;
-      if (currentUser != null) {
-        await UserService().saveUserToFirestore(user: currentUser);
-        await UserService().initializeE2EE();
-      }
-
-      // IMPORTANT: Re-initialize notifications for new user
-      await NotificationService().initialize();
-
-      // Update last seen
-      await UserService().updateLastSeen();
 
       if (mounted) {
         // AuthWrapper will automatically navigate
@@ -142,15 +128,13 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      UserCredential userCredential;
-
       if (isWindowsDesktop) {
-        userCredential = await WindowsGoogleAuthService().signInWithGoogle();
+        await WindowsGoogleAuthService().signInWithGoogle();
       } else if (usesProviderFlow) {
         final googleProvider = GoogleAuthProvider();
         googleProvider.addScope('email');
         googleProvider.addScope('profile');
-        userCredential = await _auth.signInWithProvider(googleProvider);
+        await _auth.signInWithProvider(googleProvider);
       } else {
         final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
 
@@ -166,16 +150,7 @@ class _LoginScreenState extends State<LoginScreen> {
           idToken: googleAuth.idToken,
         );
 
-        userCredential = await _auth.signInWithCredential(credential);
-      }
-
-      // Save/update user in Firestore
-      if (userCredential.user != null) {
-        await UserService().saveUserToFirestore(user: userCredential.user!);
-        await UserService().initializeE2EE();
-
-        // IMPORTANT: Re-initialize notifications for new user
-        await NotificationService().initialize();
+        await _auth.signInWithCredential(credential);
       }
 
       if (mounted) {

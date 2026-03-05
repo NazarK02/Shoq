@@ -30,9 +30,9 @@ class UserService {
     try {
       final userRef = _firestore.collection('users').doc(user.uid);
       final existingDoc = await userRef.get();
-      final existingData = existingDoc.data();
+      final existingData = existingDoc.data() ?? const <String, dynamic>{};
       final existingFriendId =
-          existingData?['friendId']?.toString().trim() ?? '';
+          existingData['friendId']?.toString().trim() ?? '';
       String friendId = existingFriendId;
       if (friendId.isEmpty) {
         try {
@@ -47,26 +47,44 @@ class UserService {
 
       print('Saving user document for: ${user.uid}');
 
-      // Create/update user document WITHOUT E2EE (that happens separately)
-      await userRef.set({
+      final profilePayload = <String, dynamic>{
         'uid': user.uid,
         'email': user.email ?? '',
         'emailLower': (user.email ?? '').trim().toLowerCase(),
         'displayName': user.displayName ?? '',
         'photoUrl': user.photoURL ?? '',
-        'status': 'online',
-        'lastSeen': FieldValue.serverTimestamp(),
-        'lastHeartbeat': FieldValue.serverTimestamp(),
         'friendId': friendId,
         'friendIdLower': friendId.toLowerCase(),
-        if (existingFriendId.isEmpty)
-          'friendIdCreatedAt': FieldValue.serverTimestamp(),
-        if (!existingDoc.exists) 'createdAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      };
+
+      var needsWrite = !existingDoc.exists;
+      for (final entry in profilePayload.entries) {
+        final current = existingData[entry.key]?.toString().trim() ?? '';
+        final next = entry.value.toString().trim();
+        if (current != next) {
+          needsWrite = true;
+          break;
+        }
+      }
+
+      if (existingFriendId.isEmpty) {
+        needsWrite = true;
+      }
+
+      if (needsWrite) {
+        // Create/update user document WITHOUT E2EE (that happens separately)
+        await userRef.set({
+          ...profilePayload,
+          if (existingFriendId.isEmpty)
+            'friendIdCreatedAt': FieldValue.serverTimestamp(),
+          if (!existingDoc.exists) 'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        print('User document saved successfully');
+      } else {
+        print('User document already up to date; skipping write');
+      }
 
       await _cleanupLegacyDeviceMetadata(user.uid);
-
-      print('User document saved successfully');
     } catch (e) {
       print('Error saving user: $e');
       rethrow;

@@ -1409,11 +1409,13 @@ class _HomeScreenState extends State<HomeScreen> {
             final userData = (otherUserId != null && otherUserId.isNotEmpty)
                 ? _userCache.getCachedUser(otherUserId)
                 : null;
+            final roomAvatar = _normalizePhotoUrl(chatData['avatarUrl']);
             final photoURL = isDirect
-                ? _normalizePhotoUrl(
-                    userData?['photoUrl'] ?? userData?['photoURL'],
-                  )
-                : _normalizePhotoUrl(chatData['avatarUrl']);
+                ? (_normalizePhotoUrl(
+                        userData?['photoUrl'] ?? userData?['photoURL'],
+                      ) ??
+                      roomAvatar)
+                : roomAvatar;
             _prefetchAvatar(photoURL);
 
             final isOnline = isDirect && userData != null

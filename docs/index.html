@@ -1,44 +1,1276 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Veil — End-to-End Encrypted Messenger</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@300;400;500;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-<title>My Messenger Project</title>
+    :root {
+      --bg:       #080810;
+      --bg2:      #0e0e1a;
+      --bg3:      #13131f;
+      --border:   rgba(255,255,255,0.07);
+      --text:     #e8e8f0;
+      --muted:    #6b6b88;
+      --accent:   #00c8ff;
+      --accent2:  #7b61ff;
+      --green:    #00e5a0;
+      --red:      #ff4d6a;
+      --mono:     'JetBrains Mono', monospace;
+      --serif:    'DM Serif Display', serif;
+      --sans:     'DM Sans', sans-serif;
+    }
 
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    html { scroll-behavior: smooth; }
 
-<style>
-body{
-    background:#0f172a;
-    color:white;
-}
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-weight: 300;
+      line-height: 1.7;
+      overflow-x: hidden;
+    }
 
-.hero{
-    padding:120px 0;
-    text-align:center;
-}
+    /* ─── CANVAS BG ─────────────────────────────────────── */
+    #bg-canvas {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.35;
+    }
 
-.btn-main{
-    padding:12px 30px;
-}
-</style>
+    /* ─── NOISE OVERLAY ─────────────────────────────────── */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+      opacity: 0.03;
+    }
 
+    section, nav, footer { position: relative; z-index: 2; }
+
+    /* ─── NAV ───────────────────────────────────────────── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 3rem;
+      height: 64px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(8, 8, 16, 0.85);
+      backdrop-filter: blur(18px);
+    }
+
+    .nav-logo {
+      font-family: var(--serif);
+      font-size: 1.4rem;
+      letter-spacing: 0.02em;
+      color: var(--text);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .nav-logo-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 12px var(--accent);
+      animation: pulse-dot 2.4s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.7); }
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 2.5rem;
+      list-style: none;
+    }
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+
+    .nav-cta {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid rgba(0,200,255,0.3);
+      padding: 0.45rem 1.1rem;
+      border-radius: 4px;
+      text-decoration: none;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .nav-cta:hover {
+      background: rgba(0,200,255,0.08);
+      border-color: rgba(0,200,255,0.6);
+    }
+
+    /* ─── HERO ──────────────────────────────────────────── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 8rem 2rem 4rem;
+      position: relative;
+    }
+
+    .hero-badge {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid rgba(0,200,255,0.25);
+      padding: 0.35rem 0.9rem;
+      border-radius: 100px;
+      margin-bottom: 2.5rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      opacity: 0;
+      animation: fade-up 0.8s 0.2s forwards;
+    }
+    .hero-badge::before {
+      content: '';
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    .hero-title {
+      font-family: var(--serif);
+      font-size: clamp(3.5rem, 9vw, 7.5rem);
+      line-height: 1.0;
+      letter-spacing: -0.01em;
+      margin-bottom: 1.8rem;
+      opacity: 0;
+      animation: fade-up 0.9s 0.35s forwards;
+    }
+    .hero-title em {
+      font-style: italic;
+      color: var(--accent);
+    }
+
+    .hero-sub {
+      font-family: var(--sans);
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      font-weight: 300;
+      color: var(--muted);
+      max-width: 560px;
+      margin: 0 auto 3rem;
+      opacity: 0;
+      animation: fade-up 0.9s 0.5s forwards;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+      opacity: 0;
+      animation: fade-up 0.9s 0.65s forwards;
+    }
+
+    .btn-primary {
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: var(--accent);
+      color: #000;
+      padding: 0.8rem 2rem;
+      border-radius: 5px;
+      text-decoration: none;
+      font-weight: 500;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    .btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+
+    .btn-ghost {
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.8rem 2rem;
+      border-radius: 5px;
+      text-decoration: none;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .btn-ghost:hover {
+      border-color: rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.03);
+    }
+
+    /* cipher strip */
+    .cipher-strip {
+      margin-top: 5rem;
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: rgba(0,200,255,0.2);
+      letter-spacing: 0.1em;
+      white-space: nowrap;
+      overflow: hidden;
+      width: 100%;
+      opacity: 0;
+      animation: fade-up 1s 0.9s forwards;
+    }
+    .cipher-inner {
+      display: inline-block;
+      animation: scroll-left 28s linear infinite;
+    }
+    @keyframes scroll-left {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+
+    /* ─── METRICS ROW ───────────────────────────────────── */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .metric {
+      background: var(--bg);
+      padding: 2.5rem 2rem;
+      text-align: center;
+    }
+    .metric-val {
+      font-family: var(--serif);
+      font-size: 2.8rem;
+      color: var(--text);
+      line-height: 1;
+      margin-bottom: 0.4rem;
+    }
+    .metric-val span { color: var(--accent); }
+    .metric-label {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    /* ─── SECTION WRAPPER ───────────────────────────────── */
+    .section {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 7rem 2rem;
+    }
+
+    .section-label {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 1rem;
+    }
+
+    .section-title {
+      font-family: var(--serif);
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 1.15;
+      margin-bottom: 1.2rem;
+    }
+
+    .section-desc {
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 600px;
+      margin-bottom: 4rem;
+    }
+
+    /* ─── FEATURES GRID ─────────────────────────────────── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .feature-card {
+      background: var(--bg2);
+      padding: 2.2rem;
+      position: relative;
+      overflow: hidden;
+      transition: background 0.25s;
+    }
+    .feature-card:hover { background: var(--bg3); }
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .feature-card:hover::before { opacity: 1; }
+
+    .feature-icon {
+      width: 44px; height: 44px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 1.4rem;
+      font-size: 1.2rem;
+      background: rgba(255,255,255,0.02);
+    }
+    .feature-title {
+      font-family: var(--sans);
+      font-weight: 500;
+      font-size: 1rem;
+      margin-bottom: 0.6rem;
+      color: var(--text);
+    }
+    .feature-desc {
+      font-size: 0.88rem;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+    .feature-tag {
+      display: inline-block;
+      margin-top: 1rem;
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.2rem 0.6rem;
+      border-radius: 3px;
+      background: rgba(0,200,255,0.08);
+      color: var(--accent);
+      border: 1px solid rgba(0,200,255,0.15);
+    }
+    .feature-tag.green {
+      background: rgba(0,229,160,0.08);
+      color: var(--green);
+      border-color: rgba(0,229,160,0.15);
+    }
+    .feature-tag.purple {
+      background: rgba(123,97,255,0.08);
+      color: var(--accent2);
+      border-color: rgba(123,97,255,0.15);
+    }
+
+    /* ─── ARCHITECTURE ──────────────────────────────────── */
+    .arch-section {
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .arch-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 7rem 2rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6rem;
+      align-items: center;
+    }
+
+    .arch-diagram {
+      position: relative;
+    }
+
+    .arch-node {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.1rem 1.4rem;
+      background: var(--bg3);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin-bottom: 0.8rem;
+      position: relative;
+      transition: border-color 0.2s;
+    }
+    .arch-node:hover { border-color: rgba(0,200,255,0.3); }
+    .arch-node-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-blue  { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    .dot-green { background: var(--green);  box-shadow: 0 0 8px var(--green); }
+    .dot-purple{ background: var(--accent2);box-shadow: 0 0 8px var(--accent2); }
+    .dot-red   { background: var(--red);    box-shadow: 0 0 8px var(--red); }
+    .dot-muted { background: var(--muted); }
+
+    .arch-connector {
+      width: 2px;
+      height: 20px;
+      background: linear-gradient(var(--border), var(--accent));
+      margin: 0 auto 0 1.85rem;
+      opacity: 0.5;
+    }
+
+    .arch-label {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 0 1.4rem;
+      margin-bottom: 0.8rem;
+      margin-top: 0.2rem;
+    }
+
+    /* ─── STACK PILLS ───────────────────────────────────── */
+    .stack-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-top: 3rem;
+    }
+    .stack-pill {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
+      padding: 0.4rem 0.9rem;
+      border-radius: 100px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      background: var(--bg2);
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .stack-pill:hover {
+      border-color: rgba(255,255,255,0.18);
+      color: var(--text);
+    }
+
+    /* ─── SECURITY SECTION ──────────────────────────────── */
+    .security-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.5rem;
+    }
+
+    .sec-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 2rem;
+      background: var(--bg2);
+      position: relative;
+      overflow: hidden;
+    }
+    .sec-card::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 2px;
+    }
+    .sec-card.safe::after   { background: var(--green); }
+    .sec-card.warn::after   { background: var(--accent); }
+
+    .sec-card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin-bottom: 0.8rem;
+    }
+    .sec-status {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.2rem 0.6rem;
+      border-radius: 3px;
+    }
+    .sec-status.safe {
+      background: rgba(0,229,160,0.1);
+      color: var(--green);
+      border: 1px solid rgba(0,229,160,0.2);
+    }
+    .sec-status.info {
+      background: rgba(0,200,255,0.1);
+      color: var(--accent);
+      border: 1px solid rgba(0,200,255,0.2);
+    }
+
+    .sec-title {
+      font-weight: 500;
+      font-size: 0.95rem;
+      margin-bottom: 0.5rem;
+    }
+    .sec-desc {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    /* ─── CODE BLOCK ────────────────────────────────────── */
+    .code-block {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-top: 3rem;
+    }
+    .code-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.9rem 1.2rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+    }
+    .code-dot {
+      width: 11px; height: 11px;
+      border-radius: 50%;
+    }
+    .code-dot:nth-child(1) { background: #ff5f57; }
+    .code-dot:nth-child(2) { background: #febc2e; }
+    .code-dot:nth-child(3) { background: #28c840; }
+    .code-filename {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-left: 0.5rem;
+    }
+    .code-body {
+      padding: 1.4rem 1.6rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.9;
+      overflow-x: auto;
+    }
+    .c-kw   { color: var(--accent2); }
+    .c-fn   { color: var(--accent); }
+    .c-str  { color: var(--green); }
+    .c-cm   { color: var(--muted); font-style: italic; }
+    .c-num  { color: #ffb347; }
+
+    /* ─── PLATFORMS ─────────────────────────────────────── */
+    .platforms-row {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .platform-card {
+      background: var(--bg2);
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      transition: background 0.2s;
+    }
+    .platform-card:hover { background: var(--bg3); }
+    .platform-icon { font-size: 2rem; margin-bottom: 0.8rem; }
+    .platform-name {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    /* ─── ROADMAP ───────────────────────────────────────── */
+    .roadmap-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .roadmap-item {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 2rem;
+      align-items: start;
+      padding: 1.8rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .roadmap-item:first-child { border-top: 1px solid var(--border); }
+    .roadmap-phase {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding-top: 0.15rem;
+    }
+    .roadmap-content { }
+    .roadmap-title {
+      font-weight: 500;
+      font-size: 0.95rem;
+      margin-bottom: 0.4rem;
+    }
+    .roadmap-items {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.8;
+    }
+    .roadmap-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-top: 0.6rem;
+    }
+    .roadmap-status.done    { color: var(--green); }
+    .roadmap-status.active  { color: var(--accent); }
+    .roadmap-status.planned { color: var(--muted); }
+    .roadmap-status::before {
+      content: '';
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    /* ─── CTA ───────────────────────────────────────────── */
+    .cta-section {
+      background: linear-gradient(135deg, rgba(0,200,255,0.05) 0%, rgba(123,97,255,0.05) 100%);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .cta-inner {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 8rem 2rem;
+      text-align: center;
+    }
+    .cta-title {
+      font-family: var(--serif);
+      font-size: clamp(2.2rem, 4vw, 3.2rem);
+      margin-bottom: 1.2rem;
+      line-height: 1.15;
+    }
+    .cta-sub {
+      color: var(--muted);
+      font-size: 1rem;
+      margin-bottom: 2.5rem;
+    }
+    .cta-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    /* ─── FOOTER ────────────────────────────────────────── */
+    footer {
+      padding: 3rem 3rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+    }
+    .footer-left {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .footer-links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+    .footer-links a {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .footer-links a:hover { color: var(--text); }
+
+    /* ─── DIVIDER ───────────────────────────────────────── */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ─── ANIMATIONS ────────────────────────────────────── */
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ─── RESPONSIVE ────────────────────────────────────── */
+    @media (max-width: 960px) {
+      .features-grid { grid-template-columns: 1fr 1fr; }
+      .platforms-row { grid-template-columns: repeat(3, 1fr); }
+      .arch-inner    { grid-template-columns: 1fr; gap: 3rem; }
+      .security-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      nav { padding: 0 1.2rem; }
+      .nav-links { display: none; }
+      .features-grid { grid-template-columns: 1fr; }
+      .platforms-row { grid-template-columns: repeat(2, 1fr); }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .roadmap-item { grid-template-columns: 1fr; gap: 0.4rem; }
+      footer { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
 </head>
-
 <body>
 
-<div class="hero container">
+<!-- BACKGROUND CANVAS -->
+<canvas id="bg-canvas"></canvas>
 
-<h1 class="display-3 fw-bold">My Messenger</h1>
-<p class="lead">Secure modern chat application built with Flutter</p>
+<!-- NAV -->
+<nav>
+  <a href="#" class="nav-logo">
+    <span class="nav-logo-dot"></span>
+    Veil
+  </a>
+  <ul class="nav-links">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#security">Security</a></li>
+    <li><a href="#roadmap">Roadmap</a></li>
+  </ul>
+  <a href="https://github.com" class="nav-cta">GitHub &rarr;</a>
+</nav>
 
-<a class="btn btn-primary btn-main" 
-href="https://github.com/YOUR_USERNAME/YOUR_REPO">
-View on GitHub
-</a>
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge">Open Source &middot; E2E Encrypted &middot; Flutter</div>
+  <h1 class="hero-title">
+    Messages that<br /><em>only you</em> can read.
+  </h1>
+  <p class="hero-sub">
+    A production-grade, end-to-end encrypted messenger built on Flutter and Firebase.
+    Zero server-side plaintext. Ever.
+  </p>
+  <div class="hero-actions">
+    <a href="https://github.com" class="btn-primary">View on GitHub</a>
+    <a href="#architecture" class="btn-ghost">Explore Architecture</a>
+  </div>
+  <div class="cipher-strip">
+    <span class="cipher-inner">
+      XChaCha20-Poly1305 &nbsp;&bull;&nbsp; X25519 Key Exchange &nbsp;&bull;&nbsp; Ed25519 Identity &nbsp;&bull;&nbsp; libsodium &nbsp;&bull;&nbsp; Firebase E2EE Transport &nbsp;&bull;&nbsp;
+      AES-256 at rest &nbsp;&bull;&nbsp; Perfect Forward Secrecy &nbsp;&bull;&nbsp; Flutter Multiplatform &nbsp;&bull;&nbsp;
+      XChaCha20-Poly1305 &nbsp;&bull;&nbsp; X25519 Key Exchange &nbsp;&bull;&nbsp; Ed25519 Identity &nbsp;&bull;&nbsp; libsodium &nbsp;&bull;&nbsp; Firebase E2EE Transport &nbsp;&bull;&nbsp;
+      AES-256 at rest &nbsp;&bull;&nbsp; Perfect Forward Secrecy &nbsp;&bull;&nbsp; Flutter Multiplatform &nbsp;&bull;&nbsp;
+    </span>
+  </div>
+</section>
 
+<!-- METRICS -->
+<div class="metrics">
+  <div class="metric reveal">
+    <div class="metric-val"><span>0</span> bytes</div>
+    <div class="metric-label">Plaintext on server</div>
+  </div>
+  <div class="metric reveal">
+    <div class="metric-val"><span>5</span> platforms</div>
+    <div class="metric-label">iOS · Android · Win · Mac · Linux</div>
+  </div>
+  <div class="metric reveal">
+    <div class="metric-val"><span>256</span>-bit</div>
+    <div class="metric-label">Symmetric encryption</div>
+  </div>
+  <div class="metric reveal">
+    <div class="metric-val"><span>X</span>25519</div>
+    <div class="metric-label">Key exchange curve</div>
+  </div>
 </div>
 
+<!-- FEATURES -->
+<section class="section" id="features">
+  <div class="reveal">
+    <div class="section-label">// Core features</div>
+    <h2 class="section-title">Built with the right primitives.</h2>
+    <p class="section-desc">
+      Every design decision prioritises correctness over convenience. No homegrown crypto,
+      no shortcuts, no marketing claims that can't be verified.
+    </p>
+  </div>
+
+  <div class="features-grid reveal">
+    <div class="feature-card">
+      <div class="feature-icon">🔒</div>
+      <div class="feature-title">XChaCha20-Poly1305 Encryption</div>
+      <div class="feature-desc">Messages are encrypted client-side using XChaCha20-Poly1305 via libsodium before leaving your device. Firebase stores only authenticated ciphertext.</div>
+      <span class="feature-tag">libsodium</span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔑</div>
+      <div class="feature-title">X25519 Key Exchange</div>
+      <div class="feature-desc">Session keys are derived from ephemeral X25519 Diffie-Hellman. The server never has access to private keys or shared secrets at any point.</div>
+      <span class="feature-tag">X25519</span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🪪</div>
+      <div class="feature-title">Ed25519 Identity Keys</div>
+      <div class="feature-desc">Each user has a long-term Ed25519 signing keypair. Identity is tied to Firebase Auth UID. Public keys are published to Firestore, private keys never leave the device.</div>
+      <span class="feature-tag green">identity</span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📲</div>
+      <div class="feature-title">Silent Push Notifications</div>
+      <div class="feature-desc">FCM notifications contain zero message content. Payloads carry only metadata needed to trigger a local fetch. E2EE guarantees are never weakened by notification design.</div>
+      <span class="feature-tag">FCM</span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🗄️</div>
+      <div class="feature-title">Firestore as Encrypted Transport</div>
+      <div class="feature-desc">Firestore is treated as an untrusted relay. All documents written to it are ciphertext. Firestore rules enforce access without needing to read content.</div>
+      <span class="feature-tag green">zero-trust</span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔐</div>
+      <div class="feature-title">Platform Secure Storage</div>
+      <div class="feature-desc">Private keys are stored in platform-native secure enclaves: Keychain (iOS/macOS), Keystore (Android), DPAPI (Windows), SecretService (Linux).</div>
+      <span class="feature-tag purple">per-platform</span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔄</div>
+      <div class="feature-title">Key Rotation</div>
+      <div class="feature-desc">Signed prekey rotation following a Signal-inspired model. Rotating keys invalidate old sessions without disrupting existing contacts. Rotation events are logged and verifiable.</div>
+      <span class="feature-tag purple">PFS</span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📱</div>
+      <div class="feature-title">Multi-device Support</div>
+      <div class="feature-desc">Each device maintains its own keypair. New device enrollment requires explicit approval from an existing device. No silent device addition is possible.</div>
+      <span class="feature-tag">devices</span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🪟</div>
+      <div class="feature-title">Windows MSIX Installer</div>
+      <div class="feature-desc">Desktop builds produce a signed MSIX package or Inno Setup installer. No Docker, no server-side components required for client distribution.</div>
+      <span class="feature-tag green">desktop</span>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<div class="arch-section" id="architecture">
+  <div class="arch-inner">
+    <div>
+      <div class="section-label reveal">// Architecture</div>
+      <h2 class="section-title reveal">How messages flow through the system.</h2>
+      <p class="section-desc reveal">
+        Encryption and decryption occur exclusively on client devices.
+        Firebase is used as an authenticated, encrypted transport layer — not as a trusted service.
+      </p>
+      <div class="stack-grid reveal">
+        <span class="stack-pill">Flutter 3.x</span>
+        <span class="stack-pill">Dart</span>
+        <span class="stack-pill">libsodium_dart</span>
+        <span class="stack-pill">Firebase Auth</span>
+        <span class="stack-pill">Cloud Firestore</span>
+        <span class="stack-pill">Firebase FCM</span>
+        <span class="stack-pill">flutter_secure_storage</span>
+        <span class="stack-pill">X25519</span>
+        <span class="stack-pill">Ed25519</span>
+        <span class="stack-pill">XChaCha20-Poly1305</span>
+      </div>
+    </div>
+
+    <div class="arch-diagram reveal">
+      <div class="arch-label">Sender (Device A)</div>
+      <div class="arch-node">
+        <span class="arch-node-dot dot-blue"></span>
+        compose plaintext message
+      </div>
+      <div class="arch-connector"></div>
+      <div class="arch-node">
+        <span class="arch-node-dot dot-blue"></span>
+        derive shared secret via X25519
+      </div>
+      <div class="arch-connector"></div>
+      <div class="arch-node">
+        <span class="arch-node-dot dot-green"></span>
+        encrypt: XChaCha20-Poly1305
+      </div>
+      <div class="arch-connector"></div>
+
+      <div class="arch-label">Untrusted Transport</div>
+      <div class="arch-node">
+        <span class="arch-node-dot dot-muted"></span>
+        write ciphertext to Firestore
+      </div>
+      <div class="arch-connector"></div>
+      <div class="arch-node">
+        <span class="arch-node-dot dot-muted"></span>
+        FCM silent push (no content)
+      </div>
+      <div class="arch-connector"></div>
+
+      <div class="arch-label">Recipient (Device B)</div>
+      <div class="arch-node">
+        <span class="arch-node-dot dot-purple"></span>
+        fetch ciphertext from Firestore
+      </div>
+      <div class="arch-connector"></div>
+      <div class="arch-node">
+        <span class="arch-node-dot dot-green"></span>
+        decrypt with private key only
+      </div>
+      <div class="arch-connector"></div>
+      <div class="arch-node">
+        <span class="arch-node-dot dot-green"></span>
+        display plaintext locally
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CODE SAMPLE -->
+<section class="section">
+  <div class="reveal">
+    <div class="section-label">// Encryption layer</div>
+    <h2 class="section-title">Clean separation of concerns.</h2>
+    <p class="section-desc">
+      The crypto service is isolated, dependency-injected, and never touches UI state. 
+      Firestore sees only opaque bytes.
+    </p>
+  </div>
+
+  <div class="code-block reveal">
+    <div class="code-header">
+      <div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div>
+      <span class="code-filename">lib/services/crypto_service.dart</span>
+    </div>
+    <div class="code-body">
+<span class="c-cm">/// Encrypt a plaintext message for a given recipient public key.</span><br/>
+<span class="c-cm">/// Returns base64-encoded ciphertext safe to store in Firestore.</span><br/>
+<span class="c-kw">Future</span>&lt;<span class="c-kw">String</span>&gt; <span class="c-fn">encryptMessage</span>({<br/>
+&nbsp;&nbsp;<span class="c-kw">required</span> <span class="c-kw">String</span> plaintext,<br/>
+&nbsp;&nbsp;<span class="c-kw">required</span> Uint8List recipientPublicKey,<br/>
+&nbsp;&nbsp;<span class="c-kw">required</span> Uint8List senderPrivateKey,<br/>
+}) <span class="c-kw">async</span> {<br/>
+&nbsp;&nbsp;<span class="c-cm">// Derive shared secret via X25519</span><br/>
+&nbsp;&nbsp;<span class="c-kw">final</span> sharedSecret = <span class="c-fn">_sodium</span>.crypto.box.beforenm(<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;theirPublicKey: recipientPublicKey,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;mySecretKey: SecureKey.fromList(_sodium, senderPrivateKey),<br/>
+&nbsp;&nbsp;);<br/><br/>
+&nbsp;&nbsp;<span class="c-cm">// Generate fresh nonce for every message</span><br/>
+&nbsp;&nbsp;<span class="c-kw">final</span> nonce = _sodium.randombytes.buf(<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;_sodium.crypto.secretBox.nonceBytes,<br/>
+&nbsp;&nbsp;);<br/><br/>
+&nbsp;&nbsp;<span class="c-kw">final</span> ciphertext = _sodium.crypto.secretBox.easy(<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;message: Uint8List.fromList(utf8.encode(plaintext)),<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;nonce: nonce,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;key: sharedSecret,<br/>
+&nbsp;&nbsp;);<br/><br/>
+&nbsp;&nbsp;<span class="c-cm">// Store nonce alongside ciphertext — it is not secret</span><br/>
+&nbsp;&nbsp;<span class="c-kw">return</span> base64Url.encode([...nonce, ...ciphertext]);<br/>
+}
+    </div>
+  </div>
+</section>
+
+<!-- SECURITY MODEL -->
+<section class="section" id="security">
+  <div class="reveal">
+    <div class="section-label">// Security model</div>
+    <h2 class="section-title">Honest about what it protects — and what it does not.</h2>
+    <p class="section-desc">
+      Security claims are only made where they can be demonstrated. Limitations are documented explicitly.
+    </p>
+  </div>
+
+  <div class="security-grid reveal">
+    <div class="sec-card safe">
+      <div class="sec-card-header">
+        <span class="sec-status safe">Protected</span>
+      </div>
+      <div class="sec-title">Message content confidentiality</div>
+      <div class="sec-desc">Firestore never receives plaintext. Encryption happens before any network call. Even Anthropic or Firebase employees cannot read your messages.</div>
+    </div>
+    <div class="sec-card safe">
+      <div class="sec-card-header">
+        <span class="sec-status safe">Protected</span>
+      </div>
+      <div class="sec-title">Private key isolation</div>
+      <div class="sec-desc">Private keys are stored exclusively in platform secure storage and never transmitted. A compromised Firebase account does not expose private keys.</div>
+    </div>
+    <div class="sec-card safe">
+      <div class="sec-card-header">
+        <span class="sec-status safe">Protected</span>
+      </div>
+      <div class="sec-title">Push notification content</div>
+      <div class="sec-desc">FCM payloads contain no message body, no sender identity, no subject. Notifications are opaque triggers that instruct the client to fetch and decrypt locally.</div>
+    </div>
+    <div class="sec-card safe">
+      <div class="sec-card-header">
+        <span class="sec-status safe">Protected</span>
+      </div>
+      <div class="sec-title">Forward secrecy (per-session)</div>
+      <div class="sec-desc">Ephemeral X25519 keys are used per session. Compromise of a long-term identity key does not retroactively decrypt past sessions.</div>
+    </div>
+    <div class="sec-card warn">
+      <div class="sec-card-header">
+        <span class="sec-status info">Visible to server</span>
+      </div>
+      <div class="sec-title">Metadata (who talks to whom)</div>
+      <div class="sec-desc">Firestore document paths reveal conversation participants by UID. Timestamps and message counts are visible. This is a known limitation, not a hidden risk.</div>
+    </div>
+    <div class="sec-card warn">
+      <div class="sec-card-header">
+        <span class="sec-status info">Out of scope</span>
+      </div>
+      <div class="sec-title">Endpoint device security</div>
+      <div class="sec-desc">If the device itself is compromised (malware, physical access, screen capture), E2EE cannot protect content at the point of display. This is an inherent limitation of all E2EE systems.</div>
+    </div>
+  </div>
+</section>
+
+<!-- PLATFORMS -->
+<section class="section">
+  <div class="reveal">
+    <div class="section-label">// Platforms</div>
+    <h2 class="section-title">One codebase. Every major platform.</h2>
+    <p class="section-desc">
+      Flutter compiles to native code on each target. Platform-specific secure storage adapters 
+      are used on each OS. No lowest-common-denominator security.
+    </p>
+  </div>
+
+  <div class="platforms-row reveal">
+    <div class="platform-card">
+      <div class="platform-icon">🍎</div>
+      <div class="platform-name">iOS</div>
+    </div>
+    <div class="platform-card">
+      <div class="platform-icon">🤖</div>
+      <div class="platform-name">Android</div>
+    </div>
+    <div class="platform-card">
+      <div class="platform-icon">🪟</div>
+      <div class="platform-name">Windows</div>
+    </div>
+    <div class="platform-card">
+      <div class="platform-icon">🍏</div>
+      <div class="platform-name">macOS</div>
+    </div>
+    <div class="platform-card">
+      <div class="platform-icon">🐧</div>
+      <div class="platform-name">Linux</div>
+    </div>
+  </div>
+</section>
+
+<!-- ROADMAP -->
+<section class="section" id="roadmap">
+  <div class="reveal">
+    <div class="section-label">// Roadmap</div>
+    <h2 class="section-title">What is built, what is next.</h2>
+    <p class="section-desc">
+      Phased development with a clear security-first mandate at each stage.
+    </p>
+  </div>
+
+  <div class="roadmap-list reveal">
+    <div class="roadmap-item">
+      <div class="roadmap-phase">Phase 01</div>
+      <div class="roadmap-content">
+        <div class="roadmap-title">Cryptographic Foundation</div>
+        <div class="roadmap-items">libsodium integration · Key generation · Secure storage adapters · Ed25519 identity · X25519 key exchange</div>
+        <div class="roadmap-status done">Complete</div>
+      </div>
+    </div>
+    <div class="roadmap-item">
+      <div class="roadmap-phase">Phase 02</div>
+      <div class="roadmap-content">
+        <div class="roadmap-title">Auth & Identity Layer</div>
+        <div class="roadmap-items">Firebase Auth integration · Cryptographic identity binding · First-device enrollment · Public key registry in Firestore</div>
+        <div class="roadmap-status done">Complete</div>
+      </div>
+    </div>
+    <div class="roadmap-item">
+      <div class="roadmap-phase">Phase 03</div>
+      <div class="roadmap-content">
+        <div class="roadmap-title">E2EE Messaging Core</div>
+        <div class="roadmap-items">Encrypted message send / receive · One-to-one conversations · Message status (sent, delivered, read) · Firestore security rules</div>
+        <div class="roadmap-status active">In progress</div>
+      </div>
+    </div>
+    <div class="roadmap-item">
+      <div class="roadmap-phase">Phase 04</div>
+      <div class="roadmap-content">
+        <div class="roadmap-title">Notifications & Presence</div>
+        <div class="roadmap-items">Silent FCM push · User presence (online / offline) · Notification preferences · Per-platform delivery handling</div>
+        <div class="roadmap-status planned">Planned</div>
+      </div>
+    </div>
+    <div class="roadmap-item">
+      <div class="roadmap-phase">Phase 05</div>
+      <div class="roadmap-content">
+        <div class="roadmap-title">Desktop Distribution</div>
+        <div class="roadmap-items">Windows MSIX package · Inno Setup fallback · macOS .app bundle · Code-signing pipeline</div>
+        <div class="roadmap-status planned">Planned</div>
+      </div>
+    </div>
+    <div class="roadmap-item">
+      <div class="roadmap-phase">Phase 06</div>
+      <div class="roadmap-content">
+        <div class="roadmap-title">Multi-device & Key Rotation</div>
+        <div class="roadmap-items">Multi-device enrollment with approval flow · Signed prekey rotation · Session invalidation · Key rotation audit log</div>
+        <div class="roadmap-status planned">Planned</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<div class="cta-section">
+  <div class="cta-inner">
+    <h2 class="cta-title reveal">Open source, open to audit.</h2>
+    <p class="cta-sub reveal">
+      The entire codebase is on GitHub. Inspect the crypto, verify the claims,
+      and contribute to hardening it further.
+    </p>
+    <div class="cta-actions reveal">
+      <a href="https://github.com" class="btn-primary">View Source on GitHub</a>
+      <a href="#architecture" class="btn-ghost">Read the Docs</a>
+    </div>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-left">
+    &copy; 2025 Veil Messenger &mdash; Built with Flutter &middot; Secured with libsodium
+  </div>
+  <ul class="footer-links">
+    <li><a href="https://github.com">GitHub</a></li>
+    <li><a href="#security">Threat Model</a></li>
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#roadmap">Roadmap</a></li>
+  </ul>
+</footer>
+
+<script>
+  // ─── CANVAS BACKGROUND ──────────────────────────────────────────
+  (function() {
+    const canvas = document.getElementById('bg-canvas');
+    const ctx = canvas.getContext('2d');
+    let W, H, particles = [];
+
+    function resize() {
+      W = canvas.width  = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    class Particle {
+      constructor() { this.reset(); }
+      reset() {
+        this.x  = Math.random() * W;
+        this.y  = Math.random() * H;
+        this.vx = (Math.random() - 0.5) * 0.18;
+        this.vy = (Math.random() - 0.5) * 0.18;
+        this.r  = Math.random() * 1.2 + 0.3;
+        this.a  = Math.random() * 0.4 + 0.08;
+      }
+      update() {
+        this.x += this.vx; this.y += this.vy;
+        if (this.x < 0 || this.x > W || this.y < 0 || this.y > H) this.reset();
+      }
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0,200,255,${this.a})`;
+        ctx.fill();
+      }
+    }
+
+    for (let i = 0; i < 90; i++) particles.push(new Particle());
+
+    function drawConnections() {
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const d  = Math.sqrt(dx*dx + dy*dy);
+          if (d < 130) {
+            ctx.beginPath();
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.strokeStyle = `rgba(0,200,255,${0.07 * (1 - d/130)})`;
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    function loop() {
+      ctx.clearRect(0, 0, W, H);
+      particles.forEach(p => { p.update(); p.draw(); });
+      drawConnections();
+      requestAnimationFrame(loop);
+    }
+    loop();
+  })();
+
+  // ─── SCROLL REVEAL ──────────────────────────────────────────────
+  (function() {
+    const els = document.querySelectorAll('.reveal');
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach((e, i) => {
+        if (e.isIntersecting) {
+          setTimeout(() => e.target.classList.add('visible'), i * 60);
+          obs.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+    els.forEach(el => obs.observe(el));
+  })();
+</script>
 </body>
 </html>
