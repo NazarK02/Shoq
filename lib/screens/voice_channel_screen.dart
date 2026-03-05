@@ -227,6 +227,45 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
     });
   }
 
+  void _startConnectionHealthChecks() {
+    _connectionHealthTimer?.cancel();
+    _connectionHealthTimer = Timer.periodic(const Duration(seconds: 6), (_) {
+      unawaited(_runConnectionHealthCheck());
+    });
+  }
+
+  bool _isPeerConnected(String userId) {
+    final pc = _peerConnections[userId];
+    if (pc == null) return false;
+    return pc.connectionState ==
+        RTCPeerConnectionState.RTCPeerConnectionStateConnected;
+  }
+
+  Future<void> _runConnectionHealthCheck() async {
+    if (_isLeaving) return;
+    if (_members.isEmpty) return;
+
+    for (final member in _members.values) {
+      if (member.userId == _selfUid) continue;
+      final clientId = member.clientId.trim();
+      if (clientId.isEmpty || clientId == _signaling.clientId) continue;
+
+      final currentClientId = _peerClientIds[member.userId];
+      if (currentClientId != null && currentClientId != clientId) {
+        await _closePeerConnection(member.userId);
+      }
+
+      _peerClientIds[member.userId] = clientId;
+      if (!_peerConnections.containsKey(member.userId)) {
+        await _createPeerConnection(member);
+      }
+
+      if (_shouldInitiateFor(member) && !_isPeerConnected(member.userId)) {
+        await _sendVoiceOffer(member.userId);
+      }
+    }
+  }
+
   Future<void> _updatePresenceHeartbeat() async {
     final uid = _selfUid;
     if (!_joinedPresence || uid == null || uid.isEmpty) return;
@@ -432,6 +471,8 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
       if (uid == null || uid.isEmpty) return;
       final to = message['to']?.toString().trim() ?? '';
       if (to.isNotEmpty && to != uid) return;
+      final toClientId = message['toClientId']?.toString().trim() ?? '';
+      if (toClientId.isNotEmpty && toClientId != _signaling.clientId) return;
 
       final fromUserId = message['from']?.toString().trim() ?? '';
       if (fromUserId.isEmpty || fromUserId == uid) return;
@@ -624,7 +665,7 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
 
   Future<void> _toggleSpeaker() async {
     _speakerOn = !_speakerOn;
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS) {
       await Helper.setSpeakerphoneOn(_speakerOn);
     }
     if (mounted) setState(() {});
@@ -651,6 +692,8 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
 
     _presenceHeartbeat?.cancel();
     _presenceHeartbeat = null;
+    _connectionHealthTimer?.cancel();
+    _connectionHealthTimer = null;
     await _signalSub?.cancel();
     await _presenceSub?.cancel();
     _signalSub = null;
@@ -817,10 +860,241 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
     );
   }
 
+  Future<void> _sendVoiceTextMessage() async {
+    final user = _auth.currentUser;
+    if (user == null || _isSendingVoiceText) return;
+    final text = _voiceChatController.text.trim();
+    if (text.isEmpty) return;
+
+    setState(() {
+      _isSendingVoiceText = true;
+    });
+    _voiceChatController.clear();
+
+    try {
+      await _voiceMessagesRef.add({
+        'senderId': user.uid,
+        'senderName': user.displayName?.trim().isNotEmpty == true
+            ? user.displayName!.trim()
+            : 'User',
+        'senderPhotoUrl': user.photoURL ?? '',
+        'text': text,
+        'timestamp': FieldValue.serverTimestamp(),
+        'clientTimestamp': Timestamp.now(),
+      });
+    } catch (e) {
+      if (!mounted) return;
+      _voiceChatController.text = text;
+      _voiceChatController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _voiceChatController.text.length),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send voice chat message: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSendingVoiceText = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildMembersPanel() {
+    if (_members.isEmpty) {
+      return const Center(child: Text('No one is connected yet.'));
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      children: _sortedMembers().map(_buildParticipantTile).toList(),
+    );
+  }
+
+  Widget _buildVoiceTextPanel() {
+    final themeService = context.watch<ThemeService>();
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Column(
+      children: [
+        Expanded(
+          child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: _voiceMessagesRef
+                .orderBy('clientTimestamp', descending: true)
+                .limit(150)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return Center(
+                  child: Text(
+                    'Could not load channel chat',
+                    style: TextStyle(color: colorScheme.error),
+                  ),
+                );
+              }
+              final docs = snapshot.data?.docs ?? const [];
+              if (docs.isEmpty) {
+                return Center(
+                  child: Text(
+                    'Voice channel chat is empty',
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                );
+              }
+
+              return ListView.builder(
+                reverse: true,
+                padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final data = docs[index].data();
+                  final message = _VoiceChannelTextMessage.fromMap(data);
+                  return _buildVoiceTextMessageTile(
+                    message: message,
+                    showPreviews: themeService.showLinkPreviews,
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerLow,
+            border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _voiceChatController,
+                  minLines: 1,
+                  maxLines: 4,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => unawaited(_sendVoiceTextMessage()),
+                  decoration: InputDecoration(
+                    hintText: 'Message this voice channel',
+                    filled: true,
+                    fillColor: colorScheme.surfaceContainerHigh,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                onPressed: _isSendingVoiceText
+                    ? null
+                    : () => unawaited(_sendVoiceTextMessage()),
+                icon: _isSendingVoiceText
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.send),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVoiceTextMessageTile({
+    required _VoiceChannelTextMessage message,
+    required bool showPreviews,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isMe = message.senderId == _selfUid;
+    final textColor = isMe ? colorScheme.onPrimary : colorScheme.onSurface;
+    final bubbleColor = isMe
+        ? colorScheme.primary
+        : colorScheme.surfaceContainerHighest;
+
+    final time = message.timestamp == null
+        ? ''
+        : TimeOfDay.fromDateTime(message.timestamp!).format(context);
+
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
+        ),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+          decoration: BoxDecoration(
+            color: bubbleColor,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!isMe)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 3),
+                  child: Text(
+                    message.senderName,
+                    style: TextStyle(
+                      color: textColor.withValues(alpha: 0.8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ChatMessageText(
+                text: message.text,
+                style: TextStyle(color: textColor, fontSize: 14),
+                linkStyle: TextStyle(
+                  color: isMe
+                      ? colorScheme.onPrimary.withValues(alpha: 0.95)
+                      : colorScheme.primary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
+                ),
+                showPreviews: showPreviews,
+                maxPreviewCards: 1,
+                previewBackgroundColor: isMe
+                    ? colorScheme.onPrimary.withValues(alpha: 0.14)
+                    : colorScheme.surfaceContainerHigh,
+                previewBorderColor: isMe
+                    ? colorScheme.onPrimary.withValues(alpha: 0.24)
+                    : colorScheme.outlineVariant.withValues(alpha: 0.44),
+                previewTitleColor: textColor,
+                previewMetaColor: textColor.withValues(alpha: 0.76),
+              ),
+              if (time.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    time,
+                    style: TextStyle(
+                      color: textColor.withValues(alpha: 0.72),
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     unawaited(_leaveVoiceChannel());
     ActiveSessionService().clearSession(sessionId: _sessionId);
+    _voiceChatController.dispose();
     super.dispose();
   }
 
@@ -875,14 +1149,31 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
                   ),
                 ),
                 Expanded(
-                  child: _members.isEmpty
-                      ? const Center(child: Text('No one is connected yet.'))
-                      : ListView(
-                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                          children: _sortedMembers()
-                              .map(_buildParticipantTile)
-                              .toList(),
+                  child: DefaultTabController(
+                    length: 2,
+                    child: Column(
+                      children: [
+                        Material(
+                          color: Theme.of(context).colorScheme.surface,
+                          child: TabBar(
+                            tabs: const [
+                              Tab(text: 'People', icon: Icon(Icons.groups)),
+                              Tab(text: 'Chat', icon: Icon(Icons.chat_bubble)),
+                            ],
+                          ),
                         ),
+                        const Divider(height: 1),
+                        Expanded(
+                          child: TabBarView(
+                            children: [
+                              _buildMembersPanel(),
+                              _buildVoiceTextPanel(),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
                 SafeArea(
                   top: false,
@@ -918,7 +1209,7 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
                           activeColor: Colors.orange,
                           onPressed: () => unawaited(_toggleDeafen()),
                         ),
-                        if (Platform.isAndroid)
+                        if (Platform.isAndroid || Platform.isIOS)
                           _buildControlButton(
                             icon: _speakerOn
                                 ? Icons.volume_up
@@ -982,6 +1273,38 @@ class _VoiceMember {
       updatedAt: data['updatedAt'] is Timestamp
           ? data['updatedAt'] as Timestamp
           : null,
+    );
+  }
+}
+
+class _VoiceChannelTextMessage {
+  final String senderId;
+  final String senderName;
+  final String senderPhotoUrl;
+  final String text;
+  final DateTime? timestamp;
+
+  const _VoiceChannelTextMessage({
+    required this.senderId,
+    required this.senderName,
+    required this.senderPhotoUrl,
+    required this.text,
+    required this.timestamp,
+  });
+
+  factory _VoiceChannelTextMessage.fromMap(Map<String, dynamic> data) {
+    final timestamp = data['timestamp'] is Timestamp
+        ? (data['timestamp'] as Timestamp).toDate()
+        : (data['clientTimestamp'] is Timestamp
+              ? (data['clientTimestamp'] as Timestamp).toDate()
+              : null);
+    final senderNameRaw = data['senderName']?.toString().trim() ?? '';
+    return _VoiceChannelTextMessage(
+      senderId: data['senderId']?.toString().trim() ?? '',
+      senderName: senderNameRaw.isEmpty ? 'Member' : senderNameRaw,
+      senderPhotoUrl: data['senderPhotoUrl']?.toString().trim() ?? '',
+      text: data['text']?.toString() ?? '',
+      timestamp: timestamp,
     );
   }
 }

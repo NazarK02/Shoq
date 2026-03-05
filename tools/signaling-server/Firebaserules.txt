@@ -142,6 +142,19 @@ service cloud.firestore {
         allow read: if isConversationParticipant();
         allow create, update: if isConversationParticipant();
 
+        match /messages/{messageId} {
+          allow read: if isConversationParticipant();
+
+          allow create: if isConversationParticipant() &&
+            request.auth.uid == request.resource.data.senderId &&
+            request.resource.data.text is string &&
+            request.resource.data.text.size() > 0 &&
+            request.resource.data.text.size() <= 1500;
+
+          allow update, delete: if isConversationParticipant() &&
+            request.auth.uid == resource.data.senderId;
+        }
+
         allow delete: if false;
       }
 
