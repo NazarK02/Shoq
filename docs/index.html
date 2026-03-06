@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Veil — End-to-End Encrypted Messenger</title>
+  <title>Shoq — End-to-End Encrypted Messenger</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@300;400;500;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
@@ -281,6 +281,8 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: var(--muted);
+      line-height: 1.5;
+      word-break: break-word;
     }
 
     /* ─── SECTION WRAPPER ───────────────────────────────── */
@@ -753,11 +755,24 @@
     @media (max-width: 640px) {
       nav { padding: 0 1.2rem; }
       .nav-links { display: none; }
+      .nav-cta { font-size: 0.7rem; padding: 0.4rem 0.8rem; }
       .features-grid { grid-template-columns: 1fr; }
-      .platforms-row { grid-template-columns: repeat(2, 1fr); }
+      .platforms-row { grid-template-columns: repeat(3, 1fr); }
+      .platform-card { padding: 1.6rem 0.8rem; }
+      .platform-icon { font-size: 1.5rem; }
       .metrics { grid-template-columns: repeat(2, 1fr); }
+      .metric { padding: 1.6rem 1rem; }
+      .metric-val { font-size: 1.8rem; }
+      .metric-label { font-size: 0.6rem; letter-spacing: 0.04em; }
       .roadmap-item { grid-template-columns: 1fr; gap: 0.4rem; }
       footer { flex-direction: column; align-items: flex-start; }
+      .footer-links { flex-wrap: wrap; gap: 1rem; }
+      .section { padding: 4rem 1.2rem; }
+      .hero { padding: 6rem 1.2rem 3rem; }
+    }
+    @media (max-width: 380px) {
+      .metric-val { font-size: 1.5rem; }
+      .platforms-row { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
 </head>
@@ -770,7 +785,7 @@
 <nav>
   <a href="#" class="nav-logo">
     <span class="nav-logo-dot"></span>
-    Veil
+    Shoq
   </a>
   <ul class="nav-links">
     <li><a href="#features">Features</a></li>
@@ -788,7 +803,7 @@
     Messages that<br /><em>only you</em> can read.
   </h1>
   <p class="hero-sub">
-    A production-grade, end-to-end encrypted messenger built on Flutter and Firebase.
+    Shoq is a production-grade, end-to-end encrypted messenger built on Flutter and Firebase.
     Zero server-side plaintext. Ever.
   </p>
   <div class="hero-actions">
@@ -886,10 +901,10 @@
       <span class="feature-tag">devices</span>
     </div>
     <div class="feature-card">
-      <div class="feature-icon">🪟</div>
-      <div class="feature-title">Windows MSIX Installer</div>
-      <div class="feature-desc">Desktop builds produce a signed MSIX package or Inno Setup installer. No Docker, no server-side components required for client distribution.</div>
-      <span class="feature-tag green">desktop</span>
+      <div class="feature-icon">🎙️</div>
+      <div class="feature-title">Voice Channels (WebRTC)</div>
+      <div class="feature-desc">Real-time voice calls via WebRTC with peer connection health checks, mute state, and presence heartbeat. Signaling handled through Firestore without exposing audio content.</div>
+      <span class="feature-tag green">live</span>
     </div>
   </div>
 </section>
@@ -1118,7 +1133,7 @@
       <div class="roadmap-phase">Phase 01</div>
       <div class="roadmap-content">
         <div class="roadmap-title">Cryptographic Foundation</div>
-        <div class="roadmap-items">libsodium integration · Key generation · Secure storage adapters · Ed25519 identity · X25519 key exchange</div>
+        <div class="roadmap-items">libsodium integration · X25519 keypair generation · Secure storage adapters (Keychain, Keystore, DPAPI) · Public/private key material resolution · Per-device key sync to Firestore</div>
         <div class="roadmap-status done">Complete</div>
       </div>
     </div>
@@ -1126,7 +1141,7 @@
       <div class="roadmap-phase">Phase 02</div>
       <div class="roadmap-content">
         <div class="roadmap-title">Auth & Identity Layer</div>
-        <div class="roadmap-items">Firebase Auth integration · Cryptographic identity binding · First-device enrollment · Public key registry in Firestore</div>
+        <div class="roadmap-items">Firebase Auth (email + Google) · Cryptographic identity binding to UID · Public key registry in Firestore · E2EE migration helper for existing users · Device info service</div>
         <div class="roadmap-status done">Complete</div>
       </div>
     </div>
@@ -1134,31 +1149,39 @@
       <div class="roadmap-phase">Phase 03</div>
       <div class="roadmap-content">
         <div class="roadmap-title">E2EE Messaging Core</div>
-        <div class="roadmap-items">Encrypted message send / receive · One-to-one conversations · Message status (sent, delivered, read) · Firestore security rules</div>
-        <div class="roadmap-status active">In progress</div>
+        <div class="roadmap-items">Encrypted send / receive per device key · Per-device ciphertext map · Legacy key fallback · One-to-one chat screen · File & image transfer with download progress · Voice channel (WebRTC)</div>
+        <div class="roadmap-status done">Complete</div>
       </div>
     </div>
     <div class="roadmap-item">
       <div class="roadmap-phase">Phase 04</div>
       <div class="roadmap-content">
         <div class="roadmap-title">Notifications & Presence</div>
-        <div class="roadmap-items">Silent FCM push · User presence (online / offline) · Notification preferences · Per-platform delivery handling</div>
-        <div class="roadmap-status planned">Planned</div>
+        <div class="roadmap-items">FCM push (Android + iOS) · Local notifications (Windows) · User presence with heartbeat · Active session banner · Notification channels (messages, calls, friend requests) · User-controlled preferences</div>
+        <div class="roadmap-status done">Complete</div>
       </div>
     </div>
     <div class="roadmap-item">
       <div class="roadmap-phase">Phase 05</div>
       <div class="roadmap-content">
-        <div class="roadmap-title">Desktop Distribution</div>
-        <div class="roadmap-items">Windows MSIX package · Inno Setup fallback · macOS .app bundle · Code-signing pipeline</div>
-        <div class="roadmap-status planned">Planned</div>
+        <div class="roadmap-title">Contact Discovery</div>
+        <div class="roadmap-items">QR code–based contact system · qr_flutter integration · Scanner flow</div>
+        <div class="roadmap-status active">In progress</div>
       </div>
     </div>
     <div class="roadmap-item">
       <div class="roadmap-phase">Phase 06</div>
       <div class="roadmap-content">
-        <div class="roadmap-title">Multi-device & Key Rotation</div>
-        <div class="roadmap-items">Multi-device enrollment with approval flow · Signed prekey rotation · Session invalidation · Key rotation audit log</div>
+        <div class="roadmap-title">Key Rotation & Multi-device Hardening</div>
+        <div class="roadmap-items">Signed prekey rotation · Multi-device enrollment approval flow · Session invalidation on rotation · Key rotation audit log</div>
+        <div class="roadmap-status planned">Planned</div>
+      </div>
+    </div>
+    <div class="roadmap-item">
+      <div class="roadmap-phase">Phase 07</div>
+      <div class="roadmap-content">
+        <div class="roadmap-title">Desktop Distribution</div>
+        <div class="roadmap-items">Windows MSIX package · Inno Setup fallback · macOS .app bundle · Code-signing pipeline</div>
         <div class="roadmap-status planned">Planned</div>
       </div>
     </div>
@@ -1183,7 +1206,7 @@
 <!-- FOOTER -->
 <footer>
   <div class="footer-left">
-    &copy; 2025 Veil Messenger &mdash; Built with Flutter &middot; Secured with libsodium
+    &copy; 2025 Shoq Messenger &mdash; Built with Flutter &middot; Secured with libsodium
   </div>
   <ul class="footer-links">
     <li><a href="https://github.com">GitHub</a></li>
