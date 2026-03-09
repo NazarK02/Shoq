@@ -1,0 +1,343 @@
+{
+  "@@locale": "en",
+
+  "appTitle": "Shoq",
+  "@appTitle": { "description": "Application name" },
+
+  "appTagline": "Private by design.",
+  "@appTagline": { "description": "App tagline shown on landing / splash" },
+
+  "lightMode": "Light Mode",
+  "@lightMode": { "description": "Tooltip: switch to light theme" },
+
+  "darkMode": "Dark Mode",
+  "@darkMode": { "description": "Tooltip: switch to dark theme" },
+
+  "darkThemeEnabled": "Dark theme enabled",
+  "@darkThemeEnabled": {},
+
+  "lightThemeEnabled": "Light theme enabled",
+  "@lightThemeEnabled": {},
+
+  "uiSize": "UI Size",
+  "@uiSize": {},
+
+  "uiSizeSubtitle": "{percent}% · Bigger or smaller interface",
+  "@uiSizeSubtitle": {
+    "placeholders": { "percent": { "type": "int" } }
+  },
+
+  "reduceMotion": "Reduce motion",
+  "@reduceMotion": {},
+
+  "reduceMotionSubtitle": "Use less animation for smoother navigation",
+  "@reduceMotionSubtitle": {},
+
+  "linkPreviews": "Link previews",
+  "@linkPreviews": {},
+
+  "linkPreviewsSubtitle": "Show website and YouTube previews in messages",
+  "@linkPreviewsSubtitle": {},
+
+  "sectionGeneral": "General",
+  "@sectionGeneral": {},
+
+  "sectionPreferences": "Preferences",
+  "@sectionPreferences": {},
+
+  "sectionSupport": "Support",
+  "@sectionSupport": {},
+
+  "sectionChat": "Chat",
+  "@sectionChat": {},
+
+  "privacy": "Privacy",
+  "@privacy": {},
+
+  "privacySubtitle": "Control your privacy settings",
+  "@privacySubtitle": {},
+
+  "security": "Security",
+  "@security": {},
+
+  "securitySubtitle": "Password and authentication",
+  "@securitySubtitle": {},
+
+  "language": "Language",
+  "@language": {},
+
+  "languageEnglish": "English",
+  "@languageEnglish": {},
+
+  "languagePortuguese": "Português (Portugal)",
+  "@languagePortuguese": {},
+
+  "languageUkrainian": "Українська",
+  "@languageUkrainian": {},
+
+  "helpSupport": "Help & Support",
+  "@helpSupport": {},
+
+  "termsOfService": "Terms of Service",
+  "@termsOfService": {},
+
+  "privacyPolicy": "Privacy Policy",
+  "@privacyPolicy": {},
+
+  "comingSoon": "Coming soon",
+  "@comingSoon": {},
+
+  "languageComingSoon": "Language settings coming soon",
+  "@languageComingSoon": {},
+
+  "helpSupportComingSoon": "Help & Support coming soon",
+  "@helpSupportComingSoon": {},
+
+  "termsComingSoon": "Terms of Service coming soon",
+  "@termsComingSoon": {},
+
+  "privacySettingsComingSoon": "Privacy settings coming soon",
+  "@privacySettingsComingSoon": {},
+
+  "securitySettingsComingSoon": "Security settings coming soon",
+  "@securitySettingsComingSoon": {},
+
+  "signIn": "Sign In",
+  "@signIn": {},
+
+  "signUp": "Sign Up",
+  "@signUp": {},
+
+  "signOut": "Sign Out",
+  "@signOut": {},
+
+  "createAccount": "Create Account",
+  "@createAccount": {},
+
+  "signUpToGetStarted": "Sign up to get started",
+  "@signUpToGetStarted": {},
+
+  "email": "Email",
+  "@email": {},
+
+  "password": "Password",
+  "@password": {},
+
+  "confirmPassword": "Confirm Password",
+  "@confirmPassword": {},
+
+  "fullName": "Full Name",
+  "@fullName": {},
+
+  "forgotPassword": "Forgot password?",
+  "@forgotPassword": {},
+
+  "continueWithGoogle": "Continue with Google",
+  "@continueWithGoogle": {},
+
+  "orSeparator": "or",
+  "@orSeparator": {},
+
+  "acceptTerms": "I accept the Terms and Conditions",
+  "@acceptTerms": {},
+
+  "pleaseAcceptTerms": "Please accept the Terms and Conditions",
+  "@pleaseAcceptTerms": {},
+
+  "pleaseEnterName": "Please enter your name",
+  "@pleaseEnterName": {},
+
+  "pleaseEnterEmail": "Please enter your email",
+  "@pleaseEnterEmail": {},
+
+  "pleaseEnterPassword": "Please enter a password",
+  "@pleaseEnterPassword": {},
+
+  "passwordTooShort": "Password must be at least 6 characters",
+  "@passwordTooShort": {},
+
+  "passwordsDoNotMatch": "Passwords do not match",
+  "@passwordsDoNotMatch": {},
+
+  "pleaseConfirmPassword": "Please confirm your password",
+  "@pleaseConfirmPassword": {},
+
+  "verificationEmailSent": "Verification email sent! Check your inbox.",
+  "@verificationEmailSent": {},
+
+  "resendVerificationEmail": "Resend verification email",
+  "@resendVerificationEmail": {},
+
+  "emailNotVerifiedTitle": "Verify your email",
+  "@emailNotVerifiedTitle": {},
+
+  "emailNotVerifiedBody": "A verification link was sent to your email address. Please check your inbox and click the link to continue.",
+  "@emailNotVerifiedBody": {},
+
+  "authErrorDefault": "An error occurred",
+  "@authErrorDefault": {},
+
+  "authErrorWeakPassword": "The password is too weak",
+  "@authErrorWeakPassword": {},
+
+  "authErrorEmailInUse": "An account already exists for this email",
+  "@authErrorEmailInUse": {},
+
+  "authErrorInvalidEmail": "Invalid email address",
+  "@authErrorInvalidEmail": {},
+
+  "authErrorNotAllowed": "Email/password accounts are not enabled",
+  "@authErrorNotAllowed": {},
+
+  "authErrorNetwork": "Network error. Please check your connection.",
+  "@authErrorNetwork": {},
+
+  "authErrorWrongPassword": "Incorrect password",
+  "@authErrorWrongPassword": {},
+
+  "authErrorUserNotFound": "No account found for this email",
+  "@authErrorUserNotFound": {},
+
+  "authErrorTooManyRequests": "Too many attempts. Please try again later.",
+  "@authErrorTooManyRequests": {},
+
+  "googleSignInUnsupportedLinux": "Google Sign-In is not supported on Linux desktop. Use email/password.",
+  "@googleSignInUnsupportedLinux": {},
+
+  "googleSignInUnsupportedPlatform": "Google Sign-In is not supported on this platform.",
+  "@googleSignInUnsupportedPlatform": {},
+
+  "channels": "Channels",
+  "@channels": {},
+
+  "serverProfile": "Server Profile",
+  "@serverProfile": {},
+
+  "deleteChannel": "Delete Channel",
+  "@deleteChannel": {},
+
+  "deleteChannelConfirm": "Delete #{name}? Existing messages stay in history.",
+  "@deleteChannelConfirm": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+
+  "cancel": "Cancel",
+  "@cancel": {},
+
+  "delete": "Delete",
+  "@delete": {},
+
+  "channelAlreadyExists": "Channel already exists",
+  "@channelAlreadyExists": {},
+
+  "selectVoiceChannelFirst": "Select a voice channel first.",
+  "@selectVoiceChannelFirst": {},
+
+  "channelNoTextSupport": "This channel does not support text messages.",
+  "@channelNoTextSupport": {},
+
+  "channelNoStickerSupport": "This channel does not support stickers.",
+  "@channelNoStickerSupport": {},
+
+  "useUploadButton": "Use the upload button to share files in this channel.",
+  "@useUploadButton": {},
+
+  "failedToSend": "Failed to send: {error}",
+  "@failedToSend": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+
+  "couldNotOpenChatRoom": "Could not open chat room: {error}",
+  "@couldNotOpenChatRoom": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+
+  "dueDate": "Due: {date}",
+  "@dueDate": {
+    "placeholders": { "date": { "type": "String" } }
+  },
+
+  "room": "Room",
+  "@room": {},
+
+  "members": "Members",
+  "@members": {},
+
+  "inviteCode": "Invite Code",
+  "@inviteCode": {},
+
+  "joinServer": "Join Server",
+  "@joinServer": {},
+
+  "openInShoq": "Open in Shoq",
+  "@openInShoq": {},
+
+  "copyCode": "Copy Code",
+  "@copyCode": {},
+
+  "codeCopied": "Code copied",
+  "@codeCopied": {},
+
+  "invitePreview": "Invite Preview",
+  "@invitePreview": {},
+
+  "invitePageInstructions": "Use this invite code in the Shoq app.",
+  "@invitePageInstructions": {},
+
+  "inviteStep1": "Open Shoq.",
+  "@inviteStep1": {},
+
+  "inviteStep2": "Tap Join Server.",
+  "@inviteStep2": {},
+
+  "inviteStep3": "Paste the invite code and confirm.",
+  "@inviteStep3": {},
+
+  "invitePageNote": "This page is for invite links only. If direct opening doesn't work, copy the code and join manually in the app.",
+  "@invitePageNote": {},
+
+  "qrScanTitle": "Scan QR Code",
+  "@qrScanTitle": {},
+
+  "qrShareTitle": "Your QR Code",
+  "@qrShareTitle": {},
+
+  "muteAudio": "Mute",
+  "@muteAudio": {},
+
+  "unmuteAudio": "Unmute",
+  "@unmuteAudio": {},
+
+  "deafen": "Deafen",
+  "@deafen": {},
+
+  "undeafen": "Undeafen",
+  "@undeafen": {},
+
+  "leaveVoice": "Leave Voice",
+  "@leaveVoice": {},
+
+  "voiceConnecting": "Connecting…",
+  "@voiceConnecting": {},
+
+  "voiceConnected": "Connected",
+  "@voiceConnected": {},
+
+  "voiceDisconnected": "Disconnected",
+  "@voiceDisconnected": {},
+
+  "activeVoiceSession": "Active Voice Session",
+  "@activeVoiceSession": {},
+
+  "returnToCall": "Return to Call",
+  "@returnToCall": {},
+
+  "uploading": "Uploading…",
+  "@uploading": {},
+
+  "systemDefault": "System default",
+  "@systemDefault": {},
+
+  "selectLanguage": "Select language",
+  "@selectLanguage": {}
+}

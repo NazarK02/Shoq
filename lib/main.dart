@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
+import 'package:shoq/generated/app_localizations.dart';
+import 'services/locale_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/email_verification_screen.dart';
@@ -54,8 +57,17 @@ Future<void> main() async {
   final themeService = ThemeService();
   await themeService.initialize();
 
+  final localeService = LocaleService();
+  await localeService.initialize();
+
   runApp(
-    ChangeNotifierProvider.value(value: themeService, child: const MyApp()),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: themeService),
+        ChangeNotifierProvider.value(value: localeService),
+      ],
+      child: const MyApp(),
+    ),
   );
 
   // Defer non-critical init to keep startup fast
@@ -85,6 +97,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final themeService = context.watch<ThemeService>();
+    final localeService = context.watch<LocaleService>();
 
     return MaterialApp(
       navigatorKey: appNavigatorKey,
@@ -94,6 +107,14 @@ class MyApp extends StatelessWidget {
       theme: ThemeService.lightTheme,
       darkTheme: ThemeService.darkTheme,
       themeMode: themeService.themeMode,
+      locale: localeService.locale,
+      supportedLocales: LocaleService.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       builder: (context, child) {
         final mediaQuery = MediaQuery.of(context);
         final systemScale = mediaQuery.textScaler.scale(1.0);
