@@ -23,6 +23,63 @@ import 'image_viewer_screen.dart';
 import 'room_info_screen.dart';
 import 'voice_channel_screen.dart';
 
+const List<String> _emojiFontFallback = <String>[
+  'Segoe UI Emoji',
+  'Noto Color Emoji',
+  'Apple Color Emoji',
+];
+
+TextStyle _withEmojiFallback(TextStyle style) {
+  final fallback = <String>{
+    ...(style.fontFamilyFallback ?? const <String>[]),
+    ..._emojiFontFallback,
+  }.toList();
+  return style.copyWith(fontFamilyFallback: fallback);
+}
+
+bool _looksLikeGifUrl(String rawUrl) {
+  final trimmed = rawUrl.trim();
+  if (trimmed.isEmpty) return false;
+  final lower = trimmed.toLowerCase();
+  final decoded = Uri.decodeFull(lower);
+  if (lower.contains('.gif') ||
+      decoded.contains('.gif') ||
+      lower.contains('.gifv') ||
+      decoded.contains('.gifv') ||
+      lower.contains('giphy.com/media/') ||
+      lower.contains('media.tenor.com/') ||
+      lower.contains('tenor.com/view/')) {
+    return true;
+  }
+
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) return false;
+  for (final key in const ['format', 'fm', 'ext', 'content', 'type']) {
+    final value = uri.queryParameters[key]?.trim().toLowerCase() ?? '';
+    if (value.contains('gif')) return true;
+  }
+  return false;
+}
+
+bool _looksLikeImageUrl(String rawUrl) {
+  final trimmed = rawUrl.trim();
+  if (trimmed.isEmpty) return false;
+  final lower = trimmed.toLowerCase();
+  final decoded = Uri.decodeFull(lower);
+  return lower.contains('.gif') ||
+      lower.contains('.gifv') ||
+      lower.contains('.png') ||
+      lower.contains('.jpg') ||
+      lower.contains('.jpeg') ||
+      lower.contains('.webp') ||
+      decoded.contains('.gif') ||
+      decoded.contains('.gifv') ||
+      decoded.contains('.png') ||
+      decoded.contains('.jpg') ||
+      decoded.contains('.jpeg') ||
+      decoded.contains('.webp');
+}
+
 class RoomChatScreen extends StatefulWidget {
   final String conversationId;
   final String roomTitle;
@@ -877,7 +934,9 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                         fit: BoxFit.cover,
                         errorWidget: (context, url, error) => Text(
                           sticker.fallback,
-                          style: const TextStyle(fontSize: 30),
+                          style: _withEmojiFallback(
+                            const TextStyle(fontSize: 30),
+                          ),
                         ),
                       ),
                     ),
@@ -2029,7 +2088,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
           maxWidth: MediaQuery.of(context).size.width * 0.78,
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: MainAxisSize.max,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             if (!isMe) ...[
@@ -2114,7 +2173,9 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
       if (looksLikeSticker) {
         return Text(
           trimmedText,
-          style: const TextStyle(fontSize: 44, height: 1.05),
+          style: _withEmojiFallback(
+            const TextStyle(fontSize: 44, height: 1.05),
+          ),
         );
       }
 
@@ -2188,13 +2249,16 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
       if (stickerUrl.isEmpty) {
         return Text(
           displayFallback,
-          style: TextStyle(
-            fontSize: displayFallback.runes.length <= 2 ? 44 : 36,
-            height: 1.05,
+          style: _withEmojiFallback(
+            TextStyle(
+              fontSize: displayFallback.runes.length <= 2 ? 44 : 36,
+              height: 1.05,
+            ),
           ),
         );
       }
 
+      final isGif = _looksLikeGifUrl(stickerUrl);
       final fileName = _stickerFileName(stickerUrl);
       return GestureDetector(
         onTap: () {
@@ -2209,22 +2273,43 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         onLongPress: () => _copyStickerLink(stickerUrl),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
-          child: CachedNetworkImage(
-            imageUrl: stickerUrl,
-            width: 134,
-            height: 134,
-            fit: BoxFit.cover,
-            errorWidget: (context, url, error) => Container(
-              width: 134,
-              height: 134,
-              alignment: Alignment.center,
-              color: Colors.black12,
-              child: Text(
-                displayFallback,
-                style: const TextStyle(fontSize: 40, height: 1.05),
-              ),
-            ),
-          ),
+          child: isGif
+              ? Image.network(
+                  stickerUrl,
+                  width: 134,
+                  height: 134,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    width: 134,
+                    height: 134,
+                    alignment: Alignment.center,
+                    color: Colors.black12,
+                    child: Text(
+                      displayFallback,
+                      style: _withEmojiFallback(
+                        const TextStyle(fontSize: 40, height: 1.05),
+                      ),
+                    ),
+                  ),
+                )
+              : CachedNetworkImage(
+                  imageUrl: stickerUrl,
+                  width: 134,
+                  height: 134,
+                  fit: BoxFit.cover,
+                  errorWidget: (context, url, error) => Container(
+                    width: 134,
+                    height: 134,
+                    alignment: Alignment.center,
+                    color: Colors.black12,
+                    child: Text(
+                      displayFallback,
+                      style: _withEmojiFallback(
+                        const TextStyle(fontSize: 40, height: 1.05),
+                      ),
+                    ),
+                  ),
+                ),
         ),
       );
     }
@@ -2244,9 +2329,9 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
       final folderName = data['fileFolderName']?.toString().trim() ?? '';
       final fileUrl = data['fileUrl']?.toString().trim() ?? '';
       final mimeType = data['mimeType']?.toString().trim().toLowerCase() ?? '';
-      final isImage = mimeType.startsWith('image/');
-      final isGif =
-          mimeType.contains('gif') || fileUrl.toLowerCase().endsWith('.gif');
+      final isImage =
+          mimeType.startsWith('image/') || _looksLikeImageUrl(fileUrl);
+      final isGif = mimeType.contains('gif') || _looksLikeGifUrl(fileUrl);
       final fileSize = data['fileSize'] is int
           ? data['fileSize'] as int
           : int.tryParse(data['fileSize']?.toString() ?? '') ?? 0;
@@ -2535,13 +2620,17 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                   tooltip: 'Stickers',
                   onPressed: _isSending ? null : _showStickerPicker,
                   icon: const Icon(Icons.emoji_emotions_outlined),
+                  visualDensity: VisualDensity.compact,
                 ),
               ),
             Expanded(
               child: TextField(
                 controller: _messageController,
                 minLines: 1,
-                maxLines: 5,
+                maxLines: 1,
+                style: _withEmojiFallback(
+                  const TextStyle(fontSize: 14.5, height: 1.2),
+                ),
                 enabled: canSendText || isFileChannel,
                 textInputAction: isFileChannel
                     ? TextInputAction.done
@@ -2561,7 +2650,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                   fillColor: Theme.of(context).colorScheme.surfaceContainerHigh,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 14,
-                    vertical: 10,
+                    vertical: 8,
                   ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(24),
@@ -2570,13 +2659,14 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             IconButton.filled(
               onPressed: _isSending
                   ? null
                   : (isFileChannel
                         ? _sendFileToActiveChannel
                         : (canSendText ? _sendMessage : null)),
+              visualDensity: VisualDensity.compact,
               icon: _isSending
                   ? const SizedBox(
                       width: 16,

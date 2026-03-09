@@ -242,27 +242,31 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
   }
 
   Future<void> _runConnectionHealthCheck() async {
-    if (_isLeaving) return;
-    if (_members.isEmpty) return;
+    try {
+      if (_isLeaving) return;
+      if (_members.isEmpty) return;
 
-    for (final member in _members.values) {
-      if (member.userId == _selfUid) continue;
-      final clientId = member.clientId.trim();
-      if (clientId.isEmpty || clientId == _signaling.clientId) continue;
+      for (final member in _members.values) {
+        if (member.userId == _selfUid) continue;
+        final clientId = member.clientId.trim();
+        if (clientId.isEmpty || clientId == _signaling.clientId) continue;
 
-      final currentClientId = _peerClientIds[member.userId];
-      if (currentClientId != null && currentClientId != clientId) {
-        await _closePeerConnection(member.userId);
+        final currentClientId = _peerClientIds[member.userId];
+        if (currentClientId != null && currentClientId != clientId) {
+          await _closePeerConnection(member.userId);
+        }
+
+        _peerClientIds[member.userId] = clientId;
+        if (!_peerConnections.containsKey(member.userId)) {
+          await _createPeerConnection(member);
+        }
+
+        if (_shouldInitiateFor(member) && !_isPeerConnected(member.userId)) {
+          await _sendVoiceOffer(member.userId);
+        }
       }
-
-      _peerClientIds[member.userId] = clientId;
-      if (!_peerConnections.containsKey(member.userId)) {
-        await _createPeerConnection(member);
-      }
-
-      if (_shouldInitiateFor(member) && !_isPeerConnected(member.userId)) {
-        await _sendVoiceOffer(member.userId);
-      }
+    } catch (e) {
+      debugPrint('Voice health check failed: $e');
     }
   }
 
@@ -270,12 +274,16 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
     final uid = _selfUid;
     if (!_joinedPresence || uid == null || uid.isEmpty) return;
     final memberPath = 'activeMembers.$uid';
-    await _voiceDocRef.set({
-      '$memberPath.clientId': _signaling.clientId,
-      '$memberPath.muted': _isMuted,
-      '$memberPath.updatedAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    try {
+      await _voiceDocRef.set({
+        '$memberPath.clientId': _signaling.clientId,
+        '$memberPath.muted': _isMuted,
+        '$memberPath.updatedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Voice heartbeat failed: $e');
+    }
   }
 
   void _listenToPresence() {
@@ -444,75 +452,88 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
     final peerClientId = _peerClientIds[peerUserId];
     if (pc == null || peerClientId == null || peerClientId.isEmpty) return;
 
-    final offer = await pc.createOffer({
-      'offerToReceiveAudio': 1,
-      'offerToReceiveVideo': 0,
-      'voiceActivityDetection': true,
-    });
-    await pc.setLocalDescription(offer);
+    try {
+      final offer = await pc.createOffer({
+        'offerToReceiveAudio': 1,
+        'offerToReceiveVideo': 0,
+        'voiceActivityDetection': true,
+      });
+      await pc.setLocalDescription(offer);
 
-    await _sendSignal(
-      type: 'voice_offer',
-      toUserId: peerUserId,
-      toClientId: peerClientId,
-      data: {'sdp': offer.sdp, 'sdpType': offer.type},
-    );
+      await _sendSignal(
+        type: 'voice_offer',
+        toUserId: peerUserId,
+        toClientId: peerClientId,
+        data: {'sdp': offer.sdp, 'sdpType': offer.type},
+      );
+    } catch (e) {
+      debugPrint('Voice offer failed for $peerUserId: $e');
+    }
   }
 
   void _listenToSignaling() {
     _signalSub?.cancel();
     _signalSub = _signaling.messages.listen((message) async {
-      final type = message['type']?.toString().trim() ?? '';
-      if (type.isEmpty || !type.startsWith('voice_')) return;
-      if (message['sessionKey']?.toString().trim() != _sessionKey) return;
-      if (message['channelId']?.toString().trim() != widget.channelId) return;
+      try {
+        if (_isLeaving) return;
+        final type = message['type']?.toString().trim() ?? '';
+        if (type.isEmpty || !type.startsWith('voice_')) return;
+        if (message['sessionKey']?.toString().trim() != _sessionKey) return;
+        if (message['channelId']?.toString().trim() != widget.channelId) {
+          return;
+        }
 
-      final uid = _selfUid;
-      if (uid == null || uid.isEmpty) return;
-      final to = message['to']?.toString().trim() ?? '';
-      if (to.isNotEmpty && to != uid) return;
-      final toClientId = message['toClientId']?.toString().trim() ?? '';
-      if (toClientId.isNotEmpty && toClientId != _signaling.clientId) return;
+        final uid = _selfUid;
+        if (uid == null || uid.isEmpty) return;
+        final to = message['to']?.toString().trim() ?? '';
+        if (to.isNotEmpty && to != uid) return;
+        final toClientId = message['toClientId']?.toString().trim() ?? '';
+        if (toClientId.isNotEmpty && toClientId != _signaling.clientId) {
+          return;
+        }
 
-      final fromUserId = message['from']?.toString().trim() ?? '';
-      if (fromUserId.isEmpty || fromUserId == uid) return;
-      final fromClientId = message['fromClientId']?.toString().trim() ?? '';
+        final fromUserId = message['from']?.toString().trim() ?? '';
+        if (fromUserId.isEmpty || fromUserId == uid) return;
+        final fromClientId = message['fromClientId']?.toString().trim() ?? '';
 
-      if (type == 'voice_offer') {
-        await _handleVoiceOffer(
-          fromUserId: fromUserId,
-          fromClientId: fromClientId,
-          sdp: message['sdp']?.toString() ?? '',
-          sdpType: message['sdpType']?.toString() ?? 'offer',
-          fromDisplayName: message['fromDisplayName']?.toString(),
-          fromPhotoUrl: message['fromPhotoUrl']?.toString(),
-        );
-        return;
-      }
+        if (type == 'voice_offer') {
+          await _handleVoiceOffer(
+            fromUserId: fromUserId,
+            fromClientId: fromClientId,
+            sdp: message['sdp']?.toString() ?? '',
+            sdpType: message['sdpType']?.toString() ?? 'offer',
+            fromDisplayName: message['fromDisplayName']?.toString(),
+            fromPhotoUrl: message['fromPhotoUrl']?.toString(),
+          );
+          return;
+        }
 
-      if (type == 'voice_answer') {
-        await _handleVoiceAnswer(
-          fromUserId: fromUserId,
-          sdp: message['sdp']?.toString() ?? '',
-          sdpType: message['sdpType']?.toString() ?? 'answer',
-        );
-        return;
-      }
+        if (type == 'voice_answer') {
+          await _handleVoiceAnswer(
+            fromUserId: fromUserId,
+            sdp: message['sdp']?.toString() ?? '',
+            sdpType: message['sdpType']?.toString() ?? 'answer',
+          );
+          return;
+        }
 
-      if (type == 'voice_ice') {
-        await _handleVoiceIce(
-          fromUserId: fromUserId,
-          candidate: message['candidate']?.toString() ?? '',
-          sdpMid: message['sdpMid']?.toString(),
-          sdpMLineIndex: (message['sdpMLineIndex'] is num)
-              ? (message['sdpMLineIndex'] as num).toInt()
-              : int.tryParse(message['sdpMLineIndex']?.toString() ?? ''),
-        );
-        return;
-      }
+        if (type == 'voice_ice') {
+          await _handleVoiceIce(
+            fromUserId: fromUserId,
+            candidate: message['candidate']?.toString() ?? '',
+            sdpMid: message['sdpMid']?.toString(),
+            sdpMLineIndex: (message['sdpMLineIndex'] is num)
+                ? (message['sdpMLineIndex'] as num).toInt()
+                : int.tryParse(message['sdpMLineIndex']?.toString() ?? ''),
+          );
+          return;
+        }
 
-      if (type == 'voice_leave') {
-        await _closePeerConnection(fromUserId);
+        if (type == 'voice_leave') {
+          await _closePeerConnection(fromUserId);
+        }
+      } catch (e) {
+        debugPrint('Voice signaling handler failed: $e');
       }
     });
   }
@@ -626,19 +647,23 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
     final uid = _selfUid;
     if (uid == null || uid.isEmpty) return;
     final user = _auth.currentUser;
-    await _signaling.send({
-      'type': type,
-      'sessionKey': _sessionKey,
-      'conversationId': widget.conversationId,
-      'channelId': widget.channelId,
-      'from': uid,
-      'fromClientId': _signaling.clientId,
-      'fromDisplayName': user?.displayName ?? 'User',
-      'fromPhotoUrl': user?.photoURL ?? '',
-      'to': toUserId,
-      'toClientId': toClientId,
-      ...data,
-    });
+    try {
+      await _signaling.send({
+        'type': type,
+        'sessionKey': _sessionKey,
+        'conversationId': widget.conversationId,
+        'channelId': widget.channelId,
+        'from': uid,
+        'fromClientId': _signaling.clientId,
+        'fromDisplayName': user?.displayName ?? 'User',
+        'fromPhotoUrl': user?.photoURL ?? '',
+        'to': toUserId,
+        'toClientId': toClientId,
+        ...data,
+      });
+    } catch (e) {
+      debugPrint('Voice signaling send failed: $e');
+    }
   }
 
   Future<void> _toggleMute() async {
@@ -739,6 +764,7 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
     }
 
     _joinedPresence = false;
+    ActiveSessionService().clearSession(sessionId: _sessionId);
     if (closeScreen && mounted) {
       Navigator.of(context).pop();
     }

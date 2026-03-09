@@ -1,14 +1,30 @@
 class ServerInviteService {
   static const String _defaultInviteBase = 'https://shoq-bfa54.web.app';
 
-  String buildInviteLink(String code) {
+  String buildInviteLink(
+    String code, {
+    String? serverName,
+    String? serverAvatarUrl,
+  }) {
     final normalized = _normalizeCode(code);
     if (normalized.isEmpty) return '';
     final base = _baseInviteUri();
+    final queryParameters = <String, String>{'joinServer': normalized};
+    final trimmedName = serverName?.trim() ?? '';
+    if (trimmedName.isNotEmpty) {
+      queryParameters['serverName'] = trimmedName;
+    }
+    final trimmedAvatar = serverAvatarUrl?.trim() ?? '';
+    final parsedAvatar = Uri.tryParse(trimmedAvatar);
+    if (parsedAvatar != null &&
+        parsedAvatar.hasScheme &&
+        (parsedAvatar.scheme == 'http' || parsedAvatar.scheme == 'https')) {
+      queryParameters['serverAvatar'] = parsedAvatar.toString();
+    }
     return base
         .replace(
-          path: '/',
-          queryParameters: <String, String>{'joinServer': normalized},
+          path: '/join-server',
+          queryParameters: queryParameters,
         )
         .toString();
   }
@@ -86,15 +102,8 @@ class ServerInviteService {
   }
 
   Uri _baseInviteUri() {
-    final base = Uri.base;
-    final isHttp = base.scheme == 'http' || base.scheme == 'https';
-    if (isHttp && base.host.isNotEmpty) {
-      return Uri(
-        scheme: base.scheme,
-        host: base.host,
-        port: base.hasPort ? base.port : null,
-      );
-    }
+    // Always generate shareable invite links on Firebase Hosting.
+    // This prevents accidental links to local/GitHub docs hosts.
     return Uri.parse(_defaultInviteBase);
   }
 

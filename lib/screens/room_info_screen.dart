@@ -160,7 +160,13 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
   }
 
   String _inviteLinkForCode(String code) {
-    return _inviteService.buildInviteLink(code);
+    final title = _conversation?['title']?.toString().trim() ?? '';
+    final avatar = _conversation?['avatarUrl']?.toString().trim() ?? '';
+    return _inviteService.buildInviteLink(
+      code,
+      serverName: title,
+      serverAvatarUrl: avatar,
+    );
   }
 
   Future<void> _openInviteLink(String link) async {

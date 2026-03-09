@@ -7,7 +7,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
 import 'package:mime/mime.dart';
@@ -50,6 +49,63 @@ class ImprovedChatScreen extends StatefulWidget {
 
 enum _RecorderMode { audio, video }
 
+const List<String> _emojiFontFallback = <String>[
+  'Segoe UI Emoji',
+  'Noto Color Emoji',
+  'Apple Color Emoji',
+];
+
+TextStyle _withEmojiFallback(TextStyle style) {
+  final fallback = <String>{
+    ...(style.fontFamilyFallback ?? const <String>[]),
+    ..._emojiFontFallback,
+  }.toList();
+  return style.copyWith(fontFamilyFallback: fallback);
+}
+
+bool _looksLikeGifUrl(String rawUrl) {
+  final trimmed = rawUrl.trim();
+  if (trimmed.isEmpty) return false;
+  final lower = trimmed.toLowerCase();
+  final decoded = Uri.decodeFull(lower);
+  if (lower.contains('.gif') ||
+      decoded.contains('.gif') ||
+      lower.contains('.gifv') ||
+      decoded.contains('.gifv') ||
+      lower.contains('giphy.com/media/') ||
+      lower.contains('media.tenor.com/') ||
+      lower.contains('tenor.com/view/')) {
+    return true;
+  }
+
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) return false;
+  for (final key in const ['format', 'fm', 'ext', 'content', 'type']) {
+    final value = uri.queryParameters[key]?.trim().toLowerCase() ?? '';
+    if (value.contains('gif')) return true;
+  }
+  return false;
+}
+
+bool _looksLikeImageUrl(String rawUrl) {
+  final trimmed = rawUrl.trim();
+  if (trimmed.isEmpty) return false;
+  final lower = trimmed.toLowerCase();
+  final decoded = Uri.decodeFull(lower);
+  return lower.contains('.gif') ||
+      lower.contains('.gifv') ||
+      lower.contains('.png') ||
+      lower.contains('.jpg') ||
+      lower.contains('.jpeg') ||
+      lower.contains('.webp') ||
+      decoded.contains('.gif') ||
+      decoded.contains('.gifv') ||
+      decoded.contains('.png') ||
+      decoded.contains('.jpg') ||
+      decoded.contains('.jpeg') ||
+      decoded.contains('.webp');
+}
+
 class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     with WidgetsBindingObserver {
   static const ResolutionPreset _videoMessageResolution =
@@ -65,7 +121,6 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   final UserCacheService _userCache = UserCacheService();
   final FileDownloadService _downloadService = FileDownloadService();
   final AudioRecorder _audioRecorder = AudioRecorder();
-  final ImagePicker _imagePicker = ImagePicker();
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
@@ -414,7 +469,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                         fit: BoxFit.cover,
                         errorWidget: (context, url, error) => Text(
                           sticker.fallback,
-                          style: const TextStyle(fontSize: 30),
+                          style: _withEmojiFallback(
+                            const TextStyle(fontSize: 30),
+                          ),
                         ),
                       ),
                     ),
@@ -643,16 +700,6 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
           icon: const Icon(Icons.videocam),
           tooltip: 'Video call',
           onPressed: () {
-            if (Platform.isWindows) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Video calls are disabled on Windows. Starting audio call.',
-                  ),
-                  duration: Duration(seconds: 3),
-                ),
-              );
-            }
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -660,7 +707,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                   peerId: widget.recipientId,
                   peerName: displayName,
                   peerPhotoUrl: photoUrl,
-                  isVideo: !Platform.isWindows,
+                  isVideo: true,
                 ),
               ),
             );
@@ -1523,30 +1570,40 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                   ),
                   shape: const CircleBorder(),
                   child: IconButton(
-                    icon: const Icon(Icons.attach_file),
+                    icon: const Icon(Icons.attach_file, size: 20),
                     onPressed: _showAttachmentSheet,
                     tooltip: 'Attach',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 36,
+                      height: 36,
+                    ),
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 Material(
                   color: colorScheme.surfaceContainerHighest.withValues(
                     alpha: 0.55,
                   ),
                   shape: const CircleBorder(),
                   child: IconButton(
-                    icon: const Icon(Icons.emoji_emotions_outlined),
+                    icon: const Icon(Icons.emoji_emotions_outlined, size: 20),
                     onPressed: _showStickerPicker,
                     tooltip: 'Stickers',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 36,
+                      height: 36,
+                    ),
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 Expanded(
                   child: Container(
-                    constraints: const BoxConstraints(minHeight: 42),
+                    constraints: const BoxConstraints(minHeight: 38),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
+                      horizontal: 12,
+                      vertical: 8,
                     ),
                     decoration: BoxDecoration(
                       color: colorScheme.surfaceContainerHighest.withValues(
@@ -1557,6 +1614,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                     child: TextField(
                       controller: _messageController,
                       focusNode: _messageFocusNode,
+                      style: _withEmojiFallback(
+                        const TextStyle(fontSize: 14.5, height: 1.2),
+                      ),
                       decoration: const InputDecoration(
                         hintText: 'Type a message...',
                         border: InputBorder.none,
@@ -1566,62 +1626,73 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                         filled: false,
                         isCollapsed: true,
                       ),
-                      maxLines: null,
+                      minLines: 1,
+                      maxLines: 1,
+                      textInputAction: TextInputAction.send,
                       textCapitalization: TextCapitalization.sentences,
                       onSubmitted: (_) => _sendMessage(),
                     ),
                   ),
                 ),
-                const SizedBox(width: 6),
-                GestureDetector(
-                  onTap: _handleRecorderTap,
-                  onLongPressStart: _handleRecorderLongPressStart,
-                  onLongPressMoveUpdate: _handleRecorderLongPressMove,
-                  onLongPressEnd: _handleRecorderLongPressEnd,
-                  onLongPressCancel: _handleRecorderLongPressCancel,
-                  child: CircleAvatar(
-                    radius: 20,
-                    backgroundColor: isAnyRecording
-                        ? colorScheme.error
-                        : colorScheme.surfaceContainerHighest,
-                    child: Icon(
-                      isAnyRecording
-                          ? (_isAudioRecordingLocked || _isRecordingVideo
-                                ? Icons.send_rounded
-                                : Icons.stop)
-                          : (_recorderMode == _RecorderMode.audio
-                                ? Icons.mic
-                                : Icons.videocam),
-                      color: isAnyRecording
-                          ? colorScheme.onError
-                          : colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 ValueListenableBuilder<TextEditingValue>(
                   valueListenable: _messageController,
                   builder: (context, value, _) {
-                    final canSend =
-                        _conversationId != null && value.text.trim().isNotEmpty;
+                    final hasText = value.text.trim().isNotEmpty;
+                    final showRecorder = isAnyRecording || !hasText;
+                    if (showRecorder) {
+                      return GestureDetector(
+                        onTap: _handleRecorderTap,
+                        onLongPressStart: _handleRecorderLongPressStart,
+                        onLongPressMoveUpdate: _handleRecorderLongPressMove,
+                        onLongPressEnd: _handleRecorderLongPressEnd,
+                        onLongPressCancel: _handleRecorderLongPressCancel,
+                        child: CircleAvatar(
+                          radius: 18,
+                          backgroundColor: isAnyRecording
+                              ? colorScheme.error
+                              : colorScheme.surfaceContainerHighest,
+                          child: Icon(
+                            isAnyRecording
+                                ? (_isAudioRecordingLocked || _isRecordingVideo
+                                      ? Icons.send_rounded
+                                      : Icons.stop)
+                                : (_recorderMode == _RecorderMode.audio
+                                      ? Icons.mic
+                                      : Icons.videocam),
+                            size: 20,
+                            color: isAnyRecording
+                                ? colorScheme.onError
+                                : colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      );
+                    }
 
+                    final canSend = _conversationId != null;
                     return AnimatedScale(
                       scale: _sendPulse ? 0.86 : 1,
                       duration: const Duration(milliseconds: 160),
                       curve: Curves.easeOutBack,
                       child: CircleAvatar(
-                        radius: 20,
+                        radius: 18,
                         backgroundColor: canSend
                             ? colorScheme.primary
                             : colorScheme.surfaceContainerHighest,
                         child: IconButton(
                           icon: Icon(
                             Icons.send_rounded,
+                            size: 20,
                             color: canSend
                                 ? colorScheme.onPrimary
                                 : colorScheme.onSurface.withValues(alpha: 0.45),
                           ),
                           onPressed: canSend ? _sendMessage : null,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 36,
+                            height: 36,
+                          ),
                         ),
                       ),
                     );
@@ -1686,9 +1757,31 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   Future<void> _pickAndSendFromGallery() async {
     if (_conversationId == null) return;
 
-    final picked = await _imagePicker.pickMultipleMedia(
-      requestFullMetadata: false,
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: false,
+      type: FileType.custom,
+      allowedExtensions: const [
+        'jpg',
+        'jpeg',
+        'png',
+        'webp',
+        'gif',
+        'heic',
+        'heif',
+        'mp4',
+        'mov',
+        'mkv',
+        'webm',
+      ],
     );
+    if (result == null || result.files.isEmpty) return;
+
+    final picked = result.files
+        .map((item) => item.path?.trim() ?? '')
+        .where((path) => path.isNotEmpty)
+        .map((path) => XFile(path))
+        .toList();
     if (picked.isEmpty) return;
 
     final draft = await _showMediaComposer(picked);
@@ -2652,27 +2745,22 @@ class _MessagesListState extends State<_MessagesList>
     final currentUserId = _auth.currentUser?.uid;
     if (conversationId == null || currentUserId == null) return;
 
-    const emojis = [
-      '??',
-      '??',
-      '??',
-      '??',
-      '??',
-      '??',
-      '??',
-      '??',
-      '??',
-      '??',
-      '??',
-      '??',
-      '??',
-      '?',
-      '??',
-      '??',
-      '??',
-      '??',
+    const emojis = <String>[
+      '\u{1F44D}',
+      '\u{2764}\u{FE0F}',
+      '\u{1F602}',
+      '\u{1F62E}',
+      '\u{1F622}',
+      '\u{1F621}',
+      '\u{1F389}',
+      '\u{1F44F}',
+      '\u{1F525}',
+      '\u{1F680}',
+      '\u{1F914}',
+      '\u{1F60D}',
     ];
     final myReactions = _extractReactions(message)[currentUserId] ?? const {};
+    final customEmojiController = TextEditingController();
 
     await showModalBottomSheet<void>(
       context: context,
@@ -2689,7 +2777,10 @@ class _MessagesListState extends State<_MessagesList>
                     contentPadding: const EdgeInsets.symmetric(horizontal: 4),
                     leading: const Icon(Icons.remove_circle_outline),
                     title: const Text('Remove my reactions'),
-                    subtitle: Text(myReactions.join(' ')),
+                    subtitle: Text(
+                      myReactions.join(' '),
+                      style: _withEmojiFallback(const TextStyle()),
+                    ),
                     onTap: () async {
                       Navigator.pop(context);
                       await _clearMyReactions(
@@ -2698,6 +2789,52 @@ class _MessagesListState extends State<_MessagesList>
                       );
                     },
                   ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 2, 4, 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: customEmojiController,
+                          autofocus: true,
+                          textInputAction: TextInputAction.done,
+                          style: _withEmojiFallback(
+                            const TextStyle(fontSize: 20),
+                          ),
+                          decoration: const InputDecoration(
+                            hintText: 'Type emoji from keyboard',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          onSubmitted: (value) async {
+                            final emoji = value.trim();
+                            if (emoji.isEmpty) return;
+                            Navigator.pop(context);
+                            await _toggleReaction(
+                              messageId: messageId,
+                              message: message,
+                              emoji: emoji,
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: () async {
+                          final emoji = customEmojiController.text.trim();
+                          if (emoji.isEmpty) return;
+                          Navigator.pop(context);
+                          await _toggleReaction(
+                            messageId: messageId,
+                            message: message,
+                            emoji: emoji,
+                          );
+                        },
+                        child: const Text('Add'),
+                      ),
+                    ],
+                  ),
+                ),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -2706,7 +2843,9 @@ class _MessagesListState extends State<_MessagesList>
                       ChoiceChip(
                         label: Text(
                           emoji,
-                          style: const TextStyle(fontSize: 22),
+                          style: _withEmojiFallback(
+                            const TextStyle(fontSize: 22),
+                          ),
                         ),
                         selected: myReactions.contains(emoji),
                         onSelected: (_) async {
@@ -2726,6 +2865,7 @@ class _MessagesListState extends State<_MessagesList>
         );
       },
     );
+    customEmojiController.dispose();
   }
 
   Future<void> _showDeleteForEveryoneDialog({required String messageId}) async {
@@ -3088,7 +3228,7 @@ class _MessagesListState extends State<_MessagesList>
                 ),
                 child: Text(
                   '${entry.key} ${entry.value}',
-                  style: const TextStyle(fontSize: 11),
+                  style: _withEmojiFallback(const TextStyle(fontSize: 11)),
                 ),
               ),
             ),
@@ -3713,13 +3853,16 @@ class _MessagesListState extends State<_MessagesList>
     if (stickerUrl.isEmpty) {
       return Text(
         fallbackText,
-        style: TextStyle(
-          fontSize: fallbackText.runes.length <= 2 ? 46 : 38,
-          height: 1.05,
+        style: _withEmojiFallback(
+          TextStyle(
+            fontSize: fallbackText.runes.length <= 2 ? 46 : 38,
+            height: 1.05,
+          ),
         ),
       );
     }
 
+    final isGif = _looksLikeGifUrl(stickerUrl);
     final fileName = _stickerFileName(stickerUrl);
     return GestureDetector(
       onTap: () {
@@ -3734,22 +3877,43 @@ class _MessagesListState extends State<_MessagesList>
       onLongPress: () => _copyStickerLink(stickerUrl),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(14),
-        child: CachedNetworkImage(
-          imageUrl: stickerUrl,
-          width: 134,
-          height: 134,
-          fit: BoxFit.cover,
-          errorWidget: (context, url, error) => Container(
-            width: 134,
-            height: 134,
-            alignment: Alignment.center,
-            color: Colors.black12,
-            child: Text(
-              fallbackText,
-              style: const TextStyle(fontSize: 42, height: 1.05),
-            ),
-          ),
-        ),
+        child: isGif
+            ? Image.network(
+                stickerUrl,
+                width: 134,
+                height: 134,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  width: 134,
+                  height: 134,
+                  alignment: Alignment.center,
+                  color: Colors.black12,
+                  child: Text(
+                    fallbackText,
+                    style: _withEmojiFallback(
+                      const TextStyle(fontSize: 42, height: 1.05),
+                    ),
+                  ),
+                ),
+              )
+            : CachedNetworkImage(
+                imageUrl: stickerUrl,
+                width: 134,
+                height: 134,
+                fit: BoxFit.cover,
+                errorWidget: (context, url, error) => Container(
+                  width: 134,
+                  height: 134,
+                  alignment: Alignment.center,
+                  color: Colors.black12,
+                  child: Text(
+                    fallbackText,
+                    style: _withEmojiFallback(
+                      const TextStyle(fontSize: 42, height: 1.05),
+                    ),
+                  ),
+                ),
+              ),
       ),
     );
   }
@@ -3796,7 +3960,9 @@ class _MessagesListState extends State<_MessagesList>
           children: [
             Text(
               pending.text,
-              style: const TextStyle(color: Colors.white, fontSize: 15),
+              style: _withEmojiFallback(
+                const TextStyle(color: Colors.white, fontSize: 15),
+              ),
             ),
             const SizedBox(height: 6),
             Row(
@@ -3927,7 +4093,9 @@ class _MessagesListState extends State<_MessagesList>
     final fileUrl = message['fileUrl']?.toString() ?? '';
     final mimeType = message['mimeType']?.toString() ?? '';
     final caption = message['caption']?.toString().trim() ?? '';
-    final isImage = mimeType.toLowerCase().startsWith('image/');
+    final isImage =
+        mimeType.toLowerCase().startsWith('image/') ||
+        _looksLikeImageUrl(fileUrl);
     final isVideo = mimeType.toLowerCase().startsWith('video/');
     final isAudio = mimeType.toLowerCase().startsWith('audio/');
 
@@ -4121,8 +4289,7 @@ class _MessagesListState extends State<_MessagesList>
     required bool isMe,
   }) {
     final isGif =
-        mimeType.toLowerCase().contains('gif') ||
-        fileUrl.toLowerCase().split('?').first.endsWith('.gif');
+        mimeType.toLowerCase().contains('gif') || _looksLikeGifUrl(fileUrl);
     return GestureDetector(
       onTap: () {
         Navigator.push(
@@ -4229,7 +4396,7 @@ class _MessagesListState extends State<_MessagesList>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: MainAxisSize.max,
             children: [
               Icon(
                 Icons.videocam,
@@ -4349,7 +4516,7 @@ class _MessagesListState extends State<_MessagesList>
     final receivedMetaColor = colorScheme.onSurfaceVariant;
 
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: MainAxisSize.max,
       children: [
         Icon(
           _iconForMime(mimeType),

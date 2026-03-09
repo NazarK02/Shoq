@@ -48,7 +48,10 @@ class LinkPreviewService {
   }
 
   Uri? normalizeUri(String rawUrl) {
-    final trimmed = rawUrl.trim();
+    final trimmed = rawUrl.trim().replaceAll(
+      RegExp(r'[\u200B-\u200D\uFEFF]'),
+      '',
+    );
     if (trimmed.isEmpty) return null;
     var candidate = trimmed;
     if (!candidate.startsWith(RegExp(r'https?://', caseSensitive: false))) {
@@ -73,18 +76,30 @@ class LinkPreviewService {
   bool isLikelyImageUrl(String rawUrl) {
     final uri = normalizeUri(rawUrl);
     if (uri == null) return false;
-    final path = uri.path.toLowerCase();
-    return path.endsWith('.gif') ||
-        path.endsWith('.png') ||
-        path.endsWith('.jpg') ||
-        path.endsWith('.jpeg') ||
-        path.endsWith('.webp');
+    final probe = _mediaProbeText(uri);
+    return probe.contains('.gif') ||
+        probe.contains('.png') ||
+        probe.contains('.jpg') ||
+        probe.contains('.jpeg') ||
+        probe.contains('.webp');
   }
 
   bool isLikelyGifUrl(String rawUrl) {
     final uri = normalizeUri(rawUrl);
     if (uri == null) return false;
-    return uri.path.toLowerCase().endsWith('.gif');
+    final probe = _mediaProbeText(uri);
+    if (probe.contains('.gif') ||
+        probe.contains('.gifv') ||
+        probe.contains('giphy.com/media/') ||
+        probe.contains('media.tenor.com/') ||
+        probe.contains('tenor.com/view/')) {
+      return true;
+    }
+    for (final key in const ['format', 'fm', 'ext', 'content', 'type']) {
+      final value = uri.queryParameters[key]?.trim().toLowerCase() ?? '';
+      if (value.contains('gif')) return true;
+    }
+    return false;
   }
 
   Future<LinkPreviewData?> _fetchPreviewInternal(Uri uri) async {
@@ -259,5 +274,15 @@ class LinkPreviewService {
         .replaceAll('&#39;', "'")
         .replaceAll('&lt;', '<')
         .replaceAll('&gt;', '>');
+  }
+
+  String _mediaProbeText(Uri uri) {
+    final path = uri.path.toLowerCase();
+    final query = uri.query.toLowerCase();
+    final fragment = uri.fragment.toLowerCase();
+    final decodedPath = Uri.decodeFull(path);
+    final decodedQuery = Uri.decodeFull(query);
+    final decodedFragment = Uri.decodeFull(fragment);
+    return '$path $decodedPath $query $decodedQuery $fragment $decodedFragment';
   }
 }

@@ -7,6 +7,37 @@ import 'package:url_launcher/url_launcher.dart';
 import '../screens/image_viewer_screen.dart';
 import '../services/link_preview_service.dart';
 
+const List<String> _emojiFontFallback = <String>[
+  'Segoe UI Emoji',
+  'Noto Color Emoji',
+  'Apple Color Emoji',
+];
+
+TextStyle _withEmojiFallback(TextStyle style) {
+  final fallback = <String>{
+    ...(style.fontFamilyFallback ?? const <String>[]),
+    ..._emojiFontFallback,
+  }.toList();
+  return style.copyWith(fontFamilyFallback: fallback);
+}
+
+String _insertSoftWrapBreaks(String text, {int chunkSize = 24}) {
+  if (text.isEmpty) return text;
+  final pattern = RegExp(r'\S{32,}');
+  return text.replaceAllMapped(pattern, (match) {
+    final token = match.group(0) ?? '';
+    if (token.length <= chunkSize) return token;
+    final chunks = <String>[];
+    for (var i = 0; i < token.length; i += chunkSize) {
+      final end = (i + chunkSize < token.length)
+          ? i + chunkSize
+          : token.length;
+      chunks.add(token.substring(i, end));
+    }
+    return chunks.join('\u200B');
+  });
+}
+
 class ChatMessageText extends StatefulWidget {
   final String text;
   final TextStyle style;
@@ -64,11 +95,18 @@ class _ChatMessageTextState extends State<ChatMessageText> {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       }
     } catch (_) {
-      // Ignore open failures in message bubbles.
+      try {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } catch (_) {
+        // Ignore open failures in message bubbles.
+      }
     }
   }
 
-  List<InlineSpan> _buildLinkifiedSpans(String text) {
+  List<InlineSpan> _buildLinkifiedSpans(
+    String text, {
+    required TextStyle linkStyle,
+  }) {
     _disposeRecognizers();
     final spans = <InlineSpan>[];
     final pattern = RegExp(
@@ -78,12 +116,17 @@ class _ChatMessageTextState extends State<ChatMessageText> {
     var cursor = 0;
     for (final match in pattern.allMatches(text)) {
       if (match.start > cursor) {
-        spans.add(TextSpan(text: text.substring(cursor, match.start)));
+        spans.add(
+          TextSpan(
+            text: _insertSoftWrapBreaks(text.substring(cursor, match.start)),
+          ),
+        );
       }
       final matched = _sanitizeMatchedUrl(match.group(0)?.trim() ?? '');
       final normalized = _previewService.normalizeUri(matched);
+      final displayMatched = _insertSoftWrapBreaks(matched);
       if (normalized == null) {
-        spans.add(TextSpan(text: matched));
+        spans.add(TextSpan(text: displayMatched));
       } else {
         final recognizer = TapGestureRecognizer()
           ..onTap = () {
@@ -92,13 +135,8 @@ class _ChatMessageTextState extends State<ChatMessageText> {
         _recognizers.add(recognizer);
         spans.add(
           TextSpan(
-            text: matched,
-            style:
-                widget.linkStyle ??
-                widget.style.copyWith(
-                  decoration: TextDecoration.underline,
-                  fontWeight: FontWeight.w600,
-                ),
+            text: displayMatched,
+            style: linkStyle,
             recognizer: recognizer,
           ),
         );
@@ -106,10 +144,10 @@ class _ChatMessageTextState extends State<ChatMessageText> {
       cursor = match.end;
     }
     if (cursor < text.length) {
-      spans.add(TextSpan(text: text.substring(cursor)));
+      spans.add(TextSpan(text: _insertSoftWrapBreaks(text.substring(cursor))));
     }
     if (spans.isEmpty) {
-      spans.add(TextSpan(text: text));
+      spans.add(TextSpan(text: _insertSoftWrapBreaks(text)));
     }
     return spans;
   }
@@ -129,6 +167,14 @@ class _ChatMessageTextState extends State<ChatMessageText> {
 
   @override
   Widget build(BuildContext context) {
+    final baseStyle = _withEmojiFallback(widget.style);
+    final resolvedLinkStyle = _withEmojiFallback(
+      widget.linkStyle ??
+          widget.style.copyWith(
+            decoration: TextDecoration.underline,
+            fontWeight: FontWeight.w600,
+          ),
+    );
     final links = _previewService.extractLinks(widget.text, maxCount: 4);
     final standaloneMediaLink = _resolveStandaloneMediaLink(links);
     final previewLinks = widget.showPreviews
@@ -146,9 +192,14 @@ class _ChatMessageTextState extends State<ChatMessageText> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         RichText(
+          softWrap: true,
+          textWidthBasis: TextWidthBasis.parent,
           text: TextSpan(
-            style: widget.style,
-            children: _buildLinkifiedSpans(widget.text),
+            style: baseStyle,
+            children: _buildLinkifiedSpans(
+              widget.text,
+              linkStyle: resolvedLinkStyle,
+            ),
           ),
         ),
         for (final link in previewLinks)

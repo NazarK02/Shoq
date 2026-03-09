@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -45,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ConversationCacheService();
   final ChatFolderService _folderService = ChatFolderService();
   final ServerInviteService _inviteService = ServerInviteService();
+  final AppLinks _appLinks = AppLinks();
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   Timer? _rebuildTimer;
@@ -57,6 +59,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, String> _folderAssignments = {};
   String? _selectedFolderId;
   bool _launchInviteHandled = false;
+  bool _inviteJoinInProgress = false;
+  StreamSubscription<Uri>? _inviteLinkSub;
 
   @override
   void initState() {
@@ -66,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadFolderState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_handleInitialInviteLink());
+      _listenForInviteLinks();
     });
     _rebuildTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
@@ -76,6 +81,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _rebuildTimer?.cancel();
     _cacheDebounce?.cancel();
+    _inviteLinkSub?.cancel();
     _searchController.dispose();
     _userCache.removeListener(_onUserCacheUpdated);
     super.dispose();
@@ -104,20 +110,58 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_launchInviteHandled || !mounted) return;
     _launchInviteHandled = true;
 
-    final code = _inviteService.extractInitialInviteCode();
+    var code = _inviteService.extractInitialInviteCode();
+    if ((code == null || code.isEmpty) && !Platform.isWindows) {
+      try {
+        final initialUri = await _appLinks.getInitialLink();
+        if (initialUri != null) {
+          code = _inviteService.extractInviteCodeFromUri(initialUri);
+        }
+      } catch (_) {
+        // Ignore malformed launch links and continue with normal startup.
+      }
+    }
+
     if (code == null || code.isEmpty) return;
+    await _joinFromInviteCode(code);
+  }
 
-    final joined = await _joinServerWithInvite(code);
-    if (!mounted || joined == null) return;
-
-    await _openScreen(
-      RoomChatScreen(
-        conversationId: joined.conversationId,
-        roomTitle: joined.title,
-        conversationType: 'server',
-        initialParticipants: joined.participants,
-      ),
+  void _listenForInviteLinks() {
+    if (Platform.isWindows) return;
+    _inviteLinkSub?.cancel();
+    _inviteLinkSub = _appLinks.uriLinkStream.listen(
+      (uri) {
+        unawaited(_handleIncomingInviteUri(uri));
+      },
+      onError: (Object error) {
+        debugPrint('Invite link stream error: $error');
+      },
     );
+  }
+
+  Future<void> _handleIncomingInviteUri(Uri uri) async {
+    final code = _inviteService.extractInviteCodeFromUri(uri);
+    if (code == null || code.isEmpty) return;
+    await _joinFromInviteCode(code);
+  }
+
+  Future<void> _joinFromInviteCode(String code) async {
+    if (_inviteJoinInProgress || !mounted) return;
+    _inviteJoinInProgress = true;
+    try {
+      final joined = await _joinServerWithInvite(code);
+      if (!mounted || joined == null) return;
+      await _openScreen(
+        RoomChatScreen(
+          conversationId: joined.conversationId,
+          roomTitle: joined.title,
+          conversationType: 'server',
+          initialParticipants: joined.participants,
+        ),
+      );
+    } finally {
+      _inviteJoinInProgress = false;
+    }
   }
 
   Future<void> _openScreen(Widget screen) async {
@@ -731,6 +775,16 @@ class _HomeScreenState extends State<HomeScreen> {
       final conversationRef = _firestore
           .collection('conversations')
           .doc(conversationId);
+      await conversationRef.update({
+        'participants': FieldValue.arrayUnion([user.uid]),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'activeInviteCode': code,
+      });
+      await inviteRef.set({
+        'useCount': FieldValue.increment(1),
+        'lastAcceptedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
       final conversationSnap = await conversationRef.get(
         const GetOptions(source: Source.server),
       );
@@ -741,18 +795,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _showSnack('Server not found for this invite');
         return null;
       }
-
       final participants = _participantsFromConversation(conversationData);
-      final alreadyJoined = participants.contains(user.uid);
-      if (!alreadyJoined) {
-        await conversationRef.set({
-          'participants': FieldValue.arrayUnion([user.uid]),
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-        await inviteRef.set({
-          'useCount': FieldValue.increment(1),
-          'lastAcceptedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+      if (!participants.contains(user.uid)) {
         participants.add(user.uid);
       }
 
@@ -764,9 +808,13 @@ class _HomeScreenState extends State<HomeScreen> {
         participants: participants,
       );
     } on FirebaseException catch (e) {
+      if (e.code == 'not-found') {
+        _showSnack('Server not found for this invite');
+        return null;
+      }
       if (e.code == 'permission-denied') {
         _showSnack(
-          'Permission denied while joining server. Update Firestore rules for server invites.',
+          'Permission denied while joining server. Update Firestore rules for server invites and conversation joins.',
         );
         return null;
       }

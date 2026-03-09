@@ -245,7 +245,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
       final callerName = message['callerName']?.toString() ?? 'User';
       final isVideoRequested = message['isVideo'] == true;
-      final isVideo = isVideoRequested && !Platform.isWindows;
+      final isVideo = isVideoRequested;
 
       if (_appLifecycleState != AppLifecycleState.resumed ||
           Platform.isWindows) {

@@ -112,7 +112,8 @@ class _CallScreenState extends State<CallScreen> {
   String _callEndReason = 'ended';
   bool _callSummarySent = false;
 
-  bool get _isWindowsVideoUnsupported => Platform.isWindows;
+  // Keep video enabled on Windows unless the device/runtime fails at runtime.
+  bool get _isWindowsVideoUnsupported => false;
 
   Map<String, dynamic> _videoCallConstraints() {
     return {
@@ -856,6 +857,7 @@ class _CallScreenState extends State<CallScreen> {
     if (sendSummary) {
       unawaited(_sendCallSummaryMessage());
     }
+    ActiveSessionService().clearSession(sessionId: _sessionId);
     if (!mounted) return;
 
     setState(() => _phase = _CallPhase.ended);

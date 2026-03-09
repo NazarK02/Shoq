@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shoq Invite</title>
+    <style>
+      :root {
+        --bg: #0a1018;
+        --panel: #111a26;
+        --panel-2: #162233;
+        --text: #e8f0fb;
+        --muted: #8fa2ba;
+        --accent: #3dd7c4;
+        --border: #243347;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(80rem 40rem at -10% -10%, #1b2f4a66, transparent 55%),
+          radial-gradient(80rem 40rem at 110% 110%, #18474c4d, transparent 55%),
+          var(--bg);
+        color: var(--text);
+        font-family: "Trebuchet MS", "Segoe UI", Tahoma, sans-serif;
+        padding: 20px;
+      }
+
+      .card {
+        width: min(560px, 100%);
+        background: linear-gradient(180deg, var(--panel), var(--panel-2));
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 22px;
+        box-shadow: 0 16px 40px #00000066;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 28px;
+        letter-spacing: 0.02em;
+      }
+
+      p {
+        margin: 10px 0 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .server-card {
+        margin-top: 16px;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #0e1723;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .server-avatar {
+        width: 52px;
+        height: 52px;
+        border-radius: 12px;
+        object-fit: cover;
+        background: #1a2737;
+        border: 1px solid #2b3f56;
+      }
+
+      .server-name {
+        margin: 0;
+        font-size: 18px;
+        color: var(--text);
+        font-weight: 700;
+      }
+
+      .server-sub {
+        margin: 4px 0 0;
+        font-size: 13px;
+      }
+
+      .code-wrap {
+        margin-top: 18px;
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #0c141f;
+      }
+
+      .code-label {
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .code {
+        margin-top: 6px;
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        color: var(--accent);
+        word-break: break-all;
+      }
+
+      .actions {
+        margin-top: 18px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      button,
+      a.btn {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 14px;
+        color: var(--text);
+        background: #0f1826;
+        cursor: pointer;
+        text-decoration: none;
+        font-size: 14px;
+      }
+
+      button.primary {
+        background: #13463e;
+        border-color: #236f63;
+      }
+
+      button.enter {
+        background: #1e3f77;
+        border-color: #2d5aa4;
+      }
+
+      .steps {
+        margin-top: 16px;
+        padding-left: 18px;
+        color: var(--muted);
+      }
+
+      .steps li {
+        margin: 6px 0;
+      }
+
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Join Shoq Server</h1>
+      <p id="subtitle">Use this invite code in the Shoq app.</p>
+
+      <section id="serverSection" class="server-card hidden">
+        <img
+          id="serverAvatar"
+          class="server-avatar hidden"
+          alt="Server Avatar"
+        />
+        <div>
+          <p id="serverName" class="server-name"></p>
+          <p class="server-sub">Invite preview</p>
+        </div>
+      </section>
+
+      <section id="codeSection" class="code-wrap hidden">
+        <div class="code-label">Invite Code</div>
+        <div id="inviteCode" class="code"></div>
+      </section>
+
+      <ol class="steps">
+        <li>Open Shoq.</li>
+        <li>Tap <strong>Join server</strong>.</li>
+        <li>Paste the invite code and confirm.</li>
+      </ol>
+
+      <div class="actions">
+        <button id="openBtn" class="enter hidden" type="button">
+          Enter Server in Shoq
+        </button>
+        <button id="copyBtn" class="primary hidden" type="button">
+          Copy Code
+        </button>
+      </div>
+      <p>
+        This page is only for invite links. If direct open does not work,
+        copy the code and join manually in the app.
+      </p>
+    </main>
+
+    <script>
+      function normalizeCode(value) {
+        return (value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      }
+
+      function codeFromPath(pathname) {
+        var parts = (pathname || "")
+          .split("/")
+          .map(function (p) { return p.trim(); })
+          .filter(Boolean);
+        if (!parts.length) return "";
+        var markers = { "join-server": true, invite: true, join: true };
+        for (var i = 0; i < parts.length - 1; i++) {
+          if (markers[parts[i].toLowerCase()]) {
+            return normalizeCode(parts[i + 1]);
+          }
+        }
+        return "";
+      }
+
+      function getInviteCode() {
+        var url = new URL(window.location.href);
+        var keys = ["joinServer", "code", "invite", "server"];
+        for (var i = 0; i < keys.length; i++) {
+          var fromQuery = normalizeCode(url.searchParams.get(keys[i]));
+          if (fromQuery) return fromQuery;
+        }
+        var fromPath = codeFromPath(url.pathname);
+        if (fromPath) return fromPath;
+        return "";
+      }
+
+      function normalizeHttpUrl(value) {
+        var text = (value || "").trim();
+        if (!text) return "";
+        try {
+          var parsed = new URL(text);
+          if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+            return parsed.toString();
+          }
+        } catch (_) {}
+        return "";
+      }
+
+      function getServerMeta() {
+        var url = new URL(window.location.href);
+        var name = (url.searchParams.get("serverName") || "").trim();
+        var avatar = normalizeHttpUrl(url.searchParams.get("serverAvatar"));
+        return { name: name, avatar: avatar };
+      }
+
+      var code = getInviteCode();
+      var meta = getServerMeta();
+      var subtitle = document.getElementById("subtitle");
+      var serverSection = document.getElementById("serverSection");
+      var serverName = document.getElementById("serverName");
+      var serverAvatar = document.getElementById("serverAvatar");
+      var codeSection = document.getElementById("codeSection");
+      var inviteCode = document.getElementById("inviteCode");
+      var openBtn = document.getElementById("openBtn");
+      var copyBtn = document.getElementById("copyBtn");
+
+      if (meta.name || meta.avatar) {
+        if (meta.name) {
+          serverName.textContent = meta.name;
+        } else {
+          serverName.textContent = "Shoq Server";
+        }
+        if (meta.avatar) {
+          serverAvatar.src = meta.avatar;
+          serverAvatar.classList.remove("hidden");
+        }
+        serverSection.classList.remove("hidden");
+      }
+
+      if (code) {
+        inviteCode.textContent = code;
+        codeSection.classList.remove("hidden");
+        openBtn.classList.remove("hidden");
+        copyBtn.classList.remove("hidden");
+      } else {
+        subtitle.textContent =
+          "No invite code found in this link. Ask for a new invite link.";
+      }
+
+      openBtn.addEventListener("click", function () {
+        if (!code) return;
+        var deepLink = "shoq://join-server?joinServer=" + encodeURIComponent(code);
+        window.location.href = deepLink;
+      });
+
+      copyBtn.addEventListener("click", async function () {
+        if (!code) return;
+        try {
+          await navigator.clipboard.writeText(code);
+          copyBtn.textContent = "Copied";
+          setTimeout(function () { copyBtn.textContent = "Copy Code"; }, 1400);
+        } catch (_) {
+          alert("Could not copy automatically. Code: " + code);
+        }
+      });
+    </script>
+  </body>
+</html>
