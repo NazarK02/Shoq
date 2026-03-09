@@ -7,6 +7,8 @@ import 'chat_screen_e2ee.dart';
 import 'user_profile_view_screen.dart';
 import '../services/notification_service.dart';
 import '../services/user_cache_service.dart';
+import '../widgets/add_friend_sheet.dart';
+import '../widgets/my_qr_sheet.dart';
 
 class ImprovedFriendsListScreen extends StatefulWidget {
   const ImprovedFriendsListScreen({super.key});
@@ -22,6 +24,8 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final bool _isPreloading = false;
+  final _searchController = TextEditingController();
+  String _filter = '';
 
   @override
   void initState() {
@@ -34,7 +38,27 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
+  }
+
+  void _openMyQr() {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    MyQrSheet.show(
+      context,
+      uid: user.uid,
+      displayName: user.displayName ?? user.email ?? 'Me',
+    );
+  }
+
+  void _openAddFriend() {
+    AddFriendSheet.show(
+      context,
+      onFriendResolved: (userData) {
+        _sendFriendRequestFromQr(userData);
+      },
+    );
   }
 
   @override
@@ -48,6 +72,21 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Friends'),
+        actions: [
+          // Show own QR
+          IconButton(
+            icon: const Icon(Icons.qr_code_outlined),
+            tooltip: 'My QR Code',
+            onPressed: _openMyQr,
+          ),
+          // Add friend (scan or search)
+          IconButton(
+            icon: const Icon(Icons.person_add_outlined),
+            tooltip: 'Add Friend',
+            onPressed: _openAddFriend,
+          ),
+          const SizedBox(width: 4),
+        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: [
@@ -78,16 +117,47 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       body: TabBarView(
         controller: _tabController,
         children: [
-          _buildFriendsList(user.uid),
+          _buildFriendsListWithSearch(user.uid),
           _buildRequestsList(user.uid),
           _buildBlockedList(user.uid),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddFriendDialog(context),
-        icon: const Icon(Icons.person_add),
-        label: const Text('Add Friend'),
-      ),
+    );
+  }
+
+  Widget _buildFriendsListWithSearch(String userId) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: TextField(
+            controller: _searchController,
+            onChanged: (v) => setState(() => _filter = v),
+            decoration: InputDecoration(
+              hintText: 'Search friends',
+              prefixIcon: const Icon(Icons.search, size: 20),
+              suffixIcon: _filter.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 18),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _filter = '');
+                      },
+                    )
+                  : null,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              filled: true,
+              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+        ),
+        Expanded(child: _buildFriendsList(userId)),
+      ],
     );
   }
 
@@ -183,7 +253,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           );
         }
 
-        final friends = snapshot.data!.docs.toList();
+        var friends = snapshot.data!.docs.toList();
         friends.sort((a, b) {
           final aData = a.data() as Map<String, dynamic>;
           final bData = b.data() as Map<String, dynamic>;
@@ -196,6 +266,33 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
 
           return bTime.compareTo(aTime);
         });
+
+        // Apply search filter
+        if (_filter.isNotEmpty) {
+          final q = _filter.toLowerCase();
+          friends = friends.where((f) {
+            final fData = f.data() as Map<String, dynamic>;
+            final name = (fData['displayName'] as String? ?? '').toLowerCase();
+            final email = (fData['email'] as String? ?? '').toLowerCase();
+            return name.contains(q) || email.contains(q);
+          }).toList();
+        }
+
+        if (friends.isEmpty && _filter.isNotEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.search_off_outlined, size: 80, color: Colors.grey[400]),
+                const SizedBox(height: 16),
+                Text(
+                  'No friends match "$_filter"',
+                  style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          );
+        }
 
         return ListView.builder(
           itemCount: friends.length,
@@ -343,147 +440,23 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
   // ... (keeping all the existing methods for friend operations)
   // I'll include the essential ones below with optimizations
 
-  void _showAddFriendDialog(BuildContext context) {
-    final queryController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Send Friend Request'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Enter email or unique Friend ID'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: queryController,
-              decoration: const InputDecoration(
-                labelText: 'Email or Friend ID',
-                hintText: 'friend@example.com or @alex1234',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.emailAddress,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final query = queryController.text.trim();
-              if (query.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Please enter email or Friend ID'),
-                  ),
-                );
-                return;
-              }
-
-              Navigator.pop(context);
-              await _sendFriendRequest(query);
-            },
-            child: const Text('Send Request'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  bool _looksLikeEmail(String value) {
-    final text = value.trim();
-    if (text.isEmpty) return false;
-    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text);
-  }
-
-  String _normalizeFriendIdInput(String value) {
-    var normalized = value.trim().toLowerCase();
-    if (normalized.startsWith('@')) {
-      normalized = normalized.substring(1);
-    }
-    return normalized.replaceAll(RegExp(r'[^a-z0-9]'), '');
-  }
-
-  Future<void> _sendFriendRequest(String query) async {
+  Future<void> _sendFriendRequestFromQr(Map<String, dynamic> userData) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
 
+    final friendId = userData['uid'] as String?;
+    if (friendId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Invalid user data')),
+      );
+      return;
+    }
+
     try {
-      final isEmail = _looksLikeEmail(query);
-      final usersRef = _firestore.collection('users');
-      QuerySnapshot<Map<String, dynamic>> userQuery;
-
-      if (isEmail) {
-        final email = query.trim().toLowerCase();
-        userQuery = await usersRef
-            .where('emailLower', isEqualTo: email)
-            .limit(1)
-            .get();
-        if (userQuery.docs.isEmpty) {
-          userQuery = await usersRef
-              .where('email', isEqualTo: query.trim())
-              .limit(1)
-              .get();
-        }
-      } else {
-        final friendIdLower = _normalizeFriendIdInput(query);
-        final rawFriendId = query.trim().replaceFirst(RegExp(r'^@'), '');
-        if (friendIdLower.isEmpty) {
-          if (mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('Invalid Friend ID')));
-          }
-          return;
-        }
-        userQuery = await usersRef
-            .where('friendIdLower', isEqualTo: friendIdLower)
-            .limit(1)
-            .get();
-        if (userQuery.docs.isEmpty && rawFriendId.isNotEmpty) {
-          userQuery = await usersRef
-              .where('friendId', isEqualTo: rawFriendId)
-              .limit(1)
-              .get();
-        }
-        if (userQuery.docs.isEmpty &&
-            rawFriendId.isNotEmpty &&
-            rawFriendId.toLowerCase() != rawFriendId) {
-          userQuery = await usersRef
-              .where('friendId', isEqualTo: rawFriendId.toLowerCase())
-              .limit(1)
-              .get();
-        }
-      }
-
-      if (userQuery.docs.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                isEmail
-                    ? 'No user found for this email'
-                    : 'No user found for this Friend ID',
-              ),
-            ),
-          );
-        }
-        return;
-      }
-
-      final friendUser = userQuery.docs.first;
-      final friendId = friendUser.id;
-
       if (friendId == currentUser.uid) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('You cannot add yourself')),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('You cannot add yourself')),
+        );
         return;
       }
 
@@ -496,11 +469,9 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .get();
 
       if (existingFriend.exists) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Already friends')));
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Already friends')),
+        );
         return;
       }
 
@@ -513,11 +484,9 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .get();
 
       if (existingRequest.docs.isNotEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Friend request already sent')),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Friend request already sent')),
+        );
         return;
       }
 
@@ -546,16 +515,17 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Friend request sent!')));
+        final friendName = userData['displayName'] as String? ?? 'User';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Friend request sent to $friendName!')),
+        );
       }
     } catch (e) {
       debugPrint('Error sending friend request: $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: ${e.toString()}')),
+        );
       }
     }
   }
