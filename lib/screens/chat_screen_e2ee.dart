@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_streams.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart' as emoji_picker;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
 import 'package:mime/mime.dart';
@@ -236,7 +238,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     _firestore
         .collection('conversations')
         .doc(_conversationId)
-        .snapshots()
+        .safeSnapshots()
         .listen((snapshot) {
           if (snapshot.exists && mounted) {
             final data = snapshot.data();
@@ -290,16 +292,18 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   }
 
   void _listenToRecipientData() {
-    _firestore.collection('users').doc(widget.recipientId).snapshots().listen((
-      snapshot,
-    ) {
-      if (snapshot.exists && mounted) {
-        setState(() {
-          _recipientData = snapshot.data()!;
+    _firestore
+        .collection('users')
+        .doc(widget.recipientId)
+        .safeSnapshots()
+        .listen((snapshot) {
+          if (snapshot.exists && mounted) {
+            setState(() {
+              _recipientData = snapshot.data()!;
+            });
+            _userCache.mergeUserData(widget.recipientId, snapshot.data()!);
+          }
         });
-        _userCache.mergeUserData(widget.recipientId, snapshot.data()!);
-      }
-    });
   }
 
   Future<void> _sendMessage() async {
@@ -2745,36 +2749,32 @@ class _MessagesListState extends State<_MessagesList>
     final currentUserId = _auth.currentUser?.uid;
     if (conversationId == null || currentUserId == null) return;
 
-    const emojis = <String>[
+    const quickEmojis = <String>[
       '\u{1F44D}',
       '\u{2764}\u{FE0F}',
       '\u{1F602}',
       '\u{1F62E}',
       '\u{1F622}',
       '\u{1F621}',
-      '\u{1F389}',
-      '\u{1F44F}',
-      '\u{1F525}',
-      '\u{1F680}',
-      '\u{1F914}',
-      '\u{1F60D}',
     ];
     final myReactions = _extractReactions(message)[currentUserId] ?? const {};
-    final customEmojiController = TextEditingController();
 
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
       builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        final maxHeight = MediaQuery.of(context).size.height * 0.62;
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          child: SizedBox(
+            height: maxHeight,
             child: Column(
-              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (myReactions.isNotEmpty)
                   ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                     leading: const Icon(Icons.remove_circle_outline),
                     title: const Text('Remove my reactions'),
                     subtitle: Text(
@@ -2790,25 +2790,21 @@ class _MessagesListState extends State<_MessagesList>
                     },
                   ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 2, 4, 10),
-                  child: Row(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: customEmojiController,
-                          autofocus: true,
-                          textInputAction: TextInputAction.done,
-                          style: _withEmojiFallback(
-                            const TextStyle(fontSize: 20),
+                      for (final emoji in quickEmojis)
+                        ChoiceChip(
+                          label: Text(
+                            emoji,
+                            style: _withEmojiFallback(
+                              const TextStyle(fontSize: 22),
+                            ),
                           ),
-                          decoration: const InputDecoration(
-                            hintText: 'Type emoji from keyboard',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          onSubmitted: (value) async {
-                            final emoji = value.trim();
-                            if (emoji.isEmpty) return;
+                          selected: myReactions.contains(emoji),
+                          onSelected: (_) async {
                             Navigator.pop(context);
                             await _toggleReaction(
                               messageId: messageId,
@@ -2817,47 +2813,53 @@ class _MessagesListState extends State<_MessagesList>
                             );
                           },
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: () async {
-                          final emoji = customEmojiController.text.trim();
-                          if (emoji.isEmpty) return;
-                          Navigator.pop(context);
-                          await _toggleReaction(
-                            messageId: messageId,
-                            message: message,
-                            emoji: emoji,
-                          );
-                        },
-                        child: const Text('Add'),
-                      ),
                     ],
                   ),
                 ),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final emoji in emojis)
-                      ChoiceChip(
-                        label: Text(
-                          emoji,
-                          style: _withEmojiFallback(
-                            const TextStyle(fontSize: 22),
-                          ),
-                        ),
-                        selected: myReactions.contains(emoji),
-                        onSelected: (_) async {
-                          Navigator.pop(context);
-                          await _toggleReaction(
-                            messageId: messageId,
-                            message: message,
-                            emoji: emoji,
-                          );
-                        },
+                const Divider(height: 1),
+                Expanded(
+                  child: emoji_picker.EmojiPicker(
+                    onEmojiSelected: (_, selected) async {
+                      Navigator.pop(context);
+                      await _toggleReaction(
+                        messageId: messageId,
+                        message: message,
+                        emoji: selected.emoji,
+                      );
+                    },
+                    config: emoji_picker.Config(
+                      height: maxHeight,
+                      checkPlatformCompatibility: true,
+                      viewOrderConfig: const emoji_picker.ViewOrderConfig(
+                        top: emoji_picker.EmojiPickerItem.categoryBar,
+                        middle: emoji_picker.EmojiPickerItem.emojiView,
+                        bottom: emoji_picker.EmojiPickerItem.searchBar,
                       ),
-                  ],
+                      emojiViewConfig: emoji_picker.EmojiViewConfig(
+                        columns: 8,
+                        emojiSizeMax: 28,
+                        backgroundColor: colorScheme.surface,
+                      ),
+                      categoryViewConfig: emoji_picker.CategoryViewConfig(
+                        backgroundColor: colorScheme.surfaceContainerHighest,
+                        iconColor: colorScheme.onSurfaceVariant,
+                        iconColorSelected: colorScheme.primary,
+                        indicatorColor: colorScheme.primary,
+                        backspaceColor: colorScheme.primary,
+                        recentTabBehavior:
+                            emoji_picker.RecentTabBehavior.RECENT,
+                      ),
+                      bottomActionBarConfig:
+                          const emoji_picker.BottomActionBarConfig(
+                            enabled: false,
+                          ),
+                      searchViewConfig: emoji_picker.SearchViewConfig(
+                        backgroundColor: colorScheme.surface,
+                        buttonIconColor: colorScheme.onSurfaceVariant,
+                        hintText: 'Search emoji',
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -2865,7 +2867,6 @@ class _MessagesListState extends State<_MessagesList>
         );
       },
     );
-    customEmojiController.dispose();
   }
 
   Future<void> _showDeleteForEveryoneDialog({required String messageId}) async {

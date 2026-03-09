@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
-
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_streams.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -288,7 +288,7 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
 
   void _listenToPresence() {
     _presenceSub?.cancel();
-    _presenceSub = _voiceDocRef.snapshots().listen(
+    _presenceSub = _voiceDocRef.safeSnapshots().listen(
       (snapshot) async {
         final data = snapshot.data();
         if (data == null) {
@@ -947,7 +947,7 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
             stream: _voiceMessagesRef
                 .orderBy('clientTimestamp', descending: true)
                 .limit(150)
-                .snapshots(),
+                .safeSnapshots(),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return Center(

@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-
+import 'firestore_streams.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -99,14 +99,14 @@ class UserCacheService extends ChangeNotifier {
 
   void _ensureListener(String uid) {
     if (_subs.containsKey(uid)) return;
-    _subs[uid] = _firestore.collection('users').doc(uid).snapshots().listen((
-      snapshot,
-    ) {
-      final data = snapshot.data();
-      if (data == null) return;
-      _fetchedFromFirestore.add(uid);
-      _updateFromFirestore(uid, data, notify: true);
-    });
+    _subs[uid] = _firestore.collection('users').doc(uid).safeSnapshots().listen(
+      (snapshot) {
+        final data = snapshot.data();
+        if (data == null) return;
+        _fetchedFromFirestore.add(uid);
+        _updateFromFirestore(uid, data, notify: true);
+      },
+    );
   }
 
   void _updateFromFirestore(

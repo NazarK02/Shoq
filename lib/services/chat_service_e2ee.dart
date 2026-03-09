@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'firestore_streams.dart';
 import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'crypto_service.dart';
 import 'device_info_service.dart';
@@ -792,7 +793,7 @@ class ChatService {
         // clientTimestamp is available immediately and avoids reorder jitter
         // while server timestamps are being resolved.
         .orderBy('clientTimestamp', descending: false)
-        .snapshots();
+        .safeSnapshots();
   }
 
   /// Reads recent messages from Firestore local cache for instant first paint.
@@ -1064,7 +1065,7 @@ class ChatService {
     return _firestore
         .collection('conversations')
         .doc(conversationId)
-        .snapshots();
+        .safeSnapshots();
   }
 
   /// Clear all messages in a conversation
@@ -1146,7 +1147,7 @@ class ChatService {
     return _firestore
         .collection('conversations')
         .where('participants', arrayContains: currentUser.uid)
-        .snapshots();
+        .safeSnapshots();
   }
 
   /// Get user data

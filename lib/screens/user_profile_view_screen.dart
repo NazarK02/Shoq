@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_streams.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -104,7 +105,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         .doc(currentUser.uid)
         .collection('friends')
         .doc(widget.userId)
-        .snapshots()
+        .safeSnapshots()
         .listen((doc) {
           _friendChecked = true;
           _friendDocExists = doc.exists;
@@ -116,7 +117,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         .doc(currentUser.uid)
         .collection('blocked')
         .doc(widget.userId)
-        .snapshots()
+        .safeSnapshots()
         .listen((doc) {
           _blockedChecked = true;
           _blockedDocExists = doc.exists;
@@ -128,7 +129,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         .where('senderId', isEqualTo: currentUser.uid)
         .where('receiverId', isEqualTo: widget.userId)
         .where('status', isEqualTo: 'pending')
-        .snapshots()
+        .safeSnapshots()
         .listen((query) {
           _sentChecked = true;
           _sentReqExists = query.docs.isNotEmpty;
@@ -140,7 +141,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
         .where('senderId', isEqualTo: widget.userId)
         .where('receiverId', isEqualTo: currentUser.uid)
         .where('status', isEqualTo: 'pending')
-        .snapshots()
+        .safeSnapshots()
         .listen((query) {
           _receivedChecked = true;
           _receivedReqExists = query.docs.isNotEmpty;

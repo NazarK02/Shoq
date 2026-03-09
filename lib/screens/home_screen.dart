@@ -4,6 +4,7 @@ import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_streams.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'friends_list_screen.dart';
 import 'profile_screen.dart';
@@ -1225,7 +1226,7 @@ class _HomeScreenState extends State<HomeScreen> {
           .collection('friendRequests')
           .where('receiverId', isEqualTo: user.uid)
           .where('status', isEqualTo: 'pending')
-          .snapshots(),
+          .safeSnapshots(),
       builder: (context, snapshot) {
         final count = snapshot.hasData ? snapshot.data!.docs.length : 0;
 
@@ -1365,7 +1366,7 @@ class _HomeScreenState extends State<HomeScreen> {
       stream: _firestore
           .collection('conversations')
           .where('participants', arrayContains: user.uid)
-          .snapshots(),
+          .safeSnapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}'));

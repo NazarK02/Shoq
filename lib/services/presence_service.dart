@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'firestore_streams.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// Service to manage user online/offline presence and last seen.
 /// Lifecycle handling is done ONLY in main.dart's AuthWrapper —
@@ -95,11 +96,9 @@ class PresenceService {
 
   /// Live stream of a single user's status fields.
   Stream<Map<String, dynamic>?> getUserStatusStream(String userId) {
-    return _firestore
-        .collection('users')
-        .doc(userId)
-        .snapshots()
-        .map((snapshot) {
+    return _firestore.collection('users').doc(userId).safeSnapshots().map((
+      snapshot,
+    ) {
       if (!snapshot.exists) return null;
       final data = snapshot.data()!;
       return {

@@ -2,9 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_streams.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mime/mime.dart';
@@ -493,7 +494,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     _conversationSub = _firestore
         .collection('conversations')
         .doc(widget.conversationId)
-        .snapshots()
+        .safeSnapshots()
         .listen((snapshot) {
           final data = snapshot.data();
           if (data == null || !mounted) return;

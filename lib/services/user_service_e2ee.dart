@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'firestore_streams.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'crypto_service.dart';
@@ -207,7 +208,7 @@ class UserService {
     _userDocSub = _firestore
         .collection('users')
         .doc(user.uid)
-        .snapshots()
+        .safeSnapshots()
         .listen((snapshot) {
           if (snapshot.exists) {
             final data = snapshot.data();

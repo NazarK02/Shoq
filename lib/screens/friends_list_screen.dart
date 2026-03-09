@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_streams.dart';
 import 'chat_screen_e2ee.dart';
 import 'user_profile_view_screen.dart';
 import '../services/notification_service.dart';
@@ -96,7 +97,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .collection('contacts')
           .doc(userId)
           .collection('friends')
-          .snapshots(),
+          .safeSnapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return const SizedBox.shrink();
@@ -122,7 +123,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .collection('friendRequests')
           .where('receiverId', isEqualTo: userId)
           .where('status', isEqualTo: 'pending')
-          .snapshots(),
+          .safeSnapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return const SizedBox.shrink();
@@ -153,7 +154,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .collection('contacts')
           .doc(userId)
           .collection('friends')
-          .snapshots(),
+          .safeSnapshots(),
       builder: (context, snapshot) {
         // Don't show loading spinner after initial preload
         if (snapshot.connectionState == ConnectionState.waiting &&
@@ -227,7 +228,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .collection('friendRequests')
           .where('receiverId', isEqualTo: userId)
           .where('status', isEqualTo: 'pending')
-          .snapshots(),
+          .safeSnapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
@@ -281,7 +282,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .collection('contacts')
           .doc(userId)
           .collection('blocked')
-          .snapshots(),
+          .safeSnapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {

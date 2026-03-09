@@ -3,9 +3,10 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_streams.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -91,7 +92,7 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
     _conversationSub = _firestore
         .collection('conversations')
         .doc(widget.conversationId)
-        .snapshots()
+        .safeSnapshots()
         .listen(
           (snapshot) {
             final data = snapshot.data();
@@ -1154,7 +1155,7 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
                   .collection('messages')
                   .orderBy('clientTimestamp', descending: true)
                   .limit(160)
-                  .snapshots(),
+                  .safeSnapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting &&
                     !snapshot.hasData) {
