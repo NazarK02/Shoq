@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 import '../services/theme_service.dart';
 import '../services/windows_google_auth_service.dart';
+import '../generated/app_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class RegistrationScreen extends StatefulWidget {
@@ -59,11 +60,12 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
   // Email/Password Registration
   Future<void> _registerWithEmail() async {
+    final l = AppLocalizations.of(context);
     if (!_formKey.currentState!.validate()) return;
 
     if (!_acceptedTerms) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please accept the Terms and Conditions')),
+        SnackBar(content: Text(l.pleaseAcceptTerms)),
       );
       return;
     }
@@ -99,8 +101,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Verification email sent! Check your inbox.'),
+          SnackBar(
+            content: Text(l.verificationEmailSent),
           ),
         );
 
@@ -113,17 +115,18 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     } on FirebaseAuthException catch (e) {
       print('❌ Firebase Auth Error: ${e.code} - ${e.message}');
 
-      String message = 'An error occurred';
+      final l = AppLocalizations.of(context);
+      String message = l.authErrorDefault;
       if (e.code == 'weak-password') {
-        message = 'The password is too weak';
+        message = l.authErrorWeakPassword;
       } else if (e.code == 'email-already-in-use') {
-        message = 'An account already exists for this email';
+        message = l.authErrorEmailInUse;
       } else if (e.code == 'invalid-email') {
-        message = 'Invalid email address';
+        message = l.authErrorInvalidEmail;
       } else if (e.code == 'operation-not-allowed') {
-        message = 'Email/password accounts are not enabled';
+        message = l.authErrorNotAllowed;
       } else if (e.code == 'network-request-failed') {
-        message = 'Network error. Please check your connection.';
+        message = l.authErrorNetwork;
       }
 
       if (mounted) {
@@ -137,7 +140,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(content: Text('${l.authErrorDefault}: ${e.toString()}')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -146,16 +149,15 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
   // Google Sign-In
   Future<void> _signInWithGoogle() async {
+    final l = AppLocalizations.of(context);
     final isWindowsDesktop = !kIsWeb && Platform.isWindows;
     final usesProviderFlow = !kIsWeb && Platform.isMacOS;
 
     if (!kIsWeb && Platform.isLinux) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Google Sign-In is not supported on desktop. Use email/password.',
-            ),
+          SnackBar(
+            content: Text(l.googleSignInUnsupportedLinux),
           ),
         );
       }
@@ -173,7 +175,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
     if (!_acceptedTerms) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please accept the Terms and Conditions')),
+        SnackBar(content: Text(l.pleaseAcceptTerms)),
       );
       return;
     }
@@ -228,19 +230,19 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       print('Firebase Auth Error: ${e.code} - ${e.message}');
 
       if (mounted) {
-        String message = 'Google Sign-In failed';
+        final l = AppLocalizations.of(context);
+        String message = l.authErrorDefault;
         if (e.code == 'account-exists-with-different-credential') {
-          message = 'Account already exists with different credentials';
+          message = l.authErrorDefault;
         } else if (e.code == 'invalid-credential') {
-          message = 'Invalid credentials';
+          message = l.authErrorDefault;
         } else if (e.code == 'operation-not-allowed') {
-          message = 'Google Sign-In is not enabled';
+          message = l.authErrorDefault;
         } else if (e.code == 'user-disabled') {
-          message = 'This account has been disabled';
+          message = l.authErrorDefault;
         } else if (e.code == 'unknown-error' &&
             (e.message ?? '').contains('non-mobile systems')) {
-          message =
-              'Google Sign-In is not supported by Firebase Auth on this desktop platform.';
+          message = l.googleSignInUnsupportedPlatform;
         }
 
         ScaffoldMessenger.of(
@@ -251,8 +253,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       print('Unknown Error: $e');
 
       if (mounted) {
+        final l = AppLocalizations.of(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Sign-In error: ${e.toString()}')),
+          SnackBar(content: Text('${l.authErrorDefault}: ${e.toString()}')),
         );
       }
     } finally {
@@ -263,6 +266,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   @override
   Widget build(BuildContext context) {
     final themeService = Provider.of<ThemeService>(context);
+    final l = AppLocalizations.of(context);
 
     return Scaffold(
       body: SafeArea(
@@ -292,14 +296,14 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'Create Account',
+                        l.createAccount,
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.headlineMedium
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Sign up to get started',
+                        l.signUpToGetStarted,
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Colors.grey[600],
@@ -311,7 +315,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                       TextFormField(
                         controller: _nameController,
                         decoration: InputDecoration(
-                          labelText: 'Full Name',
+                          labelText: l.fullName,
                           prefixIcon: const Icon(Icons.person_outline),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -319,7 +323,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         ),
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) {
-                            return 'Please enter your name';
+                            return l.pleaseEnterName;
                           }
                           return null;
                         },
@@ -331,7 +335,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         controller: _emailController,
                         keyboardType: TextInputType.emailAddress,
                         decoration: InputDecoration(
-                          labelText: 'Email',
+                          labelText: l.email,
                           prefixIcon: const Icon(Icons.email_outlined),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -339,10 +343,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         ),
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) {
-                            return 'Please enter your email';
+                            return l.pleaseEnterEmail;
                           }
                           if (!value.contains('@')) {
-                            return 'Please enter a valid email';
+                            return l.authErrorInvalidEmail;
                           }
                           return null;
                         },
@@ -354,7 +358,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         controller: _passwordController,
                         obscureText: _obscurePassword,
                         decoration: InputDecoration(
-                          labelText: 'Password',
+                          labelText: l.password,
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
                             icon: Icon(
@@ -374,10 +378,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         ),
                         validator: (value) {
                           if (value == null || value.isEmpty) {
-                            return 'Please enter a password';
+                            return l.pleaseEnterPassword;
                           }
                           if (value.length < 6) {
-                            return 'Password must be at least 6 characters';
+                            return l.passwordTooShort;
                           }
                           return null;
                         },
@@ -389,7 +393,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         controller: _confirmPasswordController,
                         obscureText: _obscureConfirmPassword,
                         decoration: InputDecoration(
-                          labelText: 'Confirm Password',
+                          labelText: l.confirmPassword,
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
                             icon: Icon(
@@ -410,10 +414,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         ),
                         validator: (value) {
                           if (value == null || value.isEmpty) {
-                            return 'Please confirm your password';
+                            return l.pleaseConfirmPassword;
                           }
                           if (value != _passwordController.text) {
-                            return 'Passwords do not match';
+                            return l.passwordsDoNotMatch;
                           }
                           return null;
                         },
@@ -443,7 +447,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                     fontSize: 14,
                                   ),
                                   children: [
-                                    const TextSpan(text: 'I accept the '),
+                                    TextSpan(text: 'I accept the '),
                                     WidgetSpan(
                                       child: GestureDetector(
                                         onTap: () async {
@@ -459,7 +463,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                             ScaffoldMessenger.of(
                                               context,
                                             ).showSnackBar(
-                                              const SnackBar(
+                                              SnackBar(
                                                 content: Text(
                                                   'Could not open link',
                                                 ),
@@ -468,7 +472,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                           }
                                         },
                                         child: Text(
-                                          'Terms and Conditions',
+                                          l.termsOfService,
                                           style: TextStyle(
                                             color: Theme.of(
                                               context,
@@ -507,9 +511,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                   color: Colors.white,
                                 ),
                               )
-                            : const Text(
-                                'Sign Up',
-                                style: TextStyle(
+                            : Text(
+                                l.signUp,
+                                style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -524,7 +528,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             child: Text(
-                              'OR',
+                              l.orSeparator,
                               style: TextStyle(color: Colors.grey[600]),
                             ),
                           ),
@@ -542,8 +546,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         icon: const Icon(Icons.g_mobiledata, size: 32),
                         label: Text(
                           _googleSignInSupportedDesktop
-                              ? 'Continue with Google'
-                              : 'Google Sign-In unavailable on desktop',
+                              ? l.continueWithGoogle
+                              : l.googleSignInUnsupportedPlatform,
                           style: const TextStyle(fontSize: 16),
                         ),
                         style: OutlinedButton.styleFrom(
@@ -558,7 +562,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         const SizedBox(height: 8),
                         Text(
                           _googleSignInDesktopHint ??
-                              'Google Sign-In unavailable on desktop.',
+                              l.googleSignInUnsupportedLinux,
                           textAlign: TextAlign.center,
                           style: TextStyle(color: Colors.grey[600]),
                         ),
@@ -578,7 +582,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                               Navigator.pop(context);
                             },
                             child: Text(
-                              'Sign In',
+                              l.signIn,
                               style: TextStyle(
                                 color: Theme.of(context).colorScheme.primary,
                                 fontWeight: FontWeight.bold,
@@ -604,7 +608,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 onPressed: () {
                   themeService.toggleTheme();
                 },
-                tooltip: themeService.isDarkMode ? 'Light Mode' : 'Dark Mode',
+                tooltip: themeService.isDarkMode ? l.lightMode : l.darkMode,
               ),
             ),
           ],

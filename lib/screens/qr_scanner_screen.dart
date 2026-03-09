@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -134,7 +133,6 @@ class _ScanOverlay extends StatelessWidget {
 class _OverlayPainter extends CustomPainter {
   static const _size = 240.0;
   static const _cornerLength = 24.0;
-  static const _cornerRadius = 4.0;
   static const _strokeWidth = 3.0;
 
   @override

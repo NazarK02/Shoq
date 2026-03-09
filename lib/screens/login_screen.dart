@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 import '../services/theme_service.dart';
 import '../services/windows_google_auth_service.dart';
+import '../generated/app_localizations.dart';
 import 'registration_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -54,6 +55,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // Email/Password Login
   Future<void> _loginWithEmail() async {
+    final l = AppLocalizations.of(context);
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
@@ -68,17 +70,17 @@ class _LoginScreenState extends State<LoginScreen> {
         // AuthWrapper will automatically navigate
       }
     } on FirebaseAuthException catch (e) {
-      String message = 'Login failed';
+      String message = l.authErrorDefault;
       if (e.code == 'user-not-found') {
-        message = 'No user found with this email';
+        message = l.authErrorUserNotFound;
       } else if (e.code == 'wrong-password') {
-        message = 'Incorrect password';
+        message = l.authErrorWrongPassword;
       } else if (e.code == 'invalid-email') {
-        message = 'Invalid email address';
+        message = l.authErrorInvalidEmail;
       } else if (e.code == 'user-disabled') {
-        message = 'This account has been disabled';
+        message = l.authErrorDefault;
       } else if (e.code == 'too-many-requests') {
-        message = 'Too many attempts. Please try again later';
+        message = l.authErrorTooManyRequests;
       }
 
       if (mounted) {
@@ -90,7 +92,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(content: Text('${l.authErrorDefault}: ${e.toString()}')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -99,6 +101,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // Google Sign-In
   Future<void> _signInWithGoogle() async {
+    final l = AppLocalizations.of(context);
     final isWindowsDesktop = !kIsWeb && Platform.isWindows;
     final isLinuxDesktop = !kIsWeb && Platform.isLinux;
     final usesProviderFlow = !kIsWeb && Platform.isMacOS;
@@ -106,10 +109,8 @@ class _LoginScreenState extends State<LoginScreen> {
     if (isLinuxDesktop) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Google Sign-In is not supported on desktop. Use email/password.',
-            ),
+          SnackBar(
+            content: Text(l.googleSignInUnsupportedLinux),
           ),
         );
       }
@@ -164,13 +165,12 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } on FirebaseAuthException catch (e) {
       if (mounted) {
-        String message = 'Google Sign-In failed';
+        String message = l.authErrorDefault;
         if (e.code == 'account-exists-with-different-credential') {
-          message = 'Account already exists with different credentials';
+          message = l.authErrorDefault;
         } else if (e.code == 'unknown-error' &&
             (e.message ?? '').contains('non-mobile systems')) {
-          message =
-              'Google Sign-In is not supported by Firebase Auth on this desktop platform.';
+          message = l.googleSignInUnsupportedPlatform;
         }
 
         ScaffoldMessenger.of(
@@ -181,7 +181,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) {
         print('Google Sign-In Error: $e');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Sign-In error: ${e.toString()}')),
+          SnackBar(content: Text('${l.authErrorDefault}: ${e.toString()}')),
         );
       }
     } finally {
@@ -192,6 +192,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final themeService = Provider.of<ThemeService>(context);
+    final l = AppLocalizations.of(context);
 
     return Scaffold(
       body: SafeArea(
@@ -241,7 +242,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         controller: _emailController,
                         keyboardType: TextInputType.emailAddress,
                         decoration: InputDecoration(
-                          labelText: 'Email',
+                          labelText: l.email,
                           prefixIcon: const Icon(Icons.email_outlined),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -249,10 +250,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) {
-                            return 'Please enter your email';
+                            return l.pleaseEnterEmail;
                           }
                           if (!value.contains('@')) {
-                            return 'Please enter a valid email';
+                            return l.authErrorInvalidEmail;
                           }
                           return null;
                         },
@@ -264,7 +265,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         controller: _passwordController,
                         obscureText: _obscurePassword,
                         decoration: InputDecoration(
-                          labelText: 'Password',
+                          labelText: l.password,
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
                             icon: Icon(
@@ -284,7 +285,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         validator: (value) {
                           if (value == null || value.isEmpty) {
-                            return 'Please enter your password';
+                            return l.pleaseEnterPassword;
                           }
                           return null;
                         },
@@ -309,14 +310,12 @@ class _LoginScreenState extends State<LoginScreen> {
                           TextButton(
                             onPressed: () {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Forgot password - Coming soon',
-                                  ),
+                                SnackBar(
+                                  content: Text(l.comingSoon),
                                 ),
                               );
                             },
-                            child: const Text('Forgot Password?'),
+                            child: Text(l.forgotPassword),
                           ),
                         ],
                       ),
@@ -339,9 +338,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                   strokeWidth: 2,
                                 ),
                               )
-                            : const Text(
-                                'Sign In',
-                                style: TextStyle(
+                            : Text(
+                                l.signIn,
+                                style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -356,7 +355,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             child: Text(
-                              'OR',
+                              l.orSeparator,
                               style: TextStyle(color: Colors.grey[600]),
                             ),
                           ),
@@ -374,8 +373,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         icon: const Icon(Icons.g_mobiledata, size: 32),
                         label: Text(
                           _googleSignInSupportedDesktop
-                              ? 'Continue with Google'
-                              : 'Google Sign-In unavailable on desktop',
+                              ? l.continueWithGoogle
+                              : l.googleSignInUnsupportedPlatform,
                           style: const TextStyle(fontSize: 16),
                         ),
                         style: OutlinedButton.styleFrom(
@@ -390,7 +389,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 8),
                         Text(
                           _googleSignInDesktopHint ??
-                              'Google Sign-In unavailable on desktop.',
+                              l.googleSignInUnsupportedPlatform,
                           textAlign: TextAlign.center,
                           style: TextStyle(color: Colors.grey[600]),
                         ),
@@ -415,7 +414,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               );
                             },
                             child: Text(
-                              'Sign Up',
+                              l.signUp,
                               style: TextStyle(
                                 color: Theme.of(context).colorScheme.primary,
                                 fontWeight: FontWeight.bold,
@@ -440,7 +439,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 onPressed: () {
                   themeService.toggleTheme();
                 },
-                tooltip: themeService.isDarkMode ? 'Light Mode' : 'Dark Mode',
+                tooltip: themeService.isDarkMode ? l.lightMode : l.darkMode,
               ),
             ),
           ],

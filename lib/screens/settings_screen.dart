@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/notification_service.dart';
 import '../services/theme_service.dart';
+import '../generated/app_localizations.dart';
 import 'settings_language_picker.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -42,22 +43,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final themeService = Provider.of<ThemeService>(context);
+    final l = AppLocalizations.of(context);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'Notifications',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-          ),
+          // ── Notifications ─────────────────────────────────────────────────
+          _SectionHeader(label: 'Notifications'),
           SwitchListTile(
             secondary: const Icon(Icons.person_add_alt),
             title: const Text('Friend Requests'),
@@ -66,9 +59,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             value: _friendRequestsEnabled,
             onChanged: (value) {
-              setState(() {
-                _friendRequestsEnabled = value;
-              });
+              setState(() => _friendRequestsEnabled = value);
               _updateNotificationSettings();
             },
           ),
@@ -78,44 +69,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: const Text('Get notified when you receive a new message'),
             value: _messagesEnabled,
             onChanged: (value) {
-              setState(() {
-                _messagesEnabled = value;
-              });
+              setState(() => _messagesEnabled = value);
               _updateNotificationSettings();
             },
           ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'Appearance',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-          ),
+
+          // ── Appearance ────────────────────────────────────────────────────
+          _SectionHeader(label: 'Appearance'),
           SwitchListTile(
             secondary: Icon(
               themeService.isDarkMode ? Icons.dark_mode : Icons.light_mode,
             ),
-            title: const Text('Dark Mode'),
+            title: Text(l.darkMode),
             subtitle: Text(
-              themeService.isDarkMode
-                  ? 'Dark theme enabled'
-                  : 'Light theme enabled',
+              themeService.isDarkMode ? l.darkThemeEnabled : l.lightThemeEnabled,
             ),
             value: themeService.isDarkMode,
-            onChanged: (value) {
-              themeService.toggleTheme();
-            },
+            onChanged: (_) => themeService.toggleTheme(),
           ),
           ListTile(
             leading: const Icon(Icons.text_fields),
-            title: const Text('UI Size'),
+            title: Text(l.uiSize),
             subtitle: Text(
-              '${(themeService.uiScale * 100).round()}% • Bigger or smaller interface',
+              l.uiSizeSubtitle((themeService.uiScale * 100).round()),
             ),
           ),
           Padding(
@@ -126,133 +103,102 @@ class _SettingsScreenState extends State<SettingsScreen> {
               divisions: 20,
               label: '${(themeService.uiScale * 100).round()}%',
               value: themeService.uiScale,
-              onChanged: (value) {
-                themeService.setUiScale(value);
-              },
+              onChanged: (value) => themeService.setUiScale(value),
             ),
           ),
           SwitchListTile(
             secondary: const Icon(Icons.animation_outlined),
-            title: const Text('Reduce motion'),
-            subtitle: const Text('Use less animation for smoother navigation'),
+            title: Text(l.reduceMotion),
+            subtitle: Text(l.reduceMotionSubtitle),
             value: themeService.reduceMotion,
-            onChanged: (value) {
-              themeService.setReduceMotion(value);
-            },
+            onChanged: (value) => themeService.setReduceMotion(value),
           ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'Chat',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-          ),
+
+          // ── Chat ──────────────────────────────────────────────────────────
+          _SectionHeader(label: l.sectionChat),
           SwitchListTile(
             secondary: const Icon(Icons.link_outlined),
-            title: const Text('Link previews'),
-            subtitle: const Text(
-              'Show website and YouTube previews in messages',
-            ),
+            title: Text(l.linkPreviews),
+            subtitle: Text(l.linkPreviewsSubtitle),
             value: themeService.showLinkPreviews,
-            onChanged: (value) {
-              themeService.setShowLinkPreviews(value);
-            },
+            onChanged: (value) => themeService.setShowLinkPreviews(value),
           ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'General',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-          ),
+
+          // ── General ───────────────────────────────────────────────────────
+          _SectionHeader(label: l.sectionGeneral),
           ListTile(
             leading: const Icon(Icons.lock),
-            title: const Text('Privacy'),
-            subtitle: const Text('Control your privacy settings'),
+            title: Text(l.privacy),
+            subtitle: Text(l.privacySubtitle),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Privacy settings coming soon')),
-              );
-            },
+            onTap: () => _showSnack(context, l.privacySettingsComingSoon),
           ),
           ListTile(
             leading: const Icon(Icons.security),
-            title: const Text('Security'),
-            subtitle: const Text('Password and authentication'),
+            title: Text(l.security),
+            subtitle: Text(l.securitySubtitle),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Security settings coming soon')),
-              );
-            },
+            onTap: () => _showSnack(context, l.securitySettingsComingSoon),
           ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'Preferences',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-          ),
+
+          // ── Preferences ───────────────────────────────────────────────────
+          _SectionHeader(label: l.sectionPreferences),
+          // Language — uses the dedicated picker widget
           const LanguagePickerTile(),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'Support',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-          ),
+
+          // ── Support ───────────────────────────────────────────────────────
+          _SectionHeader(label: l.sectionSupport),
           ListTile(
             leading: const Icon(Icons.help_outline),
-            title: const Text('Help & Support'),
+            title: Text(l.helpSupport),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Help & Support coming soon')),
-              );
-            },
+            onTap: () => _showSnack(context, l.helpSupportComingSoon),
           ),
           ListTile(
             leading: const Icon(Icons.description),
-            title: const Text('Terms of Service'),
+            title: Text(l.termsOfService),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Terms of Service coming soon')),
-              );
-            },
+            onTap: () => _showSnack(context, l.termsComingSoon),
           ),
           ListTile(
             leading: const Icon(Icons.privacy_tip),
-            title: const Text('Privacy Policy'),
+            title: Text(l.privacyPolicy),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Privacy Policy coming soon')),
-              );
-            },
+            onTap: () => _showSnack(context, l.comingSoon),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showSnack(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+}
+
+/// Reusable section header — avoids the const Text boilerplate repeated
+/// throughout the original file.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+          color: Colors.grey,
+        ),
       ),
     );
   }

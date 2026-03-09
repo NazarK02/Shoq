@@ -12,6 +12,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/user_service_e2ee.dart';
 import '../services/theme_service.dart';
+import '../generated/app_localizations.dart';
 import 'photo_editor_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -1027,6 +1028,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final location = _userData?['location'] ?? '';
     final emailVerified = user?.emailVerified ?? false;
     final socialLinks = _getSocialLinks();
+    final l = AppLocalizations.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -1039,7 +1041,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onPressed: () {
               themeService.toggleTheme();
             },
-            tooltip: themeService.isDarkMode ? 'Light Mode' : 'Dark Mode',
+            tooltip: themeService.isDarkMode ? l.lightMode : l.darkMode,
           ),
         ],
       ),
