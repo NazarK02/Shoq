@@ -1,7 +1,7 @@
 # Shoq
 
 
-**English** · [Português (Portugal)](README.pt-PT.md) · [Українська (README.uk.md)]
+**English** · [Português (Portugal)](README.pt-PT.md) · [Українська](README.uk.md)
 
 A production-grade, end-to-end encrypted messenger built with Flutter and Firebase.
 Zero server-side plaintext. Every message is encrypted on your device before it leaves.
