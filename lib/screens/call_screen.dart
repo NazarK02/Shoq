@@ -112,6 +112,10 @@ class _CallScreenState extends State<CallScreen> {
   String _callEndReason = 'ended';
   bool _callSummarySent = false;
 
+  // Camera preview positioning
+  Offset _cameraPosition = const Offset(16, 24);
+  bool _showCameraPreview = true;
+
   // Keep video enabled on Windows unless the device/runtime fails at runtime.
   bool get _isWindowsVideoUnsupported => false;
 
@@ -1041,37 +1045,51 @@ class _CallScreenState extends State<CallScreen> {
         duration: duration,
       );
 
-      await _chatService.initializeEncryption();
-      final conversationId = await _chatService.initializeConversation(peerId);
-      if (conversationId == null) return;
-      final normalizedCallId =
-          (_callId ??
-                  '${currentUser.uid}_${_callOpenedAt.microsecondsSinceEpoch}')
-              .replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-      final summaryMessageId = 'call_$normalizedCallId';
+      try {
+        await _chatService.initializeEncryption();
+        final conversationId = await _chatService.initializeConversation(peerId);
+        if (conversationId == null) return;
+        final normalizedCallId =
+            (_callId ??
+                    '${currentUser.uid}_${_callOpenedAt.microsecondsSinceEpoch}')
+                .replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+        final summaryMessageId = 'call_$normalizedCallId';
 
-      await _chatService.sendMessage(
-        conversationId: conversationId,
-        messageText: summaryText,
-        recipientId: peerId,
-        messageId: summaryMessageId,
-        callSummary: {
-          'kind': _isVideo ? 'video' : 'audio',
-          'result': result,
-          'durationSeconds': duration.inSeconds,
-          'startedAtMs': startedAt.millisecondsSinceEpoch,
-        },
-      );
+        await _chatService.sendMessage(
+          conversationId: conversationId,
+          messageText: summaryText,
+          recipientId: peerId,
+          messageId: summaryMessageId,
+          callSummary: {
+            'kind': _isVideo ? 'video' : 'audio',
+            'result': result,
+            'durationSeconds': duration.inSeconds,
+            'startedAtMs': startedAt.millisecondsSinceEpoch,
+          },
+        );
+      } catch (e) {
+        // Encryption errors should not prevent the call from closing
+        debugPrint('Failed to send encrypted call summary message: $e');
+        // Optionally send unencrypted summary as fallback
+        try {
+          // Could implement unencrypted fallback here if needed
+        } catch (_) {}
+      }
     } catch (e) {
       debugPrint('Failed to send call summary message: $e');
     }
   }
 
   Future<void> _minimizeToHome() async {
-    await Navigator.of(
-      context,
-      rootNavigator: true,
-    ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
+    // Pop the current call screen instead of pushing a new route
+    if (mounted) {
+      Navigator.of(context).canPop() 
+        ? Navigator.of(context).pop()
+        : await Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+            (route) => false,
+          );
+    }
   }
 
   void _toggleMute() {
@@ -1314,27 +1332,66 @@ class _CallScreenState extends State<CallScreen> {
     if (!hasLocalVideo ||
         _isCameraOff ||
         _localRenderer == null ||
-        _localRenderer!.srcObject == null) {
-      return const Positioned.fill(child: SizedBox.shrink());
+        _localRenderer!.srcObject == null ||
+        !_showCameraPreview) {
+      return const SizedBox.shrink();
     }
 
+    // Draggable camera preview that can be positioned on sides
     return Positioned(
-      top: 24,
-      right: 16,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          width: 110,
-          height: 150,
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.white24, width: 2),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: RTCVideoView(
-            _localRenderer!,
-            mirror: true,
-            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
-          ),
+      right: _cameraPosition.dx > 0 ? _cameraPosition.dx : null,
+      left: _cameraPosition.dx < 0 ? -_cameraPosition.dx : null,
+      top: _cameraPosition.dy,
+      child: GestureDetector(
+        onPanUpdate: (details) {
+          setState(() {
+            _cameraPosition = Offset(
+              _cameraPosition.dx + details.delta.dx,
+              _cameraPosition.dy + details.delta.dy,
+            );
+          });
+        },
+        child: Stack(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: 120,
+                height: 160,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white24, width: 2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: RTCVideoView(
+                  _localRenderer!,
+                  mirror: true,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+                ),
+              ),
+            ),
+            // Minimize/close button for camera preview
+            Positioned(
+              top: 4,
+              right: 4,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() => _showCameraPreview = false);
+                },
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    shape: BoxShape.circle,
+                  ),
+                  padding: const EdgeInsets.all(4),
+                  child: const Icon(
+                    Icons.close,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1363,10 +1420,28 @@ class _CallScreenState extends State<CallScreen> {
                   ),
                 ),
               ),
+              // Show camera button if preview is hidden
+              if (!_showCameraPreview && _isVideo && !_isCameraOff)
+                IconButton(
+                  onPressed: () {
+                    setState(() => _showCameraPreview = true);
+                  },
+                  tooltip: 'Show camera',
+                  icon: const Icon(Icons.videocam, color: Colors.white),
+                  constraints: const BoxConstraints(
+                    minWidth: 44,
+                    minHeight: 44,
+                  ),
+                ),
+              // Return/back button - clearly visible and accessible
               IconButton(
                 onPressed: _minimizeToHome,
-                tooltip: 'Open chats',
-                icon: const Icon(Icons.open_in_new, color: Colors.white),
+                tooltip: 'Return to chat',
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                constraints: const BoxConstraints(
+                  minWidth: 48,
+                  minHeight: 48,
+                ),
               ),
             ],
           ),
@@ -1508,7 +1583,7 @@ class _CallScreenState extends State<CallScreen> {
           children: [
             Positioned.fill(child: _buildRemoteView()),
             _buildTopActions(),
-            _buildLocalPreview(),
+            if (_showCameraPreview) _buildLocalPreview(),
             Positioned(left: 0, right: 0, bottom: 0, child: _buildControls()),
           ],
         ),

@@ -239,9 +239,62 @@
 
     </main>
 
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js"></script>
+
     <script>
+      // Firebase initialization
+      const firebaseConfig = {
+        apiKey: "AIzaSyBqQhLqEjEehuQlcvjxGPzLBJmHDzAEEao",
+        authDomain: "shoq-bfa54.firebaseapp.com",
+        projectId: "shoq-bfa54",
+        storageBucket: "shoq-bfa54.appspot.com",
+        messagingSenderId: "377919689277",
+        appId: "1:377919689277:web:69f6a06e6367e567f75054"
+      };
+
+      firebase.initializeApp(firebaseConfig);
+      const db = firebase.firestore();
+
+      // Decode invite code to get room/conversation ID
+      // Invite codes are typically base64-encoded room IDs or server codes
+      function decodeInviteCode(code) {
+        try {
+          // Try base64 decoding first
+          const decoded = atob(code);
+          return decoded;
+        } catch (e) {
+          // If not base64, return as-is (might be a room ID directly)
+          return code;
+        }
+      }
+
+      // Fetch server/conversation data
+      async function fetchServerData(conversationId) {
+        try {
+          const docRef = db.collection('conversations').doc(conversationId);
+          const docSnap = await docRef.get();
+          
+          if (!docSnap.exists) {
+            console.warn('Conversation not found:', conversationId);
+            return null;
+          }
+
+          const data = docSnap.data();
+          return {
+            name: data.name || data.title || 'Server',
+            avatar: data.avatar || data.avatarUrl || null,
+            participants: Array.isArray(data.participants) ? data.participants.length : 0,
+            description: data.description || null
+          };
+        } catch (error) {
+          console.error('Failed to fetch server data:', error);
+          return null;
+        }
+      }
+
+      // Main initialization
       (() => {
-        // Parse URL params for invite code
         const url = new URL(window.location);
         const code = url.searchParams.get('code');
 
@@ -258,6 +311,34 @@
         // Show code section
         document.getElementById('codeSection').classList.remove('hidden');
         document.getElementById('displayCode').textContent = code.toUpperCase();
+
+        // Decode and fetch server data
+        const conversationId = decodeInviteCode(code);
+        
+        fetchServerData(conversationId).then(serverData => {
+          if (serverData) {
+            // Show server preview section
+            const serverSection = document.getElementById('serverSection');
+            document.getElementById('serverName').textContent = serverData.name;
+            document.getElementById('serverMemberCount').textContent = 
+              `${serverData.participants} member${serverData.participants === 1 ? '' : 's'}`;
+            
+            // Set avatar if available
+            if (serverData.avatar) {
+              const img = document.getElementById('serverAvatar');
+              img.src = serverData.avatar;
+              img.classList.remove('hidden');
+            }
+            
+            serverSection.classList.remove('hidden');
+          } else {
+            // Server data not available, hide preview section
+            document.getElementById('serverSection').classList.add('hidden');
+          }
+        }).catch(error => {
+          console.error('Error fetching server data:', error);
+          document.getElementById('serverSection').classList.add('hidden');
+        });
 
         // Open in Shoq (deep link)
         document.getElementById('openInShoqBtn').addEventListener('click', () => {

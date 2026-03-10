@@ -222,7 +222,8 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
 
   void _startPresenceHeartbeat() {
     _presenceHeartbeat?.cancel();
-    _presenceHeartbeat = Timer.periodic(const Duration(seconds: 12), (_) {
+    // Send heartbeat every 8 seconds to ensure members stay visible
+    _presenceHeartbeat = Timer.periodic(const Duration(seconds: 8), (_) {
       unawaited(_updatePresenceHeartbeat());
     });
   }
@@ -334,12 +335,15 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
         data: Map<String, dynamic>.from(value),
       );
       final seenAt = member.updatedAt?.toDate() ?? member.joinedAt?.toDate();
+      // Increased timeout from 40 to 70 seconds to accommodate network delays
       if (seenAt != null &&
-          now.difference(seenAt) > const Duration(seconds: 40)) {
+          now.difference(seenAt) > const Duration(seconds: 70)) {
+        debugPrint('Voice: Removing stale member $userId (seen ${now.difference(seenAt).inSeconds}s ago)');
         return;
       }
       result[userId] = member;
     });
+    debugPrint('Voice: Parsed ${result.length} active members');
     return result;
   }
 
@@ -928,7 +932,29 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
 
   Widget _buildMembersPanel() {
     if (_members.isEmpty) {
-      return const Center(child: Text('No one is connected yet.'));
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.group,
+                size: 48,
+                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Waiting for participants...',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
     }
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
