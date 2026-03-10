@@ -42,6 +42,8 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
     try {
       final user = _auth.currentUser;
       if (user != null && !user.emailVerified) {
+        // Workaround for Firebase Windows threading bug: defer off the widget tree's hot path
+        await Future.delayed(Duration.zero);
         await user.sendEmailVerification();
 
         if (mounted) {

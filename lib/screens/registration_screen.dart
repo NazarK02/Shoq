@@ -96,6 +96,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
       // Send verification email
       print('📧 Sending verification email...');
+      // Workaround for Firebase Windows threading bug: defer off the widget tree's hot path
+      await Future.delayed(Duration.zero);
       await refreshedUser?.sendEmailVerification();
       print('✅ Verification email sent');
 
