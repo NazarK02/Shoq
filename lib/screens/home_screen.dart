@@ -23,7 +23,9 @@ import 'chat_screen_e2ee.dart';
 enum _CreateSheetAction { createFolder, createGroup, createServer, joinServer }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final bool suppressInviteHandling;
+
+  const HomeScreen({super.key, this.suppressInviteHandling = false});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -70,8 +72,10 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadCachedConversations();
     _loadFolderState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_handleInitialInviteLink());
-      _listenForInviteLinks();
+      if (!widget.suppressInviteHandling) {
+        unawaited(_handleInitialInviteLink());
+        _listenForInviteLinks();
+      }
     });
     _rebuildTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
@@ -111,12 +115,17 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_launchInviteHandled || !mounted) return;
     _launchInviteHandled = true;
 
-    var code = _inviteService.extractInitialInviteCode();
+    var code = _inviteService.extractInitialInviteCode(
+      allowLoosePath: !Platform.isWindows,
+    );
     if ((code == null || code.isEmpty) && !Platform.isWindows) {
       try {
         final initialUri = await _appLinks.getInitialLink();
         if (initialUri != null) {
-          code = _inviteService.extractInviteCodeFromUri(initialUri);
+          code = _inviteService.extractInviteCodeFromUri(
+            initialUri,
+            allowLoosePath: true,
+          );
         }
       } catch (_) {
         // Ignore malformed launch links and continue with normal startup.
@@ -141,7 +150,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleIncomingInviteUri(Uri uri) async {
-    final code = _inviteService.extractInviteCodeFromUri(uri);
+    final code = _inviteService.extractInviteCodeFromUri(
+      uri,
+      allowLoosePath: true,
+    );
     if (code == null || code.isEmpty) return;
     await _joinFromInviteCode(code);
   }

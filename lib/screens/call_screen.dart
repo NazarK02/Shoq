@@ -113,7 +113,11 @@ class _CallScreenState extends State<CallScreen> {
   bool _callSummarySent = false;
 
   // Camera preview positioning
-  Offset _cameraPosition = const Offset(16, 24);
+  static const double _cameraPreviewWidth = 120;
+  static const double _cameraPreviewHeight = 160;
+  static const double _cameraPreviewMargin = 12;
+  Offset _cameraPosition = Offset.zero;
+  bool _cameraPositionInitialized = false;
   bool _showCameraPreview = true;
 
   // Keep video enabled on Windows unless the device/runtime fails at runtime.
@@ -126,6 +130,55 @@ class _CallScreenState extends State<CallScreen> {
       'height': {'ideal': 540},
       'frameRate': {'ideal': 24, 'max': 30},
     };
+  }
+
+  void _scheduleCameraPositionInit() {
+    if (_cameraPositionInitialized || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _cameraPositionInitialized) return;
+      final media = MediaQuery.of(context);
+      final size = media.size;
+      final topInset = media.padding.top + 64;
+      final maxX = size.width - _cameraPreviewWidth - _cameraPreviewMargin;
+      final initialX = maxX < _cameraPreviewMargin
+          ? _cameraPreviewMargin
+          : maxX;
+      final initialY = topInset;
+      setState(() {
+        _cameraPosition = Offset(initialX, initialY);
+        _cameraPositionInitialized = true;
+      });
+    });
+  }
+
+  Offset _clampCameraPosition(Offset position) {
+    final media = MediaQuery.of(context);
+    final size = media.size;
+    final minX = _cameraPreviewMargin;
+    final maxX = size.width - _cameraPreviewWidth - _cameraPreviewMargin;
+    final minY = media.padding.top + 64;
+    final maxY =
+        size.height - _cameraPreviewHeight - (media.padding.bottom + 120);
+    final clampedX = position.dx.clamp(
+      minX,
+      maxX < minX ? minX : maxX,
+    );
+    final clampedY = position.dy.clamp(
+      minY,
+      maxY < minY ? minY : maxY,
+    );
+    return Offset(clampedX, clampedY);
+  }
+
+  double _snapCameraX(double currentX) {
+    final media = MediaQuery.of(context);
+    final size = media.size;
+    final centerX = currentX + (_cameraPreviewWidth / 2);
+    final maxX = size.width - _cameraPreviewWidth - _cameraPreviewMargin;
+    final target = centerX < size.width / 2
+        ? _cameraPreviewMargin
+        : (maxX < _cameraPreviewMargin ? _cameraPreviewMargin : maxX);
+    return target;
   }
 
   @override
@@ -631,6 +684,12 @@ class _CallScreenState extends State<CallScreen> {
           if (mounted) setState(() {});
           return;
         }
+        track.onMute = () {
+          if (mounted) setState(() {});
+        };
+        track.onUnMute = () {
+          if (mounted) setState(() {});
+        };
         _isVideo = true;
         await _ensureVideoRenderers();
         if (_remoteRenderer != null) {
@@ -649,6 +708,14 @@ class _CallScreenState extends State<CallScreen> {
           return;
         }
         _isVideo = true;
+        for (final track in stream.getVideoTracks()) {
+          track.onMute = () {
+            if (mounted) setState(() {});
+          };
+          track.onUnMute = () {
+            if (mounted) setState(() {});
+          };
+        }
         unawaited(
           _ensureVideoRenderers().then((_) {
             if (_remoteRenderer != null && _hasRemoteVideo()) {
@@ -721,6 +788,13 @@ class _CallScreenState extends State<CallScreen> {
         debugPrint(
           '   Video track: ${track.label} (enabled: ${track.enabled})',
         );
+      }
+
+      if (_isVideo && videoTracks.isNotEmpty) {
+        for (final track in videoTracks) {
+          track.enabled = true;
+        }
+        _isCameraOff = false;
       }
     } catch (e, stack) {
       debugPrint('❌ Failed to get media: $e');
@@ -1081,15 +1155,15 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _minimizeToHome() async {
-    // Pop the current call screen instead of pushing a new route
-    if (mounted) {
-      Navigator.of(context).canPop() 
-        ? Navigator.of(context).pop()
-        : await Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const HomeScreen()),
-            (route) => false,
-          );
-    }
+    if (!mounted) return;
+    await Navigator.of(
+      context,
+      rootNavigator: true,
+    ).push(
+      MaterialPageRoute(
+        builder: (_) => const HomeScreen(suppressInviteHandling: true),
+      ),
+    );
   }
 
   void _toggleMute() {
@@ -1244,7 +1318,8 @@ class _CallScreenState extends State<CallScreen> {
   bool _hasRemoteVideo() {
     if (_remoteStream == null) return false;
     final tracks = _remoteStream!.getVideoTracks();
-    return tracks.isNotEmpty && tracks.any((t) => t.enabled);
+    return tracks.isNotEmpty &&
+        tracks.any((t) => t.enabled && t.muted != true);
   }
 
   Widget _buildAvatar() {
@@ -1337,18 +1412,34 @@ class _CallScreenState extends State<CallScreen> {
       return const SizedBox.shrink();
     }
 
-    // Draggable camera preview that can be positioned on sides
-    return Positioned(
-      right: _cameraPosition.dx > 0 ? _cameraPosition.dx : null,
-      left: _cameraPosition.dx < 0 ? -_cameraPosition.dx : null,
-      top: _cameraPosition.dy,
+    _scheduleCameraPositionInit();
+    final clamped = _clampCameraPosition(_cameraPosition);
+    if (clamped != _cameraPosition) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _cameraPosition = clamped);
+      });
+    }
+
+    // Draggable camera preview that snaps to the nearest side
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      left: clamped.dx,
+      top: clamped.dy,
       child: GestureDetector(
         onPanUpdate: (details) {
           setState(() {
-            _cameraPosition = Offset(
-              _cameraPosition.dx + details.delta.dx,
-              _cameraPosition.dy + details.delta.dy,
+            _cameraPosition = _clampCameraPosition(
+              _cameraPosition + details.delta,
             );
+          });
+        },
+        onPanEnd: (_) {
+          final snapX = _snapCameraX(_cameraPosition.dx);
+          setState(() {
+            _cameraPosition =
+                _clampCameraPosition(Offset(snapX, _cameraPosition.dy));
           });
         },
         child: Stack(
@@ -1356,8 +1447,8 @@ class _CallScreenState extends State<CallScreen> {
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: Container(
-                width: 120,
-                height: 160,
+                width: _cameraPreviewWidth,
+                height: _cameraPreviewHeight,
                 decoration: BoxDecoration(
                   border: Border.all(color: Colors.white24, width: 2),
                   borderRadius: BorderRadius.circular(12),
@@ -1582,8 +1673,8 @@ class _CallScreenState extends State<CallScreen> {
         child: Stack(
           children: [
             Positioned.fill(child: _buildRemoteView()),
-            _buildTopActions(),
             if (_showCameraPreview) _buildLocalPreview(),
+            _buildTopActions(),
             Positioned(left: 0, right: 0, bottom: 0, child: _buildControls()),
           ],
         ),

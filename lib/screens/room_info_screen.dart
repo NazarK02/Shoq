@@ -163,10 +163,12 @@ class _RoomInfoScreenState extends State<RoomInfoScreen> {
   String _inviteLinkForCode(String code) {
     final title = _conversation?['title']?.toString().trim() ?? '';
     final avatar = _conversation?['avatarUrl']?.toString().trim() ?? '';
+    final description = _conversation?['description']?.toString().trim() ?? '';
     return _inviteService.buildInviteLink(
       code,
       serverName: title,
       serverAvatarUrl: avatar,
+      serverDescription: description,
     );
   }
 

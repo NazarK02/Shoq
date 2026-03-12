@@ -77,31 +77,46 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
       final db = FirebaseFirestore.instance;
       QuerySnapshot snap;
 
-      if (q.contains('@')) {
-        // Search by email
+      if (q.startsWith("@")) {
+        final friendId = q.substring(1).trim();
+        if (friendId.isEmpty) {
+          setState(() => _error = 'Enter a valid friend ID.');
+          return;
+        }
         snap = await db
             .collection('users')
-            .where('email', isEqualTo: q)
+            .where('friendIdLower', isEqualTo: friendId.toLowerCase())
+            .limit(1)
+            .get();
+      } else if (q.contains('@')) {
+        // Search by email (case-insensitive)
+        snap = await db
+            .collection('users')
+            .where('emailLower', isEqualTo: q.toLowerCase())
             .limit(1)
             .get();
       } else {
-        // Treat as UID — direct document fetch is faster than a query
+        // Treat as UID - direct document fetch is faster than a query
         final doc = await db.collection('users').doc(q).get();
         if (doc.exists) {
           final data = {'uid': doc.id, ...doc.data()!};
           setState(() => _result = data);
           return;
-        } else {
-          setState(() => _error = 'No user found with that ID or email.');
-          return;
         }
+        // Fallback: friendId without leading "@"
+        snap = await db
+            .collection('users')
+            .where('friendIdLower', isEqualTo: q.toLowerCase())
+            .limit(1)
+            .get();
       }
 
       if (snap.docs.isEmpty) {
         setState(() => _error = 'No user found with that ID or email.');
       } else {
         final doc = snap.docs.first;
-        setState(() => _result = {'uid': doc.id, ...doc.data() as Map<String, dynamic>});
+        setState(() =>
+            _result = {'uid': doc.id, ...doc.data() as Map<String, dynamic>});
       }
     } catch (e) {
       setState(() => _error = 'Something went wrong. Please try again.');
@@ -171,7 +186,7 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
             autofocus: true,
             textInputAction: TextInputAction.search,
             decoration: InputDecoration(
-              hintText: 'UID or email address',
+              hintText: 'UID, email, or @friendId',
               prefixIcon: const Icon(Icons.search),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -300,3 +315,4 @@ class _UserResultCard extends StatelessWidget {
     );
   }
 }
+

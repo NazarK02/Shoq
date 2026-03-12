@@ -122,6 +122,12 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
       await _startLocalAudio();
       await _verifyMembership(user.uid);
       await _joinPresence(user);
+      if (mounted) {
+        setState(() {
+          _members = _mergeSelfMember(_members);
+        });
+      }
+      await _refreshPresenceFromServer();
 
       _listenToPresence();
       _listenToSignaling();
@@ -302,7 +308,7 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
           return;
         }
 
-        final parsed = _parseMembers(data['activeMembers']);
+        final parsed = _mergeSelfMember(_parseMembers(data['activeMembers']));
         if (mounted) {
           setState(() {
             _members = parsed;
@@ -321,6 +327,23 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
         });
       },
     );
+  }
+
+  Future<void> _refreshPresenceFromServer() async {
+    try {
+      final snapshot =
+          await _voiceDocRef.get(const GetOptions(source: Source.server));
+      final data = snapshot.data();
+      if (data == null) return;
+      final parsed = _mergeSelfMember(_parseMembers(data['activeMembers']));
+      if (!mounted) return;
+      setState(() {
+        _members = parsed;
+      });
+      await _syncPeerConnections(parsed);
+    } catch (e) {
+      debugPrint('Voice presence refresh failed: $e');
+    }
   }
 
   Map<String, _VoiceMember> _parseMembers(dynamic raw) {
@@ -345,6 +368,34 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
     });
     debugPrint('Voice: Parsed ${result.length} active members');
     return result;
+  }
+
+  _VoiceMember? _buildSelfMember() {
+    final user = _auth.currentUser;
+    final uid = _selfUid;
+    if (user == null || uid == null || uid.isEmpty) return null;
+    return _VoiceMember(
+      userId: uid,
+      clientId: _signaling.clientId,
+      displayName: user.displayName?.trim().isNotEmpty == true
+          ? user.displayName!.trim()
+          : 'You',
+      photoUrl: user.photoURL ?? '',
+      muted: _isMuted,
+      joinedAt: null,
+      updatedAt: null,
+    );
+  }
+
+  Map<String, _VoiceMember> _mergeSelfMember(
+    Map<String, _VoiceMember> members,
+  ) {
+    final uid = _selfUid;
+    if (uid == null || uid.isEmpty || !_joinedPresence) return members;
+    if (members.containsKey(uid)) return members;
+    final selfMember = _buildSelfMember();
+    if (selfMember == null) return members;
+    return <String, _VoiceMember>{...members, uid: selfMember};
   }
 
   Future<void> _syncPeerConnections(Map<String, _VoiceMember> members) async {
@@ -405,17 +456,39 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
     }
 
     pc.onTrack = (RTCTrackEvent event) {
-      if (event.track.kind != 'audio' || event.streams.isEmpty) return;
-      final stream = event.streams.first;
-      if (_isDeafened) {
-        for (final track in stream.getAudioTracks()) {
-          track.enabled = false;
+      if (event.track.kind != 'audio') return;
+      if (event.streams.isNotEmpty) {
+        final stream = event.streams.first;
+        if (_isDeafened) {
+          for (final track in stream.getAudioTracks()) {
+            track.enabled = false;
+          }
         }
+        if (!mounted) return;
+        setState(() {
+          _remoteStreams[member.userId] = stream;
+        });
+        return;
       }
-      if (!mounted) return;
-      setState(() {
-        _remoteStreams[member.userId] = stream;
-      });
+
+      unawaited(() async {
+        final existing = _remoteStreams[member.userId];
+        final stream =
+            existing ?? await createLocalMediaStream('remote_${member.userId}');
+        final hasTrack = stream.getTracks().any((t) => t.id == event.track.id);
+        if (!hasTrack) {
+          stream.addTrack(event.track);
+        }
+        if (_isDeafened) {
+          for (final track in stream.getAudioTracks()) {
+            track.enabled = false;
+          }
+        }
+        if (!mounted) return;
+        setState(() {
+          _remoteStreams[member.userId] = stream;
+        });
+      }());
     };
 
     pc.onIceCandidate = (RTCIceCandidate candidate) {
@@ -778,7 +851,11 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
     await Navigator.of(
       context,
       rootNavigator: true,
-    ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
+    ).push(
+      MaterialPageRoute(
+        builder: (_) => const HomeScreen(suppressInviteHandling: true),
+      ),
+    );
   }
 
   String? _normalizePhotoUrl(String? raw) {

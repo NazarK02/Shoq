@@ -103,6 +103,13 @@
         color: var(--muted);
       }
 
+      .server-desc {
+        font-size: 0.78rem;
+        color: var(--muted);
+        margin-top: 0.3rem;
+        line-height: 1.45;
+      }
+
       /* ── Invite code ── */
       .code-wrap {
         background: rgba(0,200,255,0.05);
@@ -210,6 +217,7 @@
         <div>
           <div class="server-name" id="serverName">—</div>
           <div class="server-sub" id="serverMemberCount">—</div>
+          <div class="server-desc hidden" id="serverDescription"></div>
         </div>
       </section>
 
@@ -241,6 +249,7 @@
 
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js"></script>
 
     <script>
       // Firebase initialization
@@ -255,18 +264,33 @@
 
       firebase.initializeApp(firebaseConfig);
       const db = firebase.firestore();
+      const auth = firebase.auth();
 
-      // Decode invite code to get room/conversation ID
-      // Invite codes are typically base64-encoded room IDs or server codes
-      function decodeInviteCode(code) {
-        try {
-          // Try base64 decoding first
-          const decoded = atob(code);
-          return decoded;
-        } catch (e) {
-          // If not base64, return as-is (might be a room ID directly)
-          return code;
+      function normalizeInviteCode(code) {
+        return (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      }
+
+      function resolveInviteCode(url) {
+        const keys = ['joinServer', 'code', 'invite', 'server'];
+        for (const key of keys) {
+          const value = url.searchParams.get(key);
+          if (value && value.trim()) return value.trim();
         }
+        const segments = url.pathname
+          .split('/')
+          .map((segment) => segment.trim())
+          .filter(Boolean);
+        const markers = new Set(['join-server', 'invite', 'join']);
+        for (let i = 0; i < segments.length - 1; i += 1) {
+          if (markers.has(segments[i].toLowerCase())) {
+            return segments[i + 1];
+          }
+        }
+        if (segments.length > 0) {
+          const tail = segments[segments.length - 1];
+          if (tail.length >= 6) return tail;
+        }
+        return '';
       }
 
       // Fetch server/conversation data
@@ -293,10 +317,52 @@
         }
       }
 
+      async function fetchInviteServerData(code) {
+        if (!code) return null;
+        try {
+          const inviteSnap = await db.collection('serverInvites').doc(code).get();
+          if (!inviteSnap.exists) return null;
+          const inviteData = inviteSnap.data() || {};
+          const serverId = (inviteData.serverId || '').toString().trim();
+          if (!serverId) return null;
+          return await fetchServerData(serverId);
+        } catch (error) {
+          console.warn('Failed to fetch invite data:', error);
+          return null;
+        }
+      }
+
+      function applyServerPreview(serverData) {
+        if (!serverData) return;
+        const serverSection = document.getElementById('serverSection');
+        const name = serverData.name || 'Server';
+        const participants = Number.isFinite(serverData.participants)
+          ? serverData.participants
+          : null;
+        const description = (serverData.description || '').toString().trim();
+        document.getElementById('serverName').textContent = name;
+        document.getElementById('serverMemberCount').textContent = participants == null
+          ? 'Member count available in app'
+          : `${participants} member${participants === 1 ? '' : 's'}`;
+
+        if (serverData.avatar) {
+          const img = document.getElementById('serverAvatar');
+          img.src = serverData.avatar;
+          img.classList.remove('hidden');
+        }
+        const descEl = document.getElementById('serverDescription');
+        if (description) {
+          descEl.textContent = description;
+          descEl.classList.remove('hidden');
+        }
+        serverSection.classList.remove('hidden');
+      }
+
       // Main initialization
       (() => {
         const url = new URL(window.location);
-        const code = url.searchParams.get('code');
+        const rawCode = resolveInviteCode(url);
+        const code = normalizeInviteCode(rawCode);
 
         if (!code) {
           console.warn('No invite code in URL');
@@ -310,35 +376,30 @@
 
         // Show code section
         document.getElementById('codeSection').classList.remove('hidden');
-        document.getElementById('displayCode').textContent = code.toUpperCase();
+        document.getElementById('displayCode').textContent = code;
 
-        // Decode and fetch server data
-        const conversationId = decodeInviteCode(code);
-        
-        fetchServerData(conversationId).then(serverData => {
-          if (serverData) {
-            // Show server preview section
-            const serverSection = document.getElementById('serverSection');
-            document.getElementById('serverName').textContent = serverData.name;
-            document.getElementById('serverMemberCount').textContent = 
-              `${serverData.participants} member${serverData.participants === 1 ? '' : 's'}`;
-            
-            // Set avatar if available
-            if (serverData.avatar) {
-              const img = document.getElementById('serverAvatar');
-              img.src = serverData.avatar;
-              img.classList.remove('hidden');
+        const serverName = url.searchParams.get('serverName');
+        const serverAvatar = url.searchParams.get('serverAvatar');
+        const serverDesc = url.searchParams.get('serverDesc');
+        if ((serverName && serverName.trim()) || (serverAvatar && serverAvatar.trim())) {
+          applyServerPreview({
+            name: serverName,
+            avatar: serverAvatar,
+            description: serverDesc,
+            participants: null,
+          });
+        }
+
+        auth.signInAnonymously()
+          .then(() => fetchInviteServerData(code))
+          .then((serverData) => {
+            if (serverData) {
+              applyServerPreview(serverData);
             }
-            
-            serverSection.classList.remove('hidden');
-          } else {
-            // Server data not available, hide preview section
-            document.getElementById('serverSection').classList.add('hidden');
-          }
-        }).catch(error => {
-          console.error('Error fetching server data:', error);
-          document.getElementById('serverSection').classList.add('hidden');
-        });
+          })
+          .catch((error) => {
+            console.warn('Invite preview auth failed:', error);
+          });
 
         // Open in Shoq (deep link)
         document.getElementById('openInShoqBtn').addEventListener('click', () => {

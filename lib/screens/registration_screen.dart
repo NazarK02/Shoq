@@ -1,4 +1,5 @@
-import 'dart:io' show Platform;
+import 'dart:convert';
+import 'dart:io' show HttpClient, Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -6,6 +7,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 import '../services/theme_service.dart';
 import '../services/windows_google_auth_service.dart';
+import '../services/firebase_options.dart';
 import '../generated/app_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -58,6 +60,77 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     super.dispose();
   }
 
+  Future<UserCredential> _createUserWithEmail(
+    String email,
+    String password,
+  ) async {
+    if (Platform.isWindows) {
+      return _createUserWithEmailWindowsRest(email, password);
+    }
+    return _auth.createUserWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+  }
+
+  Future<UserCredential> _createUserWithEmailWindowsRest(
+    String email,
+    String password,
+  ) async {
+    final apiKey = DefaultFirebaseOptions.currentPlatform.apiKey;
+    final uri = Uri.parse(
+      'https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$apiKey',
+    );
+
+    final client = HttpClient();
+    final request = await client.postUrl(uri);
+    request.headers.set('Content-Type', 'application/json');
+    request.add(
+      utf8.encode(
+        jsonEncode({
+          'email': email,
+          'password': password,
+          'returnSecureToken': true,
+        }),
+      ),
+    );
+    final response = await request.close();
+    final responseBody = await response.transform(utf8.decoder).join();
+    client.close();
+
+    if (response.statusCode >= 400) {
+      final error = _parseRestAuthError(responseBody);
+      throw FirebaseAuthException(
+        code: error.$1,
+        message: error.$2,
+      );
+    }
+
+    return _auth.signInWithEmailAndPassword(email: email, password: password);
+  }
+
+  (String, String?) _parseRestAuthError(String body) {
+    try {
+      final data = jsonDecode(body);
+      if (data is Map && data['error'] is Map) {
+        final message = data['error']['message']?.toString() ?? 'UNKNOWN';
+        switch (message) {
+          case 'EMAIL_EXISTS':
+            return ('email-already-in-use', 'Email already in use.');
+          case 'INVALID_EMAIL':
+            return ('invalid-email', 'Invalid email address.');
+          case 'WEAK_PASSWORD':
+            return ('weak-password', 'Weak password.');
+          case 'OPERATION_NOT_ALLOWED':
+            return ('operation-not-allowed', 'Operation not allowed.');
+          default:
+            return ('unknown', message);
+        }
+      }
+    } catch (_) {}
+    return ('unknown', 'Registration failed.');
+  }
+
   // Email/Password Registration
   Future<void> _registerWithEmail() async {
     final l = AppLocalizations.of(context);
@@ -79,32 +152,55 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
       print('🔵 Creating user account...');
 
+      if (Platform.isWindows) {
+        // Give the UI thread a tiny breather before hitting platform channels.
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+
       // Create user
-      UserCredential userCredential = await _auth
-          .createUserWithEmailAndPassword(email: email, password: password);
+      UserCredential userCredential = await _createUserWithEmail(
+        email,
+        password,
+      );
 
       print('✅ User account created: ${userCredential.user?.uid}');
 
-      // Update display name
-      await userCredential.user?.updateDisplayName(name);
+      // Update display name (safe to skip if it fails)
+      if (!Platform.isWindows) {
+        try {
+          await userCredential.user?.updateDisplayName(name);
+        } catch (e) {
+          print('⚠️ Display name update failed: $e');
+        }
+      } else {
+        print('Windows: skipping display name update until later.');
+      }
 
-      // IMPORTANT: Reload the user to get the updated displayName
-      await userCredential.user?.reload();
+      if (!Platform.isWindows) {
+        // IMPORTANT: Reload the user to get the updated displayName
+        await userCredential.user?.reload();
 
-      // Get the refreshed user object
-      User? refreshedUser = _auth.currentUser;
+        // Get the refreshed user object
+        User? refreshedUser = _auth.currentUser;
 
-      // Send verification email
-      print('📧 Sending verification email...');
-      // Workaround for Firebase Windows threading bug: defer off the widget tree's hot path
-      await Future.delayed(Duration.zero);
-      await refreshedUser?.sendEmailVerification();
-      print('✅ Verification email sent');
+        // Send verification email
+        print('📧 Sending verification email...');
+        // Workaround for Firebase Windows threading bug: defer off the widget tree's hot path
+        await Future.delayed(Duration.zero);
+        await refreshedUser?.sendEmailVerification();
+        print('✅ Verification email sent');
+      } else {
+        print('Windows: skipping auto verification email; user can resend manually.');
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(l.verificationEmailSent),
+            content: Text(
+              Platform.isWindows
+                  ? 'Account created. Please verify your email from the verification screen.'
+                  : l.verificationEmailSent,
+            ),
           ),
         );
 

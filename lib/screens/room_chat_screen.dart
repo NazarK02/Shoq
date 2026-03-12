@@ -2465,6 +2465,14 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
       );
     }
 
+    final isEncrypted = data['encrypted'] == true;
+    if (!isEncrypted) {
+      final plainText = data['text']?.toString().trim() ?? '';
+      if (plainText.isNotEmpty) {
+        return buildTextBody(plainText);
+      }
+    }
+
     final signature = _decryptSignature(data);
     if (_decryptInputSignatures[messageId] != signature) {
       _decryptInputSignatures[messageId] = signature;

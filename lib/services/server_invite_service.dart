@@ -5,6 +5,7 @@ class ServerInviteService {
     String code, {
     String? serverName,
     String? serverAvatarUrl,
+    String? serverDescription,
   }) {
     final normalized = _normalizeCode(code);
     if (normalized.isEmpty) return '';
@@ -21,6 +22,12 @@ class ServerInviteService {
         (parsedAvatar.scheme == 'http' || parsedAvatar.scheme == 'https')) {
       queryParameters['serverAvatar'] = parsedAvatar.toString();
     }
+    final trimmedDesc = serverDescription?.trim() ?? '';
+    if (trimmedDesc.isNotEmpty) {
+      final sanitized = trimmedDesc.replaceAll(RegExp(r'\\s+'), ' ');
+      queryParameters['serverDesc'] =
+          sanitized.length > 180 ? sanitized.substring(0, 180) : sanitized;
+    }
     return base
         .replace(
           path: '/join-server',
@@ -35,7 +42,10 @@ class ServerInviteService {
 
     final parsed = Uri.tryParse(raw);
     if (parsed != null) {
-      final codeFromUri = extractInviteCodeFromUri(parsed);
+      final codeFromUri = extractInviteCodeFromUri(
+        parsed,
+        allowLoosePath: true,
+      );
       if (codeFromUri != null && codeFromUri.isNotEmpty) {
         return codeFromUri;
       }
@@ -55,7 +65,7 @@ class ServerInviteService {
     return _normalizeCode(raw);
   }
 
-  String? extractInviteCodeFromUri(Uri uri) {
+  String? extractInviteCodeFromUri(Uri uri, {bool allowLoosePath = true}) {
     for (final key in const ['code', 'joinServer', 'invite', 'server']) {
       final value = uri.queryParameters[key];
       if (value != null && value.trim().isNotEmpty) {
@@ -63,7 +73,10 @@ class ServerInviteService {
       }
     }
 
-    final codeFromPath = _codeFromPathSegments(uri.pathSegments);
+    final codeFromPath = _codeFromPathSegments(
+      uri.pathSegments,
+      allowLoosePath: allowLoosePath,
+    );
     if (codeFromPath != null) {
       return codeFromPath;
     }
@@ -82,6 +95,7 @@ class ServerInviteService {
         }
         final fragmentPathCode = _codeFromPathSegments(
           parsedFragment.pathSegments,
+          allowLoosePath: allowLoosePath,
         );
         if (fragmentPathCode != null) {
           return fragmentPathCode;
@@ -92,9 +106,10 @@ class ServerInviteService {
     return null;
   }
 
-  String? extractInitialInviteCode() {
+  String? extractInitialInviteCode({bool allowLoosePath = true}) {
     final uri = Uri.base;
-    final code = extractInviteCodeFromUri(uri);
+    final code =
+        extractInviteCodeFromUri(uri, allowLoosePath: allowLoosePath);
     if (code != null && code.isNotEmpty) {
       return code;
     }
@@ -107,7 +122,10 @@ class ServerInviteService {
     return Uri.parse(_defaultInviteBase);
   }
 
-  String? _codeFromPathSegments(List<String> segments) {
+  String? _codeFromPathSegments(
+    List<String> segments, {
+    bool allowLoosePath = true,
+  }) {
     if (segments.isEmpty) return null;
     final cleaned = segments
         .map((segment) => segment.trim())
@@ -123,9 +141,11 @@ class ServerInviteService {
         }
       }
     }
-    final tail = _normalizeCode(cleaned.last);
-    if (tail.length >= 6) {
-      return tail;
+    if (allowLoosePath) {
+      final tail = _normalizeCode(cleaned.last);
+      if (tail.length >= 6) {
+        return tail;
+      }
     }
     return null;
   }

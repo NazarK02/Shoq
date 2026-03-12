@@ -34,7 +34,7 @@ Stream<QuerySnapshot<T>> _windowsQuerySnapshots<T extends Object?>(
   String? previousDigest;
   while (true) {
     try {
-      final snapshot = await query.get();
+      final snapshot = await query.get(const GetOptions(source: Source.server));
       final digest = _queryDigest(snapshot);
       if (digest != previousDigest) {
         previousDigest = digest;
@@ -54,7 +54,8 @@ Stream<DocumentSnapshot<T>> _windowsDocumentSnapshots<T extends Object?>(
   String? previousDigest;
   while (true) {
     try {
-      final snapshot = await document.get();
+      final snapshot =
+          await document.get(const GetOptions(source: Source.server));
       final digest = _documentDigest(snapshot);
       if (digest != previousDigest) {
         previousDigest = digest;

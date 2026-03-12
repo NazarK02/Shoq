@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/user_service_e2ee.dart';
@@ -16,6 +17,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   Timer? _timer;
   bool _isResending = false;
   int _resendCountdown = 0;
+  bool _verificationCheckInProgress = false;
 
   void _handleVerifiedState() {
     _timer?.cancel();
@@ -29,7 +31,9 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   @override
   void initState() {
     super.initState();
-    _startVerificationCheck();
+    if (!Platform.isWindows) {
+      _startVerificationCheck();
+    }
   }
 
   @override
@@ -78,13 +82,24 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   }
 
   void _startVerificationCheck() {
-    _timer = Timer.periodic(const Duration(seconds: 3), (timer) async {
-      final user = _auth.currentUser;
-      if (user != null) {
-        await user.reload(); // Refresh emailVerified status
-        if (_auth.currentUser?.emailVerified == true) {
-          _handleVerifiedState();
+    if (Platform.isWindows) return;
+    if (_timer != null) return;
+    final interval = const Duration(seconds: 3);
+    _timer = Timer.periodic(interval, (timer) async {
+      if (_verificationCheckInProgress) return;
+      _verificationCheckInProgress = true;
+      try {
+        final user = _auth.currentUser;
+        if (user != null) {
+          await user.reload().timeout(const Duration(seconds: 5));
+          if (_auth.currentUser?.emailVerified == true) {
+            _handleVerifiedState();
+          }
         }
+      } catch (e) {
+        debugPrint('Verification check failed: $e');
+      } finally {
+        _verificationCheckInProgress = false;
       }
     });
   }
@@ -152,6 +167,18 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+                if (Platform.isWindows) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'Auto-check runs in the background on Windows. If it doesn\'t update, tap "I\'ve Verified My Email".',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.65),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 32),
 
                 // Resend button
@@ -183,23 +210,35 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                     final messenger = ScaffoldMessenger.of(context);
                     final user = _auth.currentUser;
                     if (user != null) {
-                      await user.reload();
-                      // Do not navigate here; AuthWrapper will route when
-                      // `emailVerified` flips to true. Just cancel the timer
-                      // so we stop polling and give the StreamBuilder a chance
-                      // to react to the auth change.
-                      if (_auth.currentUser?.emailVerified == true) {
-                        _handleVerifiedState();
+                      if (Platform.isWindows) {
+                        try {
+                          final token = await user.getIdTokenResult(true);
+                          final claims = token.claims ?? const <String, dynamic>{};
+                          final verified =
+                              claims['email_verified'] == true ||
+                              claims['emailVerified'] == true;
+                          if (verified) {
+                            _handleVerifiedState();
+                            return;
+                          }
+                        } catch (e) {
+                          debugPrint('Windows verification check failed: $e');
+                        }
                       } else {
-                        if (!mounted) return;
-                        messenger.showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Email not verified yet. Please check your inbox.',
-                            ),
-                          ),
-                        );
+                        await user.reload();
+                        if (_auth.currentUser?.emailVerified == true) {
+                          _handleVerifiedState();
+                          return;
+                        }
                       }
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Email not verified yet. Please check your inbox.',
+                          ),
+                        ),
+                      );
                     }
                   },
                   icon: const Icon(Icons.check_circle_outline),
