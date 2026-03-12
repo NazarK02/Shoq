@@ -115,25 +115,29 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_launchInviteHandled || !mounted) return;
     _launchInviteHandled = true;
 
-    var code = _inviteService.extractInitialInviteCode(
-      allowLoosePath: !Platform.isWindows,
-    );
-    if ((code == null || code.isEmpty) && !Platform.isWindows) {
-      try {
-        final initialUri = await _appLinks.getInitialLink();
-        if (initialUri != null) {
-          code = _inviteService.extractInviteCodeFromUri(
-            initialUri,
-            allowLoosePath: true,
-          );
+    try {
+      var code = _inviteService.extractInitialInviteCode(
+        allowLoosePath: !Platform.isWindows,
+      );
+      if ((code == null || code.isEmpty) && !Platform.isWindows) {
+        try {
+          final initialUri = await _appLinks.getInitialLink();
+          if (initialUri != null) {
+            code = _inviteService.extractInviteCodeFromUri(
+              initialUri,
+              allowLoosePath: true,
+            );
+          }
+        } catch (_) {
+          // Ignore malformed launch links and continue with normal startup.
         }
-      } catch (_) {
-        // Ignore malformed launch links and continue with normal startup.
       }
-    }
 
-    if (code == null || code.isEmpty) return;
-    await _joinFromInviteCode(code);
+      if (code == null || code.isEmpty) return;
+      await _joinFromInviteCode(code);
+    } catch (e) {
+      debugPrint('Initial invite handling failed: $e');
+    }
   }
 
   void _listenForInviteLinks() {
@@ -150,12 +154,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleIncomingInviteUri(Uri uri) async {
-    final code = _inviteService.extractInviteCodeFromUri(
-      uri,
-      allowLoosePath: true,
-    );
-    if (code == null || code.isEmpty) return;
-    await _joinFromInviteCode(code);
+    try {
+      final code = _inviteService.extractInviteCodeFromUri(
+        uri,
+        allowLoosePath: true,
+      );
+      if (code == null || code.isEmpty) return;
+      await _joinFromInviteCode(code);
+    } catch (e) {
+      debugPrint('Incoming invite handling failed: $e');
+    }
   }
 
   Future<void> _joinFromInviteCode(String code) async {
@@ -172,6 +180,11 @@ class _HomeScreenState extends State<HomeScreen> {
           initialParticipants: joined.participants,
         ),
       );
+    } catch (e) {
+      debugPrint('Join from invite failed: $e');
+      if (mounted) {
+        _showSnack('Could not open invite: $e');
+      }
     } finally {
       _inviteJoinInProgress = false;
     }

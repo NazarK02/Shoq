@@ -1156,10 +1156,7 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _minimizeToHome() async {
     if (!mounted) return;
-    await Navigator.of(
-      context,
-      rootNavigator: true,
-    ).push(
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => const HomeScreen(suppressInviteHandling: true),
       ),

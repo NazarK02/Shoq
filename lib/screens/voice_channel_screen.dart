@@ -84,6 +84,11 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
       conversationTitle: widget.conversationTitle,
       channelName: widget.channelName,
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ActiveSessionService().bindRoute(context, sessionId: _sessionId);
+      }
+    });
     unawaited(_initializeVoiceChannel());
   }
 
@@ -848,10 +853,7 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
   }
 
   Future<void> _minimizeToHome() async {
-    await Navigator.of(
-      context,
-      rootNavigator: true,
-    ).push(
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => const HomeScreen(suppressInviteHandling: true),
       ),

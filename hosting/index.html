@@ -247,14 +247,14 @@
 
     </main>
 
-    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 
     <script>
       // Firebase initialization
       const firebaseConfig = {
-        apiKey: "AIzaSyBqQhLqEjEehuQlcvjxGPzLBJmHDzAEEao",
+        apiKey: "AIzaSyCxi5tfDUNbSrdMWfdaC1j84DTfTJBGbEc",
         authDomain: "shoq-bfa54.firebaseapp.com",
         projectId: "shoq-bfa54",
         storageBucket: "shoq-bfa54.appspot.com",
@@ -403,7 +403,7 @@
 
         // Open in Shoq (deep link)
         document.getElementById('openInShoqBtn').addEventListener('click', () => {
-          const deepLink = `shoq://join?code=${encodeURIComponent(code)}`;
+          const deepLink = `shoq://join-server?joinServer=${encodeURIComponent(code)}`;
           window.location.href = deepLink;
 
           // Fallback: if app doesn't open, copy code after a delay

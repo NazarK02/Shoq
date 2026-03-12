@@ -28,7 +28,9 @@ import '../services/user_cache_service.dart';
 import '../services/file_download_service.dart';
 import '../services/message_cache_service.dart';
 import '../services/theme_service.dart';
+import '../services/tenor_service.dart';
 import '../widgets/chat_message_text.dart';
+import '../widgets/sticker_gif_picker.dart';
 import 'user_profile_view_screen.dart';
 import 'image_viewer_screen.dart';
 import 'video_viewer_screen.dart';
@@ -429,64 +431,26 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     }
   }
 
-  Future<void> _showStickerPicker() async {
-    if (_conversationId == null) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-            child: GridView.builder(
-              shrinkWrap: true,
-              itemCount: kDefaultChatStickers.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 5,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 1,
-              ),
-              itemBuilder: (context, index) {
-                final sticker = kDefaultChatStickers[index];
-                return InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _sendSticker(sticker);
-                  },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    alignment: Alignment.center,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: CachedNetworkImage(
-                        imageUrl: sticker.imageUrl,
-                        width: 46,
-                        height: 46,
-                        fit: BoxFit.cover,
-                        errorWidget: (context, url, error) => Text(
-                          sticker.fallback,
-                          style: _withEmojiFallback(
-                            const TextStyle(fontSize: 30),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        );
-      },
+  Future<void> _sendGif(TenorGif gif) async {
+    final sticker = ChatSticker(
+      id: 'gif_${gif.id}',
+      imageUrl: gif.fullUrl,
+      fallback: '[GIF]',
+      pack: 'tenor',
+      label: 'GIF',
     );
+    await _sendSticker(sticker);
+  }
+
+  Future<void> _showStickerGifPicker() async {
+    if (_conversationId == null) return;
+    final result = await StickerGifPicker.show(context);
+    if (!mounted || result == null) return;
+    if (result is ChatSticker) {
+      await _sendSticker(result);
+    } else if (result is TenorGif) {
+      await _sendGif(result);
+    }
   }
 
   void _setReplyDraft(_ReplyDraft draft) {
@@ -1590,14 +1554,16 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                     alpha: 0.55,
                   ),
                   shape: const CircleBorder(),
-                  child: IconButton(
-                    icon: const Icon(Icons.emoji_emotions_outlined, size: 20),
-                    onPressed: _showStickerPicker,
-                    tooltip: 'Stickers',
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 36,
-                      height: 36,
+                  child: SizedBox(
+                    width: 34,
+                    height: 34,
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      iconSize: 20,
+                      onPressed: _showStickerGifPicker,
+                      icon: const Icon(Icons.gif_box_outlined),
+                      tooltip: 'Stickers & GIFs',
+                      visualDensity: VisualDensity.compact,
                     ),
                   ),
                 ),
@@ -1619,10 +1585,10 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                       controller: _messageController,
                       focusNode: _messageFocusNode,
                       style: _withEmojiFallback(
-                        const TextStyle(fontSize: 14.5, height: 1.2),
+                        const TextStyle(fontSize: 14.5, height: 1.35),
                       ),
                       decoration: const InputDecoration(
-                        hintText: 'Type a message...',
+                        hintText: 'Message...',
                         border: InputBorder.none,
                         enabledBorder: InputBorder.none,
                         focusedBorder: InputBorder.none,
@@ -1631,10 +1597,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                         isCollapsed: true,
                       ),
                       minLines: 1,
-                      maxLines: 1,
-                      textInputAction: TextInputAction.send,
+                      maxLines: 8,
+                      keyboardType: TextInputType.multiline,
                       textCapitalization: TextCapitalization.sentences,
-                      onSubmitted: (_) => _sendMessage(),
                     ),
                   ),
                 ),
@@ -1652,7 +1617,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                         onLongPressEnd: _handleRecorderLongPressEnd,
                         onLongPressCancel: _handleRecorderLongPressCancel,
                         child: CircleAvatar(
-                          radius: 18,
+                          radius: 16,
                           backgroundColor: isAnyRecording
                               ? colorScheme.error
                               : colorScheme.surfaceContainerHighest,
@@ -1679,7 +1644,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                       duration: const Duration(milliseconds: 160),
                       curve: Curves.easeOutBack,
                       child: CircleAvatar(
-                        radius: 18,
+                        radius: 16,
                         backgroundColor: canSend
                             ? colorScheme.primary
                             : colorScheme.surfaceContainerHighest,
