@@ -4,7 +4,7 @@
 //   final result = await StickerGifPicker.show(context);
 //   if (result == null) return;
 //   if (result is ChatSticker) { _sendSticker(result); }
-//   if (result is TenorGif) { _sendGif(result); }
+//   if (result is GiphyGif) { _sendGif(result); }
 
 import 'dart:async';
 
@@ -12,12 +12,12 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/chat_sticker.dart';
-import '../services/tenor_service.dart';
+import '../services/giphy_service.dart';
 
 class StickerGifPicker extends StatefulWidget {
   const StickerGifPicker({super.key});
 
-  /// Shows the picker and returns either a [ChatSticker], a [TenorGif], or null.
+  /// Shows the picker and returns either a [ChatSticker], a [GiphyGif], or null.
   static Future<Object?> show(BuildContext context) {
     return showModalBottomSheet<Object>(
       context: context,
@@ -38,9 +38,9 @@ class _StickerGifPickerState extends State<StickerGifPicker>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
   final TextEditingController _searchCtrl = TextEditingController();
-  final TenorService _tenor = TenorService();
+  final GiphyService _giphy = GiphyService();
 
-  List<TenorGif> _gifs = [];
+  List<GiphyGif> _gifs = [];
   bool _gifLoading = false;
   String _lastQuery = '';
   Timer? _debounce;
@@ -72,7 +72,7 @@ class _StickerGifPickerState extends State<StickerGifPicker>
     if (_gifLoading) return;
     _lastQuery = query;
     setState(() => _gifLoading = true);
-    final results = await _tenor.search(
+    final results = await _giphy.search(
       query.trim().isEmpty ? 'trending' : query.trim(),
       limit: 24,
     );
@@ -201,7 +201,7 @@ class _StickerGifPickerState extends State<StickerGifPicker>
                   ? Center(
                       child: Text(
                         _lastQuery.isEmpty
-                            ? 'GIF key not configured.\nSee tenor_service.dart.'
+                            ? 'GIF key not configured.\nSee giphy_service.dart.'
                             : 'No GIFs found.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
@@ -259,7 +259,18 @@ class _StickerGifPickerState extends State<StickerGifPicker>
                       },
                     ),
         ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Text(
+            'Powered by GIPHY',
+            style: TextStyle(
+              color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+              fontSize: 11,
+            ),
+          ),
+        ),
       ],
     );
   }
 }
+

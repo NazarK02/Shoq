@@ -28,7 +28,7 @@ import '../services/user_cache_service.dart';
 import '../services/file_download_service.dart';
 import '../services/message_cache_service.dart';
 import '../services/theme_service.dart';
-import '../services/tenor_service.dart';
+import '../services/giphy_service.dart';
 import '../widgets/chat_message_text.dart';
 import '../widgets/sticker_gif_picker.dart';
 import 'user_profile_view_screen.dart';
@@ -77,6 +77,9 @@ bool _looksLikeGifUrl(String rawUrl) {
       lower.contains('.gifv') ||
       decoded.contains('.gifv') ||
       lower.contains('giphy.com/media/') ||
+      lower.contains('media.giphy.com/') ||
+      lower.contains('i.giphy.com/') ||
+      lower.contains('giphy.com/') ||
       lower.contains('media.tenor.com/') ||
       lower.contains('tenor.com/view/')) {
     return true;
@@ -431,12 +434,12 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     }
   }
 
-  Future<void> _sendGif(TenorGif gif) async {
+  Future<void> _sendGif(GiphyGif gif) async {
     final sticker = ChatSticker(
       id: 'gif_${gif.id}',
       imageUrl: gif.fullUrl,
       fallback: '[GIF]',
-      pack: 'tenor',
+      pack: 'giphy',
       label: 'GIF',
     );
     await _sendSticker(sticker);
@@ -448,7 +451,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     if (!mounted || result == null) return;
     if (result is ChatSticker) {
       await _sendSticker(result);
-    } else if (result is TenorGif) {
+    } else if (result is GiphyGif) {
       await _sendGif(result);
     }
   }
