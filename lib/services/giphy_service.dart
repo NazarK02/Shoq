@@ -77,15 +77,24 @@ class GiphyService {
             (images['fixed_width'] as Map<String, dynamic>?) ??
             (images['fixed_height'] as Map<String, dynamic>?) ??
             const <String, dynamic>{};
-        final original =
-            (images['original'] as Map<String, dynamic>?) ?? preview;
+        final preferredFull = (images['fixed_width'] as Map<String, dynamic>?) ??
+            (images['fixed_height'] as Map<String, dynamic>?) ??
+            (images['original'] as Map<String, dynamic>?) ??
+            preview;
 
         final previewUrl = preview['url']?.toString() ?? '';
-        final fullUrl = original['url']?.toString() ?? previewUrl;
-        final width = int.tryParse(original['width']?.toString() ?? '') ??
+        var fullUrl = preferredFull['url']?.toString() ?? '';
+        if (fullUrl.isEmpty) {
+          fullUrl = previewUrl;
+        }
+        if (!_looksLikeGifUrl(fullUrl) && _looksLikeGifUrl(previewUrl)) {
+          fullUrl = previewUrl;
+        }
+
+        final width = int.tryParse(preferredFull['width']?.toString() ?? '') ??
             int.tryParse(preview['width']?.toString() ?? '') ??
             200;
-        final height = int.tryParse(original['height']?.toString() ?? '') ??
+        final height = int.tryParse(preferredFull['height']?.toString() ?? '') ??
             int.tryParse(preview['height']?.toString() ?? '') ??
             200;
 
@@ -107,6 +116,13 @@ class GiphyService {
     _client?.close(force: true);
     _client = null;
   }
+}
+
+bool _looksLikeGifUrl(String url) {
+  final trimmed = url.trim().toLowerCase();
+  if (trimmed.isEmpty) return false;
+  if (trimmed.contains('.gif') || trimmed.contains('giphy.com')) return true;
+  return false;
 }
 
 void debugPrintSafe(String msg) {

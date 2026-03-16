@@ -212,25 +212,40 @@ class MyApp extends StatelessWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       builder: (context, child) {
-        final mediaQuery = MediaQuery.of(context);
-        final systemScale = mediaQuery.textScaler.scale(1.0);
-        final effectiveScale = (systemScale * themeService.uiScale).clamp(
-          0.65,
-          2.0,
+        final mq = MediaQuery.of(context);
+        final layoutScale = themeService.uiScale;
+        final systemTextScale = mq.textScaler.scale(1.0);
+        final effectiveTextScaler = TextScaler.linear(
+          ((systemTextScale * themeService.textScale) / layoutScale)
+              .clamp(0.5, 3.0),
         );
-        final scaledChild = MediaQuery(
-          data: mediaQuery.copyWith(
-            textScaler: TextScaler.linear(effectiveScale),
-            disableAnimations:
-                mediaQuery.disableAnimations || themeService.reduceMotion,
+        final scaledSize = mq.size / layoutScale;
+
+        return MediaQuery(
+          data: mq.copyWith(
+            size: scaledSize,
+            padding: mq.padding * (1.0 / layoutScale),
+            viewPadding: mq.viewPadding * (1.0 / layoutScale),
+            viewInsets: mq.viewInsets * (1.0 / layoutScale),
+            systemGestureInsets:
+                mq.systemGestureInsets * (1.0 / layoutScale),
+            textScaler: effectiveTextScaler,
+            disableAnimations: mq.disableAnimations || themeService.reduceMotion,
           ),
-          child: child ?? const SizedBox.shrink(),
-        );
-        return Stack(
-          children: [
-            scaledChild,
-            ActiveSessionBanner(navigatorKey: appNavigatorKey),
-          ],
+          child: Transform.scale(
+            scale: layoutScale,
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: scaledSize.width,
+              height: scaledSize.height,
+              child: Stack(
+                children: [
+                  child ?? const SizedBox.shrink(),
+                  ActiveSessionBanner(navigatorKey: appNavigatorKey),
+                ],
+              ),
+            ),
+          ),
         );
       },
       home: const AuthWrapper(),

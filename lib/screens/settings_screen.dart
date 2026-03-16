@@ -106,6 +106,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: (value) => themeService.setUiScale(value),
             ),
           ),
+          ListTile(
+            leading: const Icon(Icons.format_size),
+            title: const Text('Text Size'),
+            subtitle: Text(
+              '${(themeService.textScale * 100).round()}% · Independent of UI density',
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Slider(
+              min: 0.7,
+              max: 1.5,
+              divisions: 16,
+              label: '${(themeService.textScale * 100).round()}%',
+              value: themeService.textScale,
+              onChanged: (value) => themeService.setTextScale(value),
+            ),
+          ),
           SwitchListTile(
             secondary: const Icon(Icons.animation_outlined),
             title: Text(l.reduceMotion),

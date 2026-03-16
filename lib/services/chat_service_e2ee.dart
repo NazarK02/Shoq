@@ -386,6 +386,7 @@ class ChatService {
     String? replyToMessageId,
     String? replyToText,
     String? replyToSenderId,
+    String messageType = 'text',
     Map<String, dynamic>? callSummary,
   }) async {
     final currentUser = _auth.currentUser;
@@ -396,11 +397,13 @@ class ChatService {
 
     try {
       // Get first 50 chars of plaintext for preview in chat list.
-      final preview = _buildMessagePreview(messageText);
+      final preview =
+          messageType == 'location' ? 'Location' : _buildMessagePreview(messageText);
 
       final payload = await _buildEncryptedTextPayload(
         messageText: messageText,
         recipientId: recipientId,
+        messageType: messageType,
       );
 
       final trimmedReplyId = replyToMessageId?.trim();

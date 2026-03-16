@@ -8,7 +8,9 @@ import '../services/firestore_streams.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart' as emoji_picker;
+import 'package:image_picker/image_picker.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
 import 'package:mime/mime.dart';
@@ -18,6 +20,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import '../models/chat_sticker.dart';
 import '../services/notification_service.dart';
@@ -311,13 +314,17 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         });
   }
 
-  Future<void> _sendMessage() async {
+  Future<void> _sendMessage({
+    String? overrideText,
+    String messageType = 'text',
+  }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null || _conversationId == null) return;
 
-    final messageText = _messageController.text.trim();
+    final messageText = (overrideText ?? _messageController.text).trim();
     if (messageText.isEmpty) return;
     final replyDraft = _replyDraft;
+    final trackPending = messageType == 'text';
     final messageId = _firestore
         .collection('conversations')
         .doc(_conversationId)
@@ -331,21 +338,27 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     );
 
     try {
-      _messageController.clear();
-      _messageFocusNode.requestFocus();
+      if (overrideText == null) {
+        _messageController.clear();
+        _messageFocusNode.requestFocus();
+      }
       if (mounted) {
         setState(() {
           _sendPulse = true;
           _replyDraft = null;
-          _pendingTextMessages.add(pending);
-          _optimisticTextByMessageId[messageId] = messageText;
+          if (trackPending) {
+            _pendingTextMessages.add(pending);
+            _optimisticTextByMessageId[messageId] = messageText;
+          }
         });
       }
       Timer(const Duration(seconds: 45), () {
         if (!mounted) return;
-        setState(() {
-          _optimisticTextByMessageId.remove(messageId);
-        });
+        if (trackPending) {
+          setState(() {
+            _optimisticTextByMessageId.remove(messageId);
+          });
+        }
       });
       Future.delayed(const Duration(milliseconds: 170), () {
         if (!mounted) return;
@@ -362,6 +375,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         replyToMessageId: replyDraft?.messageId,
         replyToText: replyDraft?.previewText,
         replyToSenderId: replyDraft?.senderId,
+        messageType: messageType,
       );
 
       try {
@@ -379,7 +393,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       _scrollToBottom();
     } catch (e) {
       if (mounted) {
-        if (_messageController.text.trim().isEmpty) {
+        if (overrideText == null && _messageController.text.trim().isEmpty) {
           _messageController.text = messageText;
           _messageController.selection = TextSelection.fromPosition(
             TextPosition(offset: _messageController.text.length),
@@ -387,8 +401,10 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         }
         setState(() {
           _replyDraft = replyDraft;
-          _pendingTextMessages.removeWhere((item) => item.id == messageId);
-          _optimisticTextByMessageId.remove(messageId);
+          if (trackPending) {
+            _pendingTextMessages.removeWhere((item) => item.id == messageId);
+            _optimisticTextByMessageId.remove(messageId);
+          }
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to send message: ${e.toString()}')),
@@ -1540,14 +1556,16 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                     alpha: 0.55,
                   ),
                   shape: const CircleBorder(),
-                  child: IconButton(
-                    icon: const Icon(Icons.attach_file, size: 20),
-                    onPressed: _showAttachmentSheet,
-                    tooltip: 'Attach',
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 36,
-                      height: 36,
+                  child: SizedBox(
+                    width: 34,
+                    height: 34,
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      iconSize: 20,
+                      onPressed: _showAttachmentSheet,
+                      icon: const Icon(Icons.attach_file),
+                      tooltip: 'Attach',
+                      visualDensity: VisualDensity.compact,
                     ),
                   ),
                 ),
@@ -1679,47 +1697,38 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   }
 
   Future<void> _showAttachmentSheet() async {
+    final isMobile = Platform.isAndroid || Platform.isIOS;
     showModalBottomSheet(
       context: context,
       builder: (context) => SafeArea(
         child: Wrap(
           children: [
+            if (isMobile)
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Gallery'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _pickAndSendFromGallery();
+                },
+              ),
             ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Gallery'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickAndSendFromGallery();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.insert_drive_file),
+              leading: const Icon(Icons.insert_drive_file_outlined),
               title: const Text('File'),
               onTap: () {
                 Navigator.pop(context);
                 _pickAndSendFile(type: FileType.any);
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.videocam),
-              title: const Text('Record video'),
-              onTap: () {
-                Navigator.pop(context);
-                if (Platform.isWindows) {
-                  ScaffoldMessenger.of(this.context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Video recording is disabled on Windows'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                  return;
-                }
-                setState(() {
-                  _recorderMode = _RecorderMode.video;
-                });
-                _recordVideoAndSend();
-              },
-            ),
+            if (isMobile)
+              ListTile(
+                leading: const Icon(Icons.location_on_outlined),
+                title: const Text('Location'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _sendLocation();
+                },
+              ),
           ],
         ),
       ),
@@ -1728,59 +1737,73 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
 
   Future<void> _pickAndSendFromGallery() async {
     if (_conversationId == null) return;
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.gallery);
+      if (picked == null) return;
+      await _pickAndSendFile(explicitPath: picked.path);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open gallery')),
+        );
+      }
+    }
+  }
 
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
-      withData: false,
-      type: FileType.custom,
-      allowedExtensions: const [
-        'jpg',
-        'jpeg',
-        'png',
-        'webp',
-        'gif',
-        'heic',
-        'heif',
-        'mp4',
-        'mov',
-        'mkv',
-        'webm',
-      ],
-    );
-    if (result == null || result.files.isEmpty) return;
+  Future<void> _sendLocation() async {
+    if (_conversationId == null) return;
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Location permission denied')),
+            );
+          }
+          return;
+        }
+      }
+      if (permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Location permission permanently denied. Enable it in settings.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
 
-    final picked = result.files
-        .map((item) => item.path?.trim() ?? '')
-        .where((path) => path.isNotEmpty)
-        .map((path) => XFile(path))
-        .toList();
-    if (picked.isEmpty) return;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Getting location…')),
+        );
+      }
 
-    final draft = await _showMediaComposer(picked);
-    if (!mounted || draft == null) return;
-
-    final caption = draft.caption.trim();
-    for (var i = 0; i < draft.files.length; i++) {
-      final file = draft.files[i];
-      final path = file.path.trim();
-      if (path.isEmpty) continue;
-
-      final mimeType = lookupMimeType(path) ?? 'application/octet-stream';
-      final fileName = p.basename(path).trim().isEmpty
-          ? 'media_${DateTime.now().millisecondsSinceEpoch}'
-          : p.basename(path);
-      final isVideo = mimeType.toLowerCase().startsWith('video/');
-      final isImage = mimeType.toLowerCase().startsWith('image/');
-
-      await _sendLocalFile(
-        filePath: path,
-        fileName: fileName,
-        mimeType: mimeType,
-        caption: (i == 0 && caption.isNotEmpty) ? caption : null,
-        notificationText: isVideo
-            ? 'Sent a video'
-            : (isImage ? 'Sent a photo' : 'Sent a file'),
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
+        ),
       );
+
+      final lat = position.latitude.toStringAsFixed(6);
+      final lng = position.longitude.toStringAsFixed(6);
+      await _sendMessage(
+        overrideText: 'loc:$lat,$lng',
+        messageType: 'location',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not get location: $e')),
+        );
+      }
     }
   }
 
@@ -1896,29 +1919,52 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     return result;
   }
 
-  Future<void> _pickAndSendFile({required FileType type}) async {
+  Future<void> _pickAndSendFile({
+    FileType type = FileType.any,
+    String? explicitPath,
+  }) async {
     if (_conversationId == null) return;
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: false,
-      withData: false,
-      type: type,
-    );
-    if (result == null || result.files.isEmpty) return;
 
-    final file = result.files.first;
-    final path = file.path?.trim() ?? '';
-    if (path.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not access selected file')),
-        );
+    String? path;
+    String? name;
+
+    if (explicitPath != null) {
+      path = explicitPath.trim();
+      if (path.isNotEmpty) {
+        name = p.basename(path).trim();
       }
-      return;
+    } else {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: false,
+        withData: false,
+        type: type,
+      );
+      if (result == null || result.files.isEmpty) return;
+
+      final file = result.files.first;
+      final pickedPath = file.path?.trim() ?? '';
+      if (pickedPath.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not access selected file')),
+          );
+        }
+        return;
+      }
+      path = pickedPath;
+      name = file.name.trim();
     }
+
+    if (path == null || path.isEmpty) return;
+    final fileName = (name == null || name.isEmpty)
+        ? p.basename(path).trim().isEmpty
+              ? 'file_${DateTime.now().millisecondsSinceEpoch}'
+              : p.basename(path)
+        : name;
 
     await _sendLocalFile(
       filePath: path,
-      fileName: file.name,
+      fileName: fileName,
       mimeType: lookupMimeType(path) ?? 'application/octet-stream',
       notificationText: 'Sent a file',
     );
@@ -2497,6 +2543,19 @@ class _MessagesListState extends State<_MessagesList>
             readAt: readAt,
             messageId: messageId,
             key: ValueKey('persisted_file_$messageId'),
+          );
+        }
+        if (type == 'location') {
+          final text = message['text']?.toString() ?? '';
+          return _buildLocationBubble(
+            text,
+            isMe,
+            timestamp,
+            messageId: messageId,
+            isPending: false,
+            isRead: isRead,
+            readAt: readAt,
+            key: ValueKey('persisted_loc_$messageId'),
           );
         }
 
@@ -3417,19 +3476,30 @@ class _MessagesListState extends State<_MessagesList>
             if (!encryptionReady) {
               return _animateOnFirstPaint(
                 id: 'msg_$messageId',
-                child: _buildMessageBubble(
-                  immediateText.isNotEmpty
-                      ? immediateText
-                      : 'Encrypted message',
-                  isMe,
-                  timestamp,
-                  messageId: messageId,
-                  messageData: message,
-                  isPending: isPending,
-                  isRead: isRead,
-                  readAt: readAt,
-                  key: ValueKey(messageId),
-                ),
+                child: type == 'location'
+                    ? _buildLocationBubble(
+                        immediateText,
+                        isMe,
+                        timestamp,
+                        messageId: messageId,
+                        isPending: isPending,
+                        isRead: isRead,
+                        readAt: readAt,
+                        key: ValueKey(messageId),
+                      )
+                    : _buildMessageBubble(
+                        immediateText.isNotEmpty
+                            ? immediateText
+                            : 'Encrypted message',
+                        isMe,
+                        timestamp,
+                        messageId: messageId,
+                        messageData: message,
+                        isPending: isPending,
+                        isRead: isRead,
+                        readAt: readAt,
+                        key: ValueKey(messageId),
+                      ),
               );
             }
 
@@ -3437,17 +3507,28 @@ class _MessagesListState extends State<_MessagesList>
               widget.optimisticTextByMessageId.remove(messageId);
               return _animateOnFirstPaint(
                 id: 'msg_$messageId',
-                child: _buildMessageBubble(
-                  cachedText,
-                  isMe,
-                  timestamp,
-                  messageId: messageId,
-                  messageData: message,
-                  isPending: isPending,
-                  isRead: isRead,
-                  readAt: readAt,
-                  key: ValueKey(messageId),
-                ),
+                child: type == 'location'
+                    ? _buildLocationBubble(
+                        cachedText,
+                        isMe,
+                        timestamp,
+                        messageId: messageId,
+                        isPending: isPending,
+                        isRead: isRead,
+                        readAt: readAt,
+                        key: ValueKey(messageId),
+                      )
+                    : _buildMessageBubble(
+                        cachedText,
+                        isMe,
+                        timestamp,
+                        messageId: messageId,
+                        messageData: message,
+                        isPending: isPending,
+                        isRead: isRead,
+                        readAt: readAt,
+                        key: ValueKey(messageId),
+                      ),
               );
             }
 
@@ -3517,17 +3598,28 @@ class _MessagesListState extends State<_MessagesList>
 
                 return _animateOnFirstPaint(
                   id: 'msg_$messageId',
-                  child: _buildMessageBubble(
-                    displayText,
-                    isMe,
-                    timestamp,
-                    messageId: messageId,
-                    messageData: message,
-                    isPending: isPending,
-                    isRead: isRead,
-                    readAt: readAt,
-                    key: ValueKey(messageId),
-                  ),
+                  child: type == 'location'
+                      ? _buildLocationBubble(
+                          displayText,
+                          isMe,
+                          timestamp,
+                          messageId: messageId,
+                          isPending: isPending,
+                          isRead: isRead,
+                          readAt: readAt,
+                          key: ValueKey(messageId),
+                        )
+                      : _buildMessageBubble(
+                          displayText,
+                          isMe,
+                          timestamp,
+                          messageId: messageId,
+                          messageData: message,
+                          isPending: isPending,
+                          isRead: isRead,
+                          readAt: readAt,
+                          key: ValueKey(messageId),
+                        ),
                 );
               },
             );
@@ -3586,6 +3678,100 @@ class _MessagesListState extends State<_MessagesList>
             style: const TextStyle(fontSize: 14, color: Colors.grey),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLocationBubble(
+    String rawText,
+    bool isMe,
+    Timestamp? timestamp, {
+    required String messageId,
+    required bool isPending,
+    required bool isRead,
+    required Timestamp? readAt,
+    Key? key,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final trimmed = rawText.trim();
+    final coords = trimmed.startsWith('loc:') ? trimmed.substring(4) : trimmed;
+    final parts = coords.split(',');
+    final lat = parts.isNotEmpty ? double.tryParse(parts[0]) : null;
+    final lng = parts.length > 1 ? double.tryParse(parts[1]) : null;
+
+    final bubbleColor =
+        isMe ? colorScheme.primary : colorScheme.surfaceContainerHigh;
+    final textColor = isMe ? colorScheme.onPrimary : colorScheme.onSurface;
+
+    return Align(
+      key: key,
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        constraints: const BoxConstraints(maxWidth: 240),
+        decoration: BoxDecoration(
+          color: bubbleColor,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isMe ? 16 : 4),
+            bottomRight: Radius.circular(isMe ? 4 : 16),
+          ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: (lat != null && lng != null)
+              ? () async {
+                  final uri = Uri.parse(
+                    'https://maps.google.com/?q=$lat,$lng',
+                  );
+                  if (await canLaunchUrl(uri)) {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  }
+                }
+              : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.location_on, color: textColor, size: 22),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Shared location',
+                        style: TextStyle(
+                          color: textColor,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                      if (lat != null && lng != null)
+                        Text(
+                          '${lat.toStringAsFixed(4)}, ${lng.toStringAsFixed(4)}',
+                          style: TextStyle(
+                            color: textColor.withValues(alpha: 0.72),
+                            fontSize: 11,
+                          ),
+                        ),
+                      Text(
+                        'Tap to open in Maps',
+                        style: TextStyle(
+                          color: textColor.withValues(alpha: 0.65),
+                          fontSize: 11,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -3852,6 +4038,7 @@ class _MessagesListState extends State<_MessagesList>
                 width: 134,
                 height: 134,
                 fit: BoxFit.cover,
+                gaplessPlayback: true,
                 errorBuilder: (context, error, stackTrace) => Container(
                   width: 134,
                   height: 134,
@@ -4286,6 +4473,7 @@ class _MessagesListState extends State<_MessagesList>
                   ? Image.network(
                       fileUrl,
                       fit: BoxFit.cover,
+                      gaplessPlayback: true,
                       errorBuilder: (context, error, stackTrace) => Container(
                         height: 200,
                         color: Colors.grey[800],

@@ -2247,6 +2247,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                   width: 134,
                   height: 134,
                   fit: BoxFit.cover,
+                  gaplessPlayback: true,
                   errorBuilder: (context, error, stackTrace) => Container(
                     width: 134,
                     height: 134,

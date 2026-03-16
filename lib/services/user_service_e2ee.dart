@@ -36,6 +36,23 @@ class UserService {
           existingData['friendId']?.toString().trim() ?? '';
       String friendId = existingFriendId;
       if (friendId.isEmpty) {
+        // Check registry first in case another device already claimed an ID.
+        try {
+          final registryClaim = await _firestore
+              .collection(_friendIdRegistryCollection)
+              .where('uid', isEqualTo: user.uid)
+              .limit(1)
+              .get();
+          if (registryClaim.docs.isNotEmpty) {
+            friendId =
+                registryClaim.docs.first.data()['friendId']?.toString().trim() ??
+                '';
+          }
+        } catch (_) {
+          // Ignore registry lookup errors and fall back to generation.
+        }
+      }
+      if (friendId.isEmpty) {
         try {
           friendId = await _generateAndReserveFriendId(
             uid: user.uid,

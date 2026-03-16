@@ -7,6 +7,7 @@ class ThemeService extends ChangeNotifier {
   ThemeService._internal();
   static const String _isDarkModeKey = 'isDarkMode';
   static const String _uiScaleKey = 'uiScale';
+  static const String _textScaleKey = 'textScale';
   static const String _showLinkPreviewsKey = 'showLinkPreviews';
   static const String _reduceMotionKey = 'reduceMotion';
 
@@ -15,10 +16,12 @@ class ThemeService extends ChangeNotifier {
 
   bool get isDarkMode => _themeMode == ThemeMode.dark;
   double _uiScale = 1.0;
+  double _textScale = 1.0;
   bool _showLinkPreviews = true;
   bool _reduceMotion = false;
 
   double get uiScale => _uiScale;
+  double get textScale => _textScale;
   bool get showLinkPreviews => _showLinkPreviews;
   bool get reduceMotion => _reduceMotion;
 
@@ -28,6 +31,7 @@ class ThemeService extends ChangeNotifier {
     final isDark = prefs.getBool(_isDarkModeKey) ?? false;
     _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
     _uiScale = (prefs.getDouble(_uiScaleKey) ?? 1.0).clamp(0.65, 1.65);
+    _textScale = (prefs.getDouble(_textScaleKey) ?? 1.0).clamp(0.7, 1.5);
     _showLinkPreviews = prefs.getBool(_showLinkPreviewsKey) ?? true;
     _reduceMotion = prefs.getBool(_reduceMotionKey) ?? false;
     notifyListeners();
@@ -61,6 +65,15 @@ class ThemeService extends ChangeNotifier {
     _uiScale = next;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_uiScaleKey, _uiScale);
+    notifyListeners();
+  }
+
+  Future<void> setTextScale(double value) async {
+    final next = value.clamp(0.7, 1.5);
+    if ((_textScale - next).abs() < 0.001) return;
+    _textScale = next;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_textScaleKey, _textScale);
     notifyListeners();
   }
 
