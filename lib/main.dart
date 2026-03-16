@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Directory, File, FileMode, Platform;
-import 'dart:ui' show PlatformDispatcher;
+import 'dart:ui' show PlatformDispatcher, DartPluginRegistrant;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -95,9 +95,32 @@ Future<void> _logCrash(
 /// Background notification handler
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   debugPrint('BG message: ${message.messageId}');
+
+  final data = message.data;
+  if (data['type']?.toString() == 'call_offer') {
+    final callId = data['callId']?.toString() ?? '';
+    if (callId.isEmpty) return;
+
+    final callerName = data['callerName']?.toString() ?? 'Incoming call';
+    final isVideo =
+        data['isVideo'] == true || data['isVideo'] == 'true';
+
+    await NotificationService().ensureLocalNotificationsReady();
+    await NotificationService().showIncomingCallNotification(
+      callId: callId,
+      callerName: callerName,
+      isVideo: isVideo,
+      fromId: data['fromId']?.toString(),
+      callerPhotoUrl: data['callerPhotoUrl']?.toString(),
+      sdp: data['sdp']?.toString(),
+      sdpType: data['sdpType']?.toString(),
+    );
+  }
 }
 
 Future<void> main() async {
@@ -216,8 +239,7 @@ class MyApp extends StatelessWidget {
         final layoutScale = themeService.uiScale;
         final systemTextScale = mq.textScaler.scale(1.0);
         final effectiveTextScaler = TextScaler.linear(
-          ((systemTextScale * themeService.textScale) / layoutScale)
-              .clamp(0.5, 3.0),
+          (systemTextScale * themeService.textScale).clamp(0.5, 3.0),
         );
         final scaledSize = mq.size / layoutScale;
 
@@ -265,6 +287,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   final PresenceService _presenceService = PresenceService();
   StreamSubscription<User?>? _authSubscription;
   StreamSubscription<Map<String, dynamic>>? _incomingCallSub;
+  StreamSubscription<Map<String, dynamic>>? _callNotificationSub;
   String? _activeIncomingCallId;
   bool _callRouteOpen = false;
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
@@ -283,6 +306,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    _callNotificationSub =
+        NotificationService().callIntents.listen(_handleCallNotification);
 
     _authSubscription = FirebaseAuth.instance.userChanges().listen((
       user,
@@ -548,6 +574,63 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     _callRouteOpen = false;
   }
 
+  Future<void> _handleCallNotification(Map<String, dynamic> payload) async {
+    if (!mounted) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final callId = payload['callId']?.toString() ?? '';
+    if (callId.isEmpty) return;
+    if (_callRouteOpen || _activeIncomingCallId == callId) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('calls')
+          .doc(callId)
+          .get();
+      if (!doc.exists || !mounted) return;
+
+      final data = doc.data() ?? const <String, dynamic>{};
+      final toId = data['toId']?.toString() ?? '';
+      if (toId != user.uid) return;
+
+      final status = data['status']?.toString() ?? 'ringing';
+      if (status != 'ringing') return;
+
+      final offer = data['offer'];
+      if (offer is! Map) return;
+      final sdp = offer['sdp']?.toString();
+      final sdpType = offer['type']?.toString();
+      if (sdp == null || sdpType == null) return;
+
+      final invite = CallInvite(
+        callId: callId,
+        fromId: data['fromId']?.toString() ?? '',
+        fromClientId: data['fromClientId']?.toString(),
+        callerName: data['callerName']?.toString() ?? 'User',
+        callerPhotoUrl: data['callerPhotoUrl']?.toString(),
+        isVideo: data['isVideo'] == true,
+        offer: {'sdp': sdp, 'type': sdpType},
+      );
+
+      _activeIncomingCallId = callId;
+      _callRouteOpen = true;
+
+      Navigator.of(context)
+          .push(
+            MaterialPageRoute(
+              builder: (_) => CallScreen.incoming(incomingInvite: invite),
+            ),
+          )
+          .whenComplete(() {
+            _callRouteOpen = false;
+            _activeIncomingCallId = null;
+          });
+    } catch (e) {
+      debugPrint('Failed to handle call notification: $e');
+    }
+  }
+
   Future<void> _initializeE2EEForUser() async {
     try {
       debugPrint('🔐 Initializing E2EE for logged-in user...');
@@ -564,6 +647,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.cancel();
+    _callNotificationSub?.cancel();
     _stopIncomingCallListener();
     _stopVerificationPolling();
     _presenceService.stopPresenceTracking();

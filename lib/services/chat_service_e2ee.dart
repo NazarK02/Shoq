@@ -369,6 +369,35 @@ class ChatService {
     );
   }
 
+  Future<Map<String, dynamic>> buildEncryptedUpdateFields({
+    required String messageText,
+    required String recipientId,
+  }) async {
+    final payload = await _buildEncryptedTextPayload(
+      messageText: messageText,
+      recipientId: recipientId,
+      includeTimestamps: false,
+    );
+    const keys = [
+      'ciphertext',
+      'ciphertexts',
+      'ciphertextsByKey',
+      'senderCiphertext',
+      'senderCiphertexts',
+      'senderCiphertextsByKey',
+      'senderPublicKey',
+      'senderKeyId',
+      'senderDeviceId',
+    ];
+    final update = <String, dynamic>{};
+    for (final key in keys) {
+      if (payload.containsKey(key)) {
+        update[key] = payload[key];
+      }
+    }
+    return update;
+  }
+
   String _buildMessagePreview(String messageText) {
     final normalized = messageText.trim();
     if (normalized.isEmpty) return '';
@@ -398,7 +427,11 @@ class ChatService {
     try {
       // Get first 50 chars of plaintext for preview in chat list.
       final preview =
-          messageType == 'location' ? 'Location' : _buildMessagePreview(messageText);
+          messageType == 'location_live'
+              ? 'Live location'
+              : (messageType == 'location'
+                  ? 'Location'
+                  : _buildMessagePreview(messageText));
 
       final payload = await _buildEncryptedTextPayload(
         messageText: messageText,
@@ -473,26 +506,24 @@ class ChatService {
     final trimmedStickerLabel = stickerLabel?.trim();
 
     try {
-      final extraData = <String, dynamic>{'sticker': trimmedSticker};
-      if (trimmedStickerId != null && trimmedStickerId.isNotEmpty) {
-        extraData['stickerId'] = trimmedStickerId;
-      }
-      if (trimmedStickerUrl != null && trimmedStickerUrl.isNotEmpty) {
-        extraData['stickerUrl'] = trimmedStickerUrl;
-      }
-      if (trimmedStickerPack != null && trimmedStickerPack.isNotEmpty) {
-        extraData['stickerPack'] = trimmedStickerPack;
-      }
-      if (trimmedStickerLabel != null && trimmedStickerLabel.isNotEmpty) {
-        extraData['stickerLabel'] = trimmedStickerLabel;
-      }
-      extraData['stickerFallback'] = trimmedSticker;
+      final payloadText = jsonEncode({
+        'v': 1,
+        'type': 'sticker',
+        'fallback': trimmedSticker,
+        if (trimmedStickerId != null && trimmedStickerId.isNotEmpty)
+          'id': trimmedStickerId,
+        if (trimmedStickerUrl != null && trimmedStickerUrl.isNotEmpty)
+          'url': trimmedStickerUrl,
+        if (trimmedStickerPack != null && trimmedStickerPack.isNotEmpty)
+          'pack': trimmedStickerPack,
+        if (trimmedStickerLabel != null && trimmedStickerLabel.isNotEmpty)
+          'label': trimmedStickerLabel,
+      });
 
       final payload = await _buildEncryptedTextPayload(
-        messageText: trimmedSticker,
+        messageText: payloadText,
         recipientId: recipientId,
         messageType: 'sticker',
-        extraData: extraData,
       );
 
       final messagesRef = _firestore
@@ -638,7 +669,7 @@ class ChatService {
     }, SetOptions(merge: true));
   }
 
-  /// Send a file message (non-encrypted file contents).
+  /// Send a file message (file contents are not E2EE; metadata may be encrypted).
 
   Future<void> sendFileMessage({
     required String conversationId,
@@ -665,6 +696,7 @@ class ChatService {
       conversationId: conversationId,
       messageId: upload.messageId,
       storagePath: upload.storagePath,
+      recipientId: recipientId,
       fileName: fileName,
       fileSize: fileSize,
       mimeType: upload.contentType,
@@ -719,6 +751,7 @@ class ChatService {
     required String conversationId,
     required String messageId,
     required String storagePath,
+    String? recipientId,
     String? downloadUrl,
     required String fileName,
     required int fileSize,
@@ -739,42 +772,83 @@ class ChatService {
     final trimmedChannelId = channelId?.trim();
     final trimmedFolderId = fileFolderId?.trim();
     final trimmedFolderName = fileFolderName?.trim();
+    final trimmedRecipientId = recipientId?.trim();
 
-    final payload = <String, dynamic>{
-      'senderId': currentUser.uid,
-      'timestamp': FieldValue.serverTimestamp(),
-      'clientTimestamp': Timestamp.now(),
-      'read': false,
-      'encrypted': false,
-      'type': 'file',
-      'fileName': displayName,
-      'fileSize': fileSize,
-      'mimeType': contentType,
-      'storagePath': storagePath,
-    };
+    if (trimmedRecipientId != null && trimmedRecipientId.isNotEmpty) {
+      final filePayload = <String, dynamic>{
+        'v': 1,
+        'type': 'file',
+        'name': displayName,
+        'size': fileSize,
+        'mime': contentType,
+        'path': storagePath,
+      };
+      if (downloadUrl != null && downloadUrl.trim().isNotEmpty) {
+        filePayload['url'] = downloadUrl.trim();
+      }
+      if (trimmedCaption != null && trimmedCaption.isNotEmpty) {
+        filePayload['caption'] = trimmedCaption;
+      }
+      if (trimmedFolderId != null && trimmedFolderId.isNotEmpty) {
+        filePayload['folderId'] = trimmedFolderId;
+      }
+      if (trimmedFolderName != null && trimmedFolderName.isNotEmpty) {
+        filePayload['folderName'] = trimmedFolderName;
+      }
 
-    if (trimmedChannelId != null && trimmedChannelId.isNotEmpty) {
-      payload['channelId'] = trimmedChannelId;
-    }
-    if (downloadUrl != null && downloadUrl.trim().isNotEmpty) {
-      payload['fileUrl'] = downloadUrl.trim();
-    }
-    if (trimmedFolderId != null && trimmedFolderId.isNotEmpty) {
-      payload['fileFolderId'] = trimmedFolderId;
-    }
-    if (trimmedFolderName != null && trimmedFolderName.isNotEmpty) {
-      payload['fileFolderName'] = trimmedFolderName;
-    }
-    if (trimmedCaption != null && trimmedCaption.isNotEmpty) {
-      payload['caption'] = trimmedCaption;
-    }
+      final payload = await _buildEncryptedTextPayload(
+        messageText: jsonEncode(filePayload),
+        recipientId: trimmedRecipientId,
+        messageType: 'file',
+      );
 
-    await _firestore
-        .collection('conversations')
-        .doc(conversationId)
-        .collection('messages')
-        .doc(messageId)
-        .set(payload);
+      if (trimmedChannelId != null && trimmedChannelId.isNotEmpty) {
+        payload['channelId'] = trimmedChannelId;
+      }
+
+      await _firestore
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages')
+          .doc(messageId)
+          .set(payload);
+    } else {
+      final payload = <String, dynamic>{
+        'senderId': currentUser.uid,
+        'timestamp': FieldValue.serverTimestamp(),
+        'clientTimestamp': Timestamp.now(),
+        'read': false,
+        'encrypted': false,
+        'type': 'file',
+        'fileName': displayName,
+        'fileSize': fileSize,
+        'mimeType': contentType,
+        'storagePath': storagePath,
+      };
+
+      if (trimmedChannelId != null && trimmedChannelId.isNotEmpty) {
+        payload['channelId'] = trimmedChannelId;
+      }
+      if (downloadUrl != null && downloadUrl.trim().isNotEmpty) {
+        payload['fileUrl'] = downloadUrl.trim();
+      }
+      if (trimmedFolderId != null && trimmedFolderId.isNotEmpty) {
+        payload['fileFolderId'] = trimmedFolderId;
+      }
+      if (trimmedFolderName != null && trimmedFolderName.isNotEmpty) {
+        payload['fileFolderName'] = trimmedFolderName;
+      }
+      if (trimmedCaption != null && trimmedCaption.isNotEmpty) {
+        payload['caption'] = trimmedCaption;
+      }
+
+      await _firestore
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages')
+          .doc(messageId)
+          .set(payload);
+    }
 
     final preview = (trimmedCaption != null && trimmedCaption.isNotEmpty)
         ? _buildMessagePreview(trimmedCaption)

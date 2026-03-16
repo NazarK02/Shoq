@@ -110,7 +110,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             leading: const Icon(Icons.format_size),
             title: const Text('Text Size'),
             subtitle: Text(
-              '${(themeService.textScale * 100).round()}% · Independent of UI density',
+              '${(themeService.textScale * 100).round()}% - Text size multiplier',
             ),
           ),
           Padding(

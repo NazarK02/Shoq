@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'chat_service_e2ee.dart';
 import 'device_info_service.dart';
@@ -28,6 +29,7 @@ class NotificationService {
 
   static const String _markReadActionId = 'mark_read';
   static const String _replyActionId = 'reply';
+  static const String _pendingNotificationKey = 'pending_notification_payload';
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -43,8 +45,13 @@ class NotificationService {
 
   final Map<String, int> _messageCountPerSender = {};
   final Map<String, List<String>> _messagesPerSender = {};
+  final StreamController<Map<String, dynamic>> _callIntentController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   String? _activeChatUserId;
+
+  Stream<Map<String, dynamic>> get callIntents =>
+      _callIntentController.stream;
 
   bool get supportsFcm {
     if (kIsWeb) return false;
@@ -86,6 +93,7 @@ class NotificationService {
     }
 
     if (!supportsFcm) {
+      await _handlePendingNotificationResponse();
       return;
     }
 
@@ -135,6 +143,8 @@ class NotificationService {
     } else {
       print('Notification permission not granted yet');
     }
+
+    await _handlePendingNotificationResponse();
   }
 
   Future<void> _initializeLocalNotifications() async {
@@ -204,6 +214,14 @@ class NotificationService {
       await plugin?.createNotificationChannel(channel);
       await plugin?.createNotificationChannel(callsChannel);
       await plugin?.createNotificationChannel(friendRequestsChannel);
+    }
+  }
+
+  Future<void> ensureLocalNotificationsReady() async {
+    _localNotifications ??= FlutterLocalNotificationsPlugin();
+    if (supportsLocalNotifications && !_localInitialized) {
+      await _initializeLocalNotifications();
+      _localInitialized = true;
     }
   }
 
@@ -291,6 +309,9 @@ class NotificationService {
 
   void _handleForegroundMessage(RemoteMessage message) {
     print('Foreground push received: ${message.messageId}');
+    if (message.data['type']?.toString() == 'call_offer') {
+      return;
+    }
     if (message.notification != null || message.data['type'] != null) {
       _showLocalNotification(message);
     }
@@ -312,10 +333,19 @@ class NotificationService {
       'Notification response: type=${response.notificationResponseType}, action=${response.actionId}, fromBackground=$fromBackground',
     );
 
+    if (fromBackground) {
+      await _storePendingNotificationPayload(response.payload);
+      return;
+    }
+
     final payload = _decodePayload(response.payload);
     if (payload == null) return;
 
     final type = payload['type']?.toString();
+    if (type == 'call') {
+      _callIntentController.add(payload);
+      return;
+    }
     if (type != 'message') return;
 
     final senderId = payload['senderId']?.toString();
@@ -345,6 +375,24 @@ class NotificationService {
         );
         return;
       }
+    }
+  }
+
+  Future<void> _storePendingNotificationPayload(String? raw) async {
+    if (raw == null || raw.trim().isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_pendingNotificationKey, raw);
+  }
+
+  Future<void> _handlePendingNotificationResponse() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pendingNotificationKey);
+    if (raw == null || raw.trim().isEmpty) return;
+    await prefs.remove(_pendingNotificationKey);
+    final payload = _decodePayload(raw);
+    if (payload == null) return;
+    if (payload['type']?.toString() == 'call') {
+      _callIntentController.add(payload);
     }
   }
 
@@ -431,6 +479,10 @@ class NotificationService {
     required String callId,
     required String callerName,
     required bool isVideo,
+    String? fromId,
+    String? callerPhotoUrl,
+    String? sdp,
+    String? sdpType,
   }) async {
     if (!supportsLocalNotifications ||
         _localNotifications == null ||
@@ -473,7 +525,17 @@ class NotificationService {
       title,
       body,
       details,
-      payload: jsonEncode({'type': 'call', 'callId': callId}),
+      payload: jsonEncode({
+        'type': 'call',
+        'callId': callId,
+        if (fromId != null && fromId.trim().isNotEmpty) 'fromId': fromId,
+        if (callerName.isNotEmpty) 'callerName': callerName,
+        if (callerPhotoUrl != null && callerPhotoUrl.trim().isNotEmpty)
+          'callerPhotoUrl': callerPhotoUrl,
+        'isVideo': isVideo,
+        if (sdp != null && sdpType != null) 'sdp': sdp,
+        if (sdpType != null) 'sdpType': sdpType,
+      }),
     );
   }
 
@@ -497,6 +559,25 @@ class NotificationService {
     final data = message.data;
     final type = data['type'];
     final senderId = data['senderId']?.toString();
+
+    if (type == 'call_offer') {
+      final callId = data['callId']?.toString() ?? '';
+      final callerName = data['callerName']?.toString() ?? 'User';
+      final callerPhotoUrl = data['callerPhotoUrl']?.toString();
+      final isVideo =
+          data['isVideo'] == true || data['isVideo'] == 'true';
+      if (callId.isEmpty) return;
+      await showIncomingCallNotification(
+        callId: callId,
+        callerName: callerName,
+        isVideo: isVideo,
+        fromId: data['fromId']?.toString(),
+        callerPhotoUrl: callerPhotoUrl,
+        sdp: data['sdp']?.toString(),
+        sdpType: data['sdpType']?.toString(),
+      );
+      return;
+    }
 
     if (type == 'new_message' && senderId != null && senderId.isNotEmpty) {
       if (_activeChatUserId == senderId) {
@@ -770,10 +851,60 @@ class NotificationService {
       print('Error updating notification settings: $e');
     }
   }
-}
 
-@pragma('vm:entry-point')
-Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  print('Handling background message: ${message.messageId}');
-  print('Data: ${message.data}');
+  Future<void> sendCallNotification({
+    required String recipientId,
+    required String callId,
+    required String callerName,
+    required bool isVideo,
+    required String fromId,
+    String? callerPhotoUrl,
+    String? sdp,
+    String? sdpType,
+  }) async {
+    try {
+      final recipientDoc = await _firestore
+          .collection('users')
+          .doc(recipientId)
+          .get();
+
+      if (!recipientDoc.exists) {
+        print('Recipient user document not found');
+        return;
+      }
+
+      final recipientData = recipientDoc.data();
+      final tokens = _extractRecipientTokens(recipientData);
+
+      if (tokens.isEmpty) {
+        print('Recipient has no FCM tokens');
+        return;
+      }
+
+      await _firestore.collection('notifications').add({
+        'type': 'call_offer',
+        'recipientId': recipientId,
+        'senderId': fromId,
+        'fcmToken': tokens.first,
+        'fcmTokens': tokens,
+        'title': callerName.isEmpty ? 'Incoming call' : callerName,
+        'body': isVideo ? 'Incoming video call' : 'Incoming call',
+        'data': {
+          'type': 'call_offer',
+          'callId': callId,
+          'fromId': fromId,
+          'callerName': callerName,
+          if (callerPhotoUrl != null && callerPhotoUrl.trim().isNotEmpty)
+            'callerPhotoUrl': callerPhotoUrl,
+          'isVideo': isVideo,
+          if (sdp != null && sdpType != null) 'sdp': sdp,
+          if (sdpType != null) 'sdpType': sdpType,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'processed': false,
+      });
+    } catch (e) {
+      print('Error sending call notification: $e');
+    }
+  }
 }

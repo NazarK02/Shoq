@@ -81,6 +81,42 @@ service cloud.firestore {
                          resource.data.recipientId == request.auth.uid;
     }
 
+    // Calls (used to resume/accept when app is in background)
+    match /calls/{callId} {
+      function isCaller() {
+        return request.auth != null && request.auth.uid == resource.data.fromId;
+      }
+
+      function isParticipant() {
+        return request.auth != null &&
+          (request.auth.uid == resource.data.fromId ||
+           request.auth.uid == resource.data.toId);
+      }
+
+      function allowedCallUpdate() {
+        let diff = request.resource.data.diff(resource.data);
+        return request.resource.data.fromId == resource.data.fromId &&
+          request.resource.data.toId == resource.data.toId &&
+          (
+            isCaller() ||
+            diff.changedKeys().hasOnly([
+              'status',
+              'updatedAt',
+              'answeredAt',
+              'endedAt',
+              'declinedAt',
+              'missedAt'
+            ])
+          );
+      }
+
+      allow create: if request.auth != null &&
+        request.resource.data.fromId == request.auth.uid;
+      allow read: if isParticipant();
+      allow update: if isParticipant() && allowedCallUpdate();
+      allow delete: if false;
+    }
+
     // Notifications settings
     match /users/{userId}/settings/{document} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
@@ -250,9 +286,14 @@ service cloud.firestore {
           request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants &&
           request.auth.uid == request.resource.data.senderId &&
           (
-            // Encrypted text
-            ((request.resource.data.type == 'text' ||
-              request.resource.data.type == 'sticker') &&
+            // Encrypted message
+            ((request.resource.data.type in [
+                'text',
+                'sticker',
+                'location',
+                'location_live',
+                'file'
+              ]) &&
              request.resource.data.encrypted == true &&
              (
                request.resource.data.ciphertext is string ||
@@ -266,14 +307,10 @@ service cloud.firestore {
                !('senderCiphertexts' in request.resource.data) ||
                request.resource.data.senderCiphertexts is map
              ) &&
-              (
-                !('senderPublicKey' in request.resource.data) ||
-                request.resource.data.senderPublicKey is string
-              ) &&
-              (
-                request.resource.data.type != 'sticker' ||
-                request.resource.data.sticker is string
-              ))
+             (
+               !('senderPublicKey' in request.resource.data) ||
+               request.resource.data.senderPublicKey is string
+             ))
 
             ||
 

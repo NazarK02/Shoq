@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:intl/intl.dart';
@@ -65,6 +66,7 @@ enum _CallPhase { ringing, connecting, inCall, ended }
 
 class _CallScreenState extends State<CallScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final SignalingService _signaling = SignalingService();
   final ChatService _chatService = ChatService();
   late final String _sessionId;
@@ -92,6 +94,7 @@ class _CallScreenState extends State<CallScreen> {
   bool _isInitializing = true;
   bool _renderersReady = false;
   bool _isRenegotiating = false;
+  bool _callNotificationSent = false;
 
   int _offerRetryCount = 0;
   static const int _maxOfferRetries = 10;
@@ -400,6 +403,8 @@ class _CallScreenState extends State<CallScreen> {
     _localOffer = {'sdp': offer.sdp, 'sdpType': offer.type};
 
     debugPrint('📤 Sending offer');
+    await _createCallDoc();
+    await _sendCallNotification();
     await _sendOffer();
     _startOfferRetry();
 
@@ -407,6 +412,7 @@ class _CallScreenState extends State<CallScreen> {
       debugPrint('⏰ Call timeout');
       if (_phase != _CallPhase.ringing || _callId == null) return;
       _callEndReason = 'missed';
+      unawaited(_updateCallStatus('missed'));
       await _sendSignal('call_missed');
       _endCallLocal();
     });
@@ -857,8 +863,8 @@ class _CallScreenState extends State<CallScreen> {
     return {
       'mandatory': {
         'OfferToReceiveAudio': true,
-        // Keep receiving capability enabled so audio calls can upgrade to video.
-        'OfferToReceiveVideo': true,
+        // Only request video when it is enabled; upgrades will renegotiate.
+        'OfferToReceiveVideo': _isVideo,
       },
       'optional': [],
     };
@@ -900,6 +906,7 @@ class _CallScreenState extends State<CallScreen> {
       'call_answer',
       data: {'sdp': answer.sdp, 'sdpType': answer.type},
     );
+    unawaited(_updateCallStatus('answered'));
     await _broadcastCallHandledToOwnDevices('answered');
 
     _markCallConnected();
@@ -912,6 +919,7 @@ class _CallScreenState extends State<CallScreen> {
   Future<void> _declineCall() async {
     debugPrint('❌ Declining call');
     _callEndReason = 'declined';
+    unawaited(_updateCallStatus('declined'));
     await _sendSignal('call_decline');
     await _broadcastCallHandledToOwnDevices('declined');
     if (_callId != null) {
@@ -923,6 +931,7 @@ class _CallScreenState extends State<CallScreen> {
   Future<void> _hangUp() async {
     debugPrint('📵 Hanging up');
     _callEndReason = 'ended';
+    unawaited(_updateCallStatus('ended'));
     await _sendSignal('call_end');
     if (_callId != null) {
       await NotificationService().clearCallNotification(_callId!);
@@ -977,6 +986,69 @@ class _CallScreenState extends State<CallScreen> {
       'callerName': _callerName,
       'callerPhotoUrl': _callerPhotoUrl,
     });
+  }
+
+  Future<void> _sendCallNotification() async {
+    if (_callNotificationSent) return;
+    if (_callId == null || _selfId == null || _peerId == null) return;
+    _callNotificationSent = true;
+    try {
+      await NotificationService().sendCallNotification(
+        recipientId: _peerId!,
+        callId: _callId!,
+        callerName: _callerName,
+        callerPhotoUrl: _callerPhotoUrl,
+        isVideo: _isVideo,
+        fromId: _selfId!,
+      );
+    } catch (e) {
+      debugPrint('Failed to send call notification: $e');
+    }
+  }
+
+  Future<void> _createCallDoc() async {
+    if (_callId == null || _selfId == null || _peerId == null) return;
+    if (_localOffer == null) return;
+    try {
+      await _firestore.collection('calls').doc(_callId).set({
+        'callId': _callId,
+        'fromId': _selfId,
+        'toId': _peerId,
+        'fromClientId': _signaling.clientId,
+        'callerName': _callerName,
+        'callerPhotoUrl': _callerPhotoUrl,
+        'isVideo': _isVideo,
+        'offer': {
+          'sdp': _localOffer!['sdp'],
+          'type': _localOffer!['sdpType'],
+        },
+        'status': 'ringing',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'expiresAt': Timestamp.fromDate(
+          DateTime.now().add(const Duration(minutes: 2)),
+        ),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Failed to create call doc: $e');
+    }
+  }
+
+  Future<void> _updateCallStatus(String status) async {
+    if (_callId == null) return;
+    try {
+      await _firestore.collection('calls').doc(_callId).set({
+        'status': status,
+        'updatedAt': FieldValue.serverTimestamp(),
+        if (status == 'answered') 'answeredAt': FieldValue.serverTimestamp(),
+        if (status == 'ended') 'endedAt': FieldValue.serverTimestamp(),
+        if (status == 'declined')
+          'declinedAt': FieldValue.serverTimestamp(),
+        if (status == 'missed') 'missedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Failed to update call status: $e');
+    }
   }
 
   Future<void> _renegotiateCall() async {
@@ -1313,6 +1385,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   bool _hasRemoteVideo() {
+    if (_phase != _CallPhase.inCall) return false;
     if (_remoteStream == null) return false;
     final tracks = _remoteStream!.getVideoTracks();
     return tracks.isNotEmpty &&

@@ -47,28 +47,41 @@ exports.sendPushNotification = onDocumentCreated(
         }
       }
 
+      const isCallOffer = normalizedData.type === "call_offer";
       const message = {
-        notification: {
-          title,
-          body,
-        },
         data: normalizedData,
         android: {
           priority: "high",
-          notification: {
-            sound: "default",
-            channelId: "high_importance_channel",
-          },
+          ...(isCallOffer
+            ? {}
+            : {
+              notification: {
+                sound: "default",
+                channelId: "high_importance_channel",
+              },
+            }),
         },
         apns: {
+          headers: isCallOffer
+            ? {
+              "apns-push-type": "background",
+              "apns-priority": "5",
+            }
+            : undefined,
           payload: {
-            aps: {
-              sound: "default",
-              badge: 1,
-            },
+            aps: isCallOffer
+              ? {"content-available": 1}
+              : {
+                sound: "default",
+                badge: 1,
+              },
           },
         },
       };
+
+      if (!isCallOffer) {
+        message.notification = {title, body};
+      }
 
       let successCount = 0;
       let failureCount = 0;
