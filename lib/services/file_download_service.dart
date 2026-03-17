@@ -11,16 +11,26 @@ class FileDownloadService extends ChangeNotifier {
   FileDownloadService._internal();
 
   final Map<String, DownloadProgress> _downloads = {};
+  final Map<String, int> _lastProgressNotifiedAtMs = {};
+  final Map<String, double> _lastProgressNotifiedValue = {};
   final HttpClient _client = HttpClient();
+  static const Duration _progressNotificationThrottle = Duration(
+    milliseconds: 120,
+  );
+  static const double _progressNotificationStep = 0.02;
 
   /// Get download progress for a specific file
   DownloadProgress? getProgress(String messageId) => _downloads[messageId];
 
   /// Check if file is already downloaded
-  Future<String?> getLocalPath(String messageId, String fileName, String mimeType) async {
+  Future<String?> getLocalPath(
+    String messageId,
+    String fileName,
+    String mimeType,
+  ) async {
     final targetPath = await _resolveTargetPath(fileName, mimeType);
     final file = File(targetPath);
-    
+
     if (file.existsSync()) {
       return targetPath;
     }
@@ -56,7 +66,7 @@ class FileDownloadService extends ChangeNotifier {
       downloadedBytes: 0,
       localPath: null,
     );
-    notifyListeners();
+    _notifyDownloadListeners(messageId, force: true);
 
     try {
       final request = await _client.getUrl(Uri.parse(url));
@@ -80,7 +90,7 @@ class FileDownloadService extends ChangeNotifier {
           downloadedBytes: received,
           localPath: null,
         );
-        notifyListeners();
+        _notifyDownloadListeners(messageId);
       }).asFuture();
 
       await sink.close();
@@ -92,7 +102,7 @@ class FileDownloadService extends ChangeNotifier {
         downloadedBytes: received,
         localPath: targetPath,
       );
-      notifyListeners();
+      _notifyDownloadListeners(messageId, force: true);
 
       return targetPath;
     } catch (e) {
@@ -104,7 +114,7 @@ class FileDownloadService extends ChangeNotifier {
         localPath: null,
         error: e.toString(),
       );
-      notifyListeners();
+      _notifyDownloadListeners(messageId, force: true);
       rethrow;
     }
   }
@@ -115,7 +125,39 @@ class FileDownloadService extends ChangeNotifier {
     if (download?.status != DownloadStatus.downloading) return;
 
     _downloads.remove(messageId);
+    _clearProgressTracking(messageId);
     notifyListeners();
+  }
+
+  void _notifyDownloadListeners(String messageId, {bool force = false}) {
+    final progress = _downloads[messageId]?.progress ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final lastAt = _lastProgressNotifiedAtMs[messageId];
+    final lastProgress = _lastProgressNotifiedValue[messageId];
+    final crossedTimeBoundary =
+        lastAt == null ||
+        now - lastAt >= _progressNotificationThrottle.inMilliseconds;
+    final crossedProgressBoundary =
+        lastProgress == null ||
+        (progress - lastProgress).abs() >= _progressNotificationStep;
+
+    if (!force && !crossedTimeBoundary && !crossedProgressBoundary) {
+      return;
+    }
+
+    _lastProgressNotifiedAtMs[messageId] = now;
+    _lastProgressNotifiedValue[messageId] = progress;
+    if (force &&
+        (_downloads[messageId]?.status == DownloadStatus.completed ||
+            _downloads[messageId]?.status == DownloadStatus.failed)) {
+      _clearProgressTracking(messageId);
+    }
+    notifyListeners();
+  }
+
+  void _clearProgressTracking(String messageId) {
+    _lastProgressNotifiedAtMs.remove(messageId);
+    _lastProgressNotifiedValue.remove(messageId);
   }
 
   /// Resolve the correct target path based on file type
@@ -144,7 +186,8 @@ class FileDownloadService extends ChangeNotifier {
   Future<Directory> _getPicturesDirectory() async {
     if (Platform.isWindows) {
       // On Windows, try to get Pictures folder
-      final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'];
+      final home =
+          Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'];
       if (home != null) {
         final pictures = Directory(p.join(home, 'Pictures'));
         if (pictures.existsSync()) {
@@ -152,12 +195,14 @@ class FileDownloadService extends ChangeNotifier {
         }
       }
     }
-    
+
     if (Platform.isAndroid) {
       // On Android, use external storage Pictures
       final externalDir = await getExternalStorageDirectory();
       if (externalDir != null) {
-        final pictures = Directory(p.join(externalDir.path.split('Android')[0], 'Pictures'));
+        final pictures = Directory(
+          p.join(externalDir.path.split('Android')[0], 'Pictures'),
+        );
         if (!pictures.existsSync()) {
           await pictures.create(recursive: true);
         }
@@ -179,7 +224,9 @@ class FileDownloadService extends ChangeNotifier {
     if (Platform.isAndroid) {
       final externalDir = await getExternalStorageDirectory();
       if (externalDir != null) {
-        final downloads = Directory(p.join(externalDir.path.split('Android')[0], 'Download'));
+        final downloads = Directory(
+          p.join(externalDir.path.split('Android')[0], 'Download'),
+        );
         if (!downloads.existsSync()) {
           await downloads.create(recursive: true);
         }
@@ -200,14 +247,14 @@ class FileDownloadService extends ChangeNotifier {
   /// Find unique path by appending numbers if file exists
   String _findUniquePath(String directory, String fileName) {
     final basePath = p.join(directory, fileName);
-    
+
     if (!File(basePath).existsSync()) {
       return basePath;
     }
 
     final name = p.basenameWithoutExtension(fileName);
     final ext = p.extension(fileName);
-    
+
     int counter = 1;
     while (true) {
       final newPath = p.join(directory, '$name ($counter)$ext');
@@ -220,15 +267,19 @@ class FileDownloadService extends ChangeNotifier {
 
   /// Clear all completed downloads from memory
   void clearCompleted() {
-    _downloads.removeWhere((key, value) => 
-      value.status == DownloadStatus.completed
+    _downloads.removeWhere(
+      (key, value) => value.status == DownloadStatus.completed,
     );
     notifyListeners();
   }
 
   /// Call this when the chat screen mounts to restore completed download state
   /// from disk without re-downloading anything.
-  Future<void> hydrateFromDisk(String messageId, String fileName, String mimeType) async {
+  Future<void> hydrateFromDisk(
+    String messageId,
+    String fileName,
+    String mimeType,
+  ) async {
     if (_downloads.containsKey(messageId)) return; // already known
 
     final targetPath = await _resolveTargetPath(fileName, mimeType);
@@ -251,11 +302,7 @@ class FileDownloadService extends ChangeNotifier {
   }
 }
 
-enum DownloadStatus {
-  downloading,
-  completed,
-  failed,
-}
+enum DownloadStatus { downloading, completed, failed }
 
 class DownloadProgress {
   final DownloadStatus status;

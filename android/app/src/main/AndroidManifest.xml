@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Existing permissions -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.INTERNET" />
@@ -10,6 +11,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" 
@@ -69,6 +72,27 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- flutter_callkit_incoming: lock screen call UI -->
+        <activity
+            android:name="com.hiennv.flutter_callkit_incoming.CallkitIncomingActivity"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
+            android:theme="@style/CallkitIncomingTheme"
+            android:screenOrientation="portrait" />
+
+        <receiver
+            android:name="com.hiennv.flutter_callkit_incoming.CallkitIncomingBroadcastReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.hiennv.flutter_callkit_incoming.ACTION_CALL_ACCEPT" />
+                <action android:name="com.hiennv.flutter_callkit_incoming.ACTION_CALL_DECLINE" />
+                <action android:name="com.hiennv.flutter_callkit_incoming.ACTION_CALL_ENDED" />
+                <action android:name="com.hiennv.flutter_callkit_incoming.ACTION_CALL_TIMEOUT" />
+            </intent-filter>
+        </receiver>
     </application>
     
     <queries>

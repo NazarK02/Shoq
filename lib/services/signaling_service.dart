@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
 class SignalingService {
   static final SignalingService _instance = SignalingService._internal();
   factory SignalingService() => _instance;
@@ -22,6 +24,10 @@ class SignalingService {
   ];
 
   static const int _maxReconnectDelaySeconds = 20;
+  static const bool _traceTraffic = bool.fromEnvironment(
+    'TRACE_SIGNALING',
+    defaultValue: false,
+  );
 
   final StreamController<Map<String, dynamic>> _controller =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -40,13 +46,23 @@ class SignalingService {
   bool get isConnected =>
       _socket != null && _socket!.readyState == WebSocket.open;
 
+  void _log(String message, {bool noisy = false}) {
+    if (!kDebugMode) {
+      return;
+    }
+    if (noisy && !_traceTraffic) {
+      return;
+    }
+    debugPrint(message);
+  }
+
   Future<void> ensureConnected({required String userId, String? url}) async {
     final targetUrls = _resolveTargetUrls(url);
 
     if (targetUrls.isEmpty) {
       final error =
           'SignalingService: no signaling URL configured. Use --dart-define=SIGNALING_URL=ws://host1:3000,ws://host2:3000';
-      print('SignalingService error: $error');
+      _log('SignalingService error: $error');
       throw Exception(error);
     }
 
@@ -54,12 +70,12 @@ class SignalingService {
         _userId == userId &&
         _url != null &&
         targetUrls.contains(_url)) {
-      print('SignalingService: already connected to $_url');
+      _log('SignalingService: already connected to $_url');
       return;
     }
 
     if (_connectFuture != null) {
-      print('SignalingService: connection in progress, waiting...');
+      _log('SignalingService: connection in progress, waiting...');
       await _connectFuture;
       if (isConnected &&
           _userId == userId &&
@@ -75,9 +91,9 @@ class SignalingService {
     try {
       await _connectFuture;
       _reconnectAttempts = 0;
-      print('SignalingService: connected successfully');
+      _log('SignalingService: connected successfully');
     } catch (e) {
-      print('SignalingService: connection failed: $e');
+      _log('SignalingService: connection failed: $e');
       rethrow;
     } finally {
       _connectFuture = null;
@@ -132,11 +148,11 @@ class SignalingService {
         lastError = e;
         final hasMore = i < targetUrls.length - 1;
         if (hasMore) {
-          print(
+          _log(
             'SignalingService: failed $targetUrl, trying ${targetUrls[i + 1]}',
           );
         } else {
-          print('SignalingService: failed $targetUrl');
+          _log('SignalingService: failed $targetUrl');
         }
       }
     }
@@ -150,7 +166,7 @@ class SignalingService {
   }
 
   Future<void> _connectSingle(String targetUrl, String userId) async {
-    print('SignalingService: connecting to $targetUrl');
+    _log('SignalingService: connecting to $targetUrl');
     _socket = await WebSocket.connect(targetUrl).timeout(
       const Duration(seconds: 10),
       onTimeout: () => throw TimeoutException('WebSocket connection timed out'),
@@ -164,17 +180,17 @@ class SignalingService {
     );
 
     _sendRaw({'type': 'register', 'userId': userId, 'clientId': _clientId});
-    print('SignalingService: registered as $userId ($_clientId)');
+    _log('SignalingService: registered as $userId ($_clientId)');
   }
 
   Future<void> send(Map<String, dynamic> data) async {
     if (_connectFuture != null) {
-      print('SignalingService: waiting for connection before sending...');
+      _log('SignalingService: waiting for connection before sending...');
       await _connectFuture;
     }
 
     if (!isConnected) {
-      print('SignalingService: cannot send, not connected');
+      _log('SignalingService: cannot send, not connected');
       throw Exception('SignalingService not connected');
     }
 
@@ -183,21 +199,21 @@ class SignalingService {
 
   void _sendRaw(Map<String, dynamic> data) {
     if (!isConnected) {
-      print('SignalingService: cannot send, socket not open');
+      _log('SignalingService: cannot send, socket not open');
       return;
     }
 
     try {
       final payload = jsonEncode(data);
       _socket!.add(payload);
-      print('SignalingService: sent ${data['type']}');
+      _log('SignalingService: sent ${data['type']}', noisy: true);
     } catch (e) {
-      print('SignalingService: send failed: $e');
+      _log('SignalingService: send failed: $e');
     }
   }
 
   void disconnect() {
-    print('SignalingService: disconnecting');
+    _log('SignalingService: disconnecting');
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _socket?.close();
@@ -210,31 +226,31 @@ class SignalingService {
 
   void _handleMessage(dynamic message) {
     if (message is! String) {
-      print('SignalingService: received non-string message');
+      _log('SignalingService: received non-string message');
       return;
     }
 
     try {
       final decoded = jsonDecode(message);
       if (decoded is Map<String, dynamic>) {
-        print('SignalingService: received ${decoded['type']}');
+        _log('SignalingService: received ${decoded['type']}', noisy: true);
         _controller.add(decoded);
       } else if (decoded is Map) {
         _controller.add(Map<String, dynamic>.from(decoded));
       }
     } catch (e) {
-      print('SignalingService: failed to parse message: $e');
+      _log('SignalingService: failed to parse message: $e');
     }
   }
 
   void _handleDone(String userId) {
-    print('SignalingService: connection closed');
+    _log('SignalingService: connection closed');
     _socket = null;
     _scheduleReconnect(userId, reason: 'socket closed');
   }
 
   void _handleError(Object error, String userId) {
-    print('SignalingService: socket error: $error');
+    _log('SignalingService: socket error: $error');
     _socket = null;
     _scheduleReconnect(userId, reason: 'socket error');
   }
@@ -250,7 +266,7 @@ class SignalingService {
       _maxReconnectDelaySeconds,
     );
     final delay = Duration(seconds: delaySeconds);
-    print(
+    _log(
       'SignalingService: reconnecting in ${delay.inSeconds}s ($reason, attempt $_reconnectAttempts)',
     );
 

@@ -84,11 +84,9 @@ Future<void> _logCrash(
   }
   buffer.writeln('---');
   try {
-    await File(path).writeAsString(
-      buffer.toString(),
-      mode: FileMode.append,
-      flush: true,
-    );
+    await File(
+      path,
+    ).writeAsString(buffer.toString(), mode: FileMode.append, flush: true);
   } catch (_) {}
 }
 
@@ -107,8 +105,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     if (callId.isEmpty) return;
 
     final callerName = data['callerName']?.toString() ?? 'Incoming call';
-    final isVideo =
-        data['isVideo'] == true || data['isVideo'] == 'true';
+    final isVideo = data['isVideo'] == true || data['isVideo'] == 'true';
 
     await NotificationService().ensureLocalNotificationsReady();
     await NotificationService().showIncomingCallNotification(
@@ -152,62 +149,70 @@ Future<void> main() async {
     );
   };
 
-  runZonedGuarded(() async {
-    /// Firebase init
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+  runZonedGuarded(
+    () async {
+      /// Firebase init
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
 
-    // Enable local persistence for faster startup and offline cache.
-    FirebaseFirestore.instance.settings = const Settings(
-      persistenceEnabled: true,
-      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-    );
+      // Keep offline cache enabled, but cap it to avoid long GC / disk stalls on
+      // desktop and lower-memory phones.
+      FirebaseFirestore.instance.settings = const Settings(
+        persistenceEnabled: true,
+        cacheSizeBytes: 100 * 1024 * 1024,
+      );
 
-    /// FCM background messages (mobile only)
-    if (!Platform.isWindows) {
-      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-    }
+      /// FCM background messages (mobile only)
+      if (!Platform.isWindows) {
+        FirebaseMessaging.onBackgroundMessage(
+          firebaseMessagingBackgroundHandler,
+        );
+      }
 
-    /// Initialize theme before UI to avoid flicker
-    final themeService = ThemeService();
-    await themeService.initialize();
+      /// Initialize theme before UI to avoid flicker
+      final themeService = ThemeService();
+      await themeService.initialize();
 
-    final localeService = LocaleService();
-    await localeService.initialize();
+      final localeService = LocaleService();
+      await localeService.initialize();
 
-    runApp(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: themeService),
-          ChangeNotifierProvider.value(value: localeService),
-        ],
-        child: const MyApp(),
-      ),
-    );
+      runApp(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: themeService),
+            ChangeNotifierProvider.value(value: localeService),
+          ],
+          child: const MyApp(),
+        ),
+      );
 
-    // Defer non-critical init to keep startup fast
-    if (!Platform.isWindows) {
+      // Defer non-critical init to keep startup fast
+      if (!Platform.isWindows) {
+        Future.microtask(() async {
+          try {
+            await NotificationService().initialize();
+          } catch (e) {
+            debugPrint('Notification init failed: $e');
+          }
+        });
+      }
+
+      // Evict old cached videos in background to avoid unbounded disk growth
       Future.microtask(() async {
         try {
-          await NotificationService().initialize();
+          unawaited(
+            VideoCacheService().evictOlderThan(const Duration(days: 30)),
+          );
         } catch (e) {
-          debugPrint('Notification init failed: $e');
+          debugPrint('Video cache eviction failed: $e');
         }
       });
-    }
-
-    // Evict old cached videos in background to avoid unbounded disk growth
-    Future.microtask(() async {
-      try {
-        unawaited(VideoCacheService().evictOlderThan(const Duration(days: 30)));
-      } catch (e) {
-        debugPrint('Video cache eviction failed: $e');
-      }
-    });
-  }, (error, stack) {
-    unawaited(_logCrash('Zone', error, stack));
-  });
+    },
+    (error, stack) {
+      unawaited(_logCrash('Zone', error, stack));
+    },
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -249,10 +254,10 @@ class MyApp extends StatelessWidget {
             padding: mq.padding * (1.0 / layoutScale),
             viewPadding: mq.viewPadding * (1.0 / layoutScale),
             viewInsets: mq.viewInsets * (1.0 / layoutScale),
-            systemGestureInsets:
-                mq.systemGestureInsets * (1.0 / layoutScale),
+            systemGestureInsets: mq.systemGestureInsets * (1.0 / layoutScale),
             textScaler: effectiveTextScaler,
-            disableAnimations: mq.disableAnimations || themeService.reduceMotion,
+            disableAnimations:
+                mq.disableAnimations || themeService.reduceMotion,
           ),
           child: Transform.scale(
             scale: layoutScale,
@@ -307,8 +312,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    _callNotificationSub =
-        NotificationService().callIntents.listen(_handleCallNotification);
+    _callNotificationSub = NotificationService().callIntents.listen(
+      _handleCallNotification,
+    );
 
     _authSubscription = FirebaseAuth.instance.userChanges().listen((
       user,
@@ -322,8 +328,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         if (Platform.isWindows && requiresVerification) {
           _startWindowsTokenPolling(user);
         }
-        final shouldSaveUser =
-            !Platform.isWindows || !requiresVerification;
+        final shouldSaveUser = !Platform.isWindows || !requiresVerification;
         if (shouldSaveUser) {
           try {
             await UserService().saveUserToFirestore(user: user);
@@ -332,7 +337,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           }
         } else {
           debugPrint(
-              'Skipping user document save until verification on Windows.');
+            'Skipping user document save until verification on Windows.',
+          );
         }
         final tokenVerifiedForUser =
             _windowsTokenVerified && _windowsTokenVerifiedUid == user.uid;
@@ -470,44 +476,42 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   void _startWindowsTokenPolling(User user) {
     if (!Platform.isWindows) return;
-    if (_windowsTokenPollTimer != null &&
-        _verificationCheckUid == user.uid) {
+    if (_windowsTokenPollTimer != null && _verificationCheckUid == user.uid) {
       return;
     }
 
     _windowsTokenPollTimer?.cancel();
-    _windowsTokenPollTimer = Timer.periodic(
-      const Duration(seconds: 8),
-      (_) async {
-        if (_windowsTokenCheckInProgress) return;
-        _windowsTokenCheckInProgress = true;
-        try {
-          final current = FirebaseAuth.instance.currentUser;
-          if (!mounted || current == null || current.uid != user.uid) {
-            _windowsTokenPollTimer?.cancel();
-            _windowsTokenPollTimer = null;
-            return;
-          }
-
-          final token = await current.getIdTokenResult(true);
-          final claims = token.claims ?? const <String, dynamic>{};
-          final verified =
-              claims['email_verified'] == true || claims['emailVerified'] == true;
-          if (verified) {
-            _windowsTokenVerified = true;
-            _windowsTokenVerifiedUid = user.uid;
-            _windowsTokenPollTimer?.cancel();
-            _windowsTokenPollTimer = null;
-            if (mounted) setState(() {});
-            await _bootstrapForUser(current);
-          }
-        } catch (e) {
-          debugPrint('Windows token verify poll failed: $e');
-        } finally {
-          _windowsTokenCheckInProgress = false;
+    _windowsTokenPollTimer = Timer.periodic(const Duration(seconds: 8), (
+      _,
+    ) async {
+      if (_windowsTokenCheckInProgress) return;
+      _windowsTokenCheckInProgress = true;
+      try {
+        final current = FirebaseAuth.instance.currentUser;
+        if (!mounted || current == null || current.uid != user.uid) {
+          _windowsTokenPollTimer?.cancel();
+          _windowsTokenPollTimer = null;
+          return;
         }
-      },
-    );
+
+        final token = await current.getIdTokenResult(true);
+        final claims = token.claims ?? const <String, dynamic>{};
+        final verified =
+            claims['email_verified'] == true || claims['emailVerified'] == true;
+        if (verified) {
+          _windowsTokenVerified = true;
+          _windowsTokenVerifiedUid = user.uid;
+          _windowsTokenPollTimer?.cancel();
+          _windowsTokenPollTimer = null;
+          if (mounted) setState(() {});
+          await _bootstrapForUser(current);
+        }
+      } catch (e) {
+        debugPrint('Windows token verify poll failed: $e');
+      } finally {
+        _windowsTokenCheckInProgress = false;
+      }
+    });
   }
 
   void _startIncomingCallListener(String uid) {
@@ -581,6 +585,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
     final callId = payload['callId']?.toString() ?? '';
     if (callId.isEmpty) return;
+    final autoAnswer =
+        payload['autoAnswer'] == true || payload['autoAnswer'] == 'true';
     if (_callRouteOpen || _activeIncomingCallId == callId) return;
 
     try {
@@ -619,7 +625,10 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       Navigator.of(context)
           .push(
             MaterialPageRoute(
-              builder: (_) => CallScreen.incoming(incomingInvite: invite),
+              builder: (_) => CallScreen.incoming(
+                incomingInvite: invite,
+                autoAnswer: autoAnswer,
+              ),
             ),
           )
           .whenComplete(() {
@@ -683,11 +692,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       stream: FirebaseAuth.instance.userChanges(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          unawaited(_logCrash(
-            'AuthStream',
-            snapshot.error,
-            snapshot.stackTrace,
-          ));
+          unawaited(
+            _logCrash('AuthStream', snapshot.error, snapshot.stackTrace),
+          );
           _stopVerificationPolling();
           return const LoginScreen();
         }
@@ -717,7 +724,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           }
 
           final tokenVerified =
-              _windowsTokenVerified && _windowsTokenVerifiedUid == activeUser.uid;
+              _windowsTokenVerified &&
+              _windowsTokenVerifiedUid == activeUser.uid;
           if (Platform.isWindows && tokenVerified) {
             _stopVerificationPolling();
             return const HomeScreen();

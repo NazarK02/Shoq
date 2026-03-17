@@ -8,7 +8,7 @@ class MessageCacheService {
   factory MessageCacheService() => _instance;
   MessageCacheService._internal();
 
-  static const int _maxMessagesPerConversation = 260;
+  static const int maxMessagesPerConversation = 260;
 
   Future<List<Map<String, dynamic>>> loadConversationMessages(
     String uid,
@@ -48,10 +48,10 @@ class MessageCacheService {
       return;
     }
 
-    final limited = messages.length <= _maxMessagesPerConversation
+    final limited = messages.length <= maxMessagesPerConversation
         ? List<Map<String, dynamic>>.from(messages)
         : messages
-              .sublist(messages.length - _maxMessagesPerConversation)
+              .sublist(messages.length - maxMessagesPerConversation)
               .toList();
     final payload = <Map<String, dynamic>>[];
     for (final message in limited) {

@@ -205,7 +205,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   final List<_PendingUpload> _pendingUploads = [];
   final Map<String, String> _optimisticTextByMessageId = {};
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
-      _conversationMetaSub;
+  _conversationMetaSub;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _recipientSub;
 
   @override
@@ -216,7 +216,6 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     _notificationService.setActiveChat(widget.recipientId);
     _recipientData = _userCache.getCachedUser(widget.recipientId);
     _userCache.warmUsers([widget.recipientId], listen: false);
-    _downloadService.addListener(_onDownloadProgressUpdate);
     _scrollController.addListener(_handleScrollChanged);
 
     final currentUser = _auth.currentUser;
@@ -255,10 +254,6 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         });
       }
     }
-  }
-
-  void _onDownloadProgressUpdate() {
-    if (mounted) setState(() {});
   }
 
   void _handleScrollChanged() {
@@ -305,7 +300,6 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   @override
   void dispose() {
     _notificationService.setActiveChat(null);
-    _downloadService.removeListener(_onDownloadProgressUpdate);
     _scrollController.removeListener(_handleScrollChanged);
     _audioRecordingTimer?.cancel();
     _videoRecordingTimer?.cancel();
@@ -1125,6 +1119,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     );
   }
 
+  // ignore: unused_element
   Future<void> _recordVideoAndSend() async {
     await _startInlineVideoRecording();
   }
@@ -1799,9 +1794,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       await _pickAndSendFile(explicitPath: picked.path);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open gallery')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Could not open gallery')));
       }
     }
   }
@@ -1822,14 +1817,17 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                 Text(
                   'Share location',
                   style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 ListTile(
                   leading: CircleAvatar(
                     backgroundColor: cs.primaryContainer,
-                    child: Icon(Icons.my_location, color: cs.onPrimaryContainer),
+                    child: Icon(
+                      Icons.my_location,
+                      color: cs.onPrimaryContainer,
+                    ),
                   ),
                   title: const Text('Send once'),
                   subtitle: const Text('Sends your current location'),
@@ -1842,9 +1840,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                 const Divider(height: 16),
                 Text(
                   'Share live location',
-                  style: Theme.of(ctx).textTheme.labelMedium?.copyWith(
-                        color: cs.onSurfaceVariant,
-                      ),
+                  style: Theme.of(
+                    ctx,
+                  ).textTheme.labelMedium?.copyWith(color: cs.onSurfaceVariant),
                 ),
                 const SizedBox(height: 4),
                 for (final entry in const [
@@ -1855,7 +1853,10 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                   ListTile(
                     leading: CircleAvatar(
                       backgroundColor: cs.errorContainer,
-                      child: Icon(Icons.location_on, color: cs.onErrorContainer),
+                      child: Icon(
+                        Icons.location_on,
+                        color: cs.onErrorContainer,
+                      ),
                     ),
                     title: Text(entry.label),
                     subtitle: const Text('Live updates'),
@@ -1880,9 +1881,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       if (permission == null) return;
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Getting location...')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Getting location...')));
       }
 
       final position = await Geolocator.getCurrentPosition(
@@ -1900,9 +1901,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not get location: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not get location: $e')));
       }
     }
   }
@@ -1914,9 +1915,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       if (permission == null) return;
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Getting location...')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Getting location...')));
       }
 
       final position = await Geolocator.getCurrentPosition(
@@ -1945,32 +1946,31 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       );
 
       _liveLocationTimer?.cancel();
-      _liveLocationTimer = Timer.periodic(
-        const Duration(seconds: 30),
-        (_) async {
-          if (!mounted) return;
-          if (DateTime.now().isAfter(expiresAt)) {
-            await _stopLiveLocation();
-            return;
-          }
-          try {
-            final pos = await Geolocator.getCurrentPosition(
-              locationSettings: const LocationSettings(
-                accuracy: LocationAccuracy.high,
-                timeLimit: Duration(seconds: 10),
-              ),
-            );
-            await _updateLiveLocationMessage(
-              messageId: msgId,
-              lat: pos.latitude,
-              lng: pos.longitude,
-              expiresAt: expiresAt,
-            );
-          } catch (e) {
-            debugPrint('Live location update failed: $e');
-          }
-        },
-      );
+      _liveLocationTimer = Timer.periodic(const Duration(seconds: 30), (
+        _,
+      ) async {
+        if (!mounted) return;
+        if (DateTime.now().isAfter(expiresAt)) {
+          await _stopLiveLocation();
+          return;
+        }
+        try {
+          final pos = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              timeLimit: Duration(seconds: 10),
+            ),
+          );
+          await _updateLiveLocationMessage(
+            messageId: msgId,
+            lat: pos.latitude,
+            lng: pos.longitude,
+            expiresAt: expiresAt,
+          );
+        } catch (e) {
+          debugPrint('Live location update failed: $e');
+        }
+      });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2036,6 +2036,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     return permission;
   }
 
+  // ignore: unused_element
   Future<_MediaComposerResult?> _showMediaComposer(List<XFile> files) async {
     final captionController = TextEditingController();
     final result = await showModalBottomSheet<_MediaComposerResult>(
@@ -2154,14 +2155,14 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   }) async {
     if (_conversationId == null) return;
 
-    String? path;
+    late final String path;
     String? name;
 
     if (explicitPath != null) {
-      path = explicitPath.trim();
-      if (path.isNotEmpty) {
-        name = p.basename(path).trim();
-      }
+      final trimmedPath = explicitPath.trim();
+      if (trimmedPath.isEmpty) return;
+      path = trimmedPath;
+      name = p.basename(path).trim();
     } else {
       final result = await FilePicker.platform.pickFiles(
         allowMultiple: false,
@@ -2184,12 +2185,13 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       name = file.name.trim();
     }
 
-    if (path == null || path.isEmpty) return;
-    final fileName = (name == null || name.isEmpty)
-        ? p.basename(path).trim().isEmpty
-              ? 'file_${DateTime.now().millisecondsSinceEpoch}'
-              : p.basename(path)
-        : name;
+    final resolvedName = name.trim();
+    final fallbackName = p.basename(path).trim();
+    final fileName = resolvedName.isNotEmpty
+        ? resolvedName
+        : (fallbackName.isNotEmpty
+              ? fallbackName
+              : 'file_${DateTime.now().millisecondsSinceEpoch}');
 
     await _sendLocalFile(
       filePath: path,
@@ -2303,6 +2305,9 @@ class _MessagesListState extends State<_MessagesList>
   static final Map<String, QuerySnapshot> _sessionMessageCache = {};
   static final Map<String, List<Map<String, dynamic>>>
   _sessionPersistedMessages = {};
+  static const int _maxSessionCachedConversations = 6;
+  static final List<String> _sessionMessageOrder = [];
+  static final List<String> _sessionPersistedOrder = [];
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final MessageCacheService _messageCache = MessageCacheService();
@@ -2325,10 +2330,12 @@ class _MessagesListState extends State<_MessagesList>
   List<QueryDocumentSnapshot> _latestLiveMessages = const [];
   String? _latestLiveMessagesOwnerId;
   String _lastPersistedPayloadSignature = '';
+  String _lastLiveMessageCacheSeedKey = '';
 
   @override
   void initState() {
     super.initState();
+    widget.downloadService.addListener(_handleDownloadProgressChanged);
     _hydrateLocalMessages();
     _hydratePersistentMessages();
   }
@@ -2336,6 +2343,10 @@ class _MessagesListState extends State<_MessagesList>
   @override
   void didUpdateWidget(covariant _MessagesList oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.downloadService != widget.downloadService) {
+      oldWidget.downloadService.removeListener(_handleDownloadProgressChanged);
+      widget.downloadService.addListener(_handleDownloadProgressChanged);
+    }
     if (oldWidget.conversationId != widget.conversationId) {
       _resetTransientCaches();
       _hydrateLocalMessages();
@@ -2360,6 +2371,7 @@ class _MessagesListState extends State<_MessagesList>
     _cacheHydrated = widget.conversationId == null;
     _persistentCacheHydrated = widget.conversationId == null;
     _lastPersistedPayloadSignature = '';
+    _lastLiveMessageCacheSeedKey = '';
   }
 
   void _hydrateLocalMessages() {
@@ -2403,6 +2415,7 @@ class _MessagesListState extends State<_MessagesList>
     if (!mounted || _cacheConversationId != conversationId) return;
     if (cached != null && cached.docs.isNotEmpty) {
       _sessionMessageCache[conversationId] = cached;
+      _touchSessionMessageCache(conversationId);
     }
     setState(() {
       if (cached != null) {
@@ -2444,17 +2457,25 @@ class _MessagesListState extends State<_MessagesList>
       _persistentCacheHydrated = true;
       _lastPersistedPayloadSignature = signature;
       _sessionPersistedMessages[conversationId] = seeded;
+      _touchSessionPersistedCache(conversationId);
     });
   }
 
   @override
   void dispose() {
+    widget.downloadService.removeListener(_handleDownloadProgressChanged);
     _persistentCacheDebounce?.cancel();
     super.dispose();
   }
 
   @override
   bool get wantKeepAlive => true;
+
+  void _handleDownloadProgressChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
 
   String _mapSignature(dynamic value) {
     if (value is! Map) return '';
@@ -2515,6 +2536,41 @@ class _MessagesListState extends State<_MessagesList>
     return '${payload.length}:$hash';
   }
 
+  String _liveMessageCacheSeedKey(List<QueryDocumentSnapshot> docs) {
+    if (docs.isEmpty) {
+      return 'empty';
+    }
+
+    final startIndex =
+        docs.length > MessageCacheService.maxMessagesPerConversation
+        ? docs.length - MessageCacheService.maxMessagesPerConversation
+        : 0;
+    var hash = 17;
+    for (var i = startIndex; i < docs.length; i++) {
+      final doc = docs[i];
+      hash = 37 * hash + doc.id.hashCode;
+      final data = doc.data();
+      if (data is! Map) {
+        continue;
+      }
+      hash = 37 * hash + (data['type']?.toString().hashCode ?? 0);
+      hash = 37 * hash + (data['senderId']?.toString().hashCode ?? 0);
+      hash = 37 * hash + (data['read'] == true ? 1 : 0);
+      hash = 37 * hash + (data['edited'] == true ? 1 : 0);
+      hash =
+          37 * hash +
+          ((data['timestamp'] as Timestamp?)?.millisecondsSinceEpoch.hashCode ??
+              0);
+      hash =
+          37 * hash +
+          ((data['clientTimestamp'] as Timestamp?)
+                  ?.millisecondsSinceEpoch
+                  .hashCode ??
+              0);
+    }
+    return '${docs.length}:$hash';
+  }
+
   Widget _animateOnFirstPaint({required String id, required Widget child}) {
     final shouldAnimate = _animatedMessageIds.add(id);
     if (!shouldAnimate) return child;
@@ -2573,8 +2629,14 @@ class _MessagesListState extends State<_MessagesList>
     _persistentCacheDebounce = Timer(
       const Duration(milliseconds: 360),
       () async {
+        final recentDocs =
+            docs.length <= MessageCacheService.maxMessagesPerConversation
+            ? docs
+            : docs.sublist(
+                docs.length - MessageCacheService.maxMessagesPerConversation,
+              );
         final payload = <Map<String, dynamic>>[];
-        for (final doc in docs) {
+        for (final doc in recentDocs) {
           final data = doc.data();
           if (data is! Map) continue;
           final map = Map<String, dynamic>.from(data);
@@ -2601,15 +2663,14 @@ class _MessagesListState extends State<_MessagesList>
         final seeded = _clonePersistedMessages(payload);
         final byId = _indexPersistedMessages(seeded);
 
-        setState(() {
-          _persistedMessages = seeded;
-          _persistedById
-            ..clear()
-            ..addAll(byId);
-          _persistentCacheHydrated = true;
-          _lastPersistedPayloadSignature = signature;
-          _sessionPersistedMessages[conversationId] = seeded;
-        });
+        _persistedMessages = seeded;
+        _persistedById
+          ..clear()
+          ..addAll(byId);
+        _persistentCacheHydrated = true;
+        _lastPersistedPayloadSignature = signature;
+        _sessionPersistedMessages[conversationId] = seeded;
+        _touchSessionPersistedCache(conversationId);
       },
     );
   }
@@ -2630,9 +2691,28 @@ class _MessagesListState extends State<_MessagesList>
           _persistentCacheHydrated = true;
           _lastPersistedPayloadSignature = 'empty';
           _sessionPersistedMessages.remove(conversationId);
+          _sessionPersistedOrder.remove(conversationId);
         });
       },
     );
+  }
+
+  void _touchSessionMessageCache(String conversationId) {
+    _sessionMessageOrder.remove(conversationId);
+    _sessionMessageOrder.add(conversationId);
+    while (_sessionMessageOrder.length > _maxSessionCachedConversations) {
+      final evicted = _sessionMessageOrder.removeAt(0);
+      _sessionMessageCache.remove(evicted);
+    }
+  }
+
+  void _touchSessionPersistedCache(String conversationId) {
+    _sessionPersistedOrder.remove(conversationId);
+    _sessionPersistedOrder.add(conversationId);
+    while (_sessionPersistedOrder.length > _maxSessionCachedConversations) {
+      final evicted = _sessionPersistedOrder.removeAt(0);
+      _sessionPersistedMessages.remove(evicted);
+    }
   }
 
   Map<String, dynamic> _buildPersistableMessage({
@@ -3533,6 +3613,7 @@ class _MessagesListState extends State<_MessagesList>
             snapshotData != null &&
             snapshotData.docs.isNotEmpty) {
           _sessionMessageCache[activeConversationId] = snapshotData;
+          _touchSessionMessageCache(activeConversationId);
         }
 
         final hasPendingItems =
@@ -3556,9 +3637,17 @@ class _MessagesListState extends State<_MessagesList>
         final encryptionReady = widget.chatService.isEncryptionReady;
         final messages = snapshot.data?.docs ?? [];
         if (messages.isNotEmpty) {
-          _latestLiveMessages = List<QueryDocumentSnapshot>.from(messages);
-          _latestLiveMessagesOwnerId = currentUser.uid;
-          _schedulePersistedCacheWriteFromLive();
+          final liveCacheSeedKey = _liveMessageCacheSeedKey(messages);
+          if (liveCacheSeedKey != _lastLiveMessageCacheSeedKey) {
+            _lastLiveMessageCacheSeedKey = liveCacheSeedKey;
+            _latestLiveMessages = List<QueryDocumentSnapshot>.from(messages);
+            _latestLiveMessagesOwnerId = currentUser.uid;
+            _schedulePersistedCacheWriteFromLive();
+          }
+        } else {
+          _lastLiveMessageCacheSeedKey = 'empty';
+          _latestLiveMessages = const [];
+          _latestLiveMessagesOwnerId = null;
         }
         if (!_animationCachePrimed && messages.isNotEmpty) {
           _animationCachePrimed = true;
@@ -3732,30 +3821,30 @@ class _MessagesListState extends State<_MessagesList>
                         key: ValueKey(messageId),
                       )
                     : (type == 'file'
-                        ? _buildMessageBubble(
-                            'Encrypted file',
-                            isMe,
-                            timestamp,
-                            messageId: messageId,
-                            messageData: message,
-                            isPending: isPending,
-                            isRead: isRead,
-                            readAt: readAt,
-                            key: ValueKey(messageId),
-                          )
-                        : _buildMessageBubble(
-                            immediateText.isNotEmpty
-                                ? immediateText
-                                : 'Encrypted message',
-                            isMe,
-                            timestamp,
-                            messageId: messageId,
-                            messageData: message,
-                            isPending: isPending,
-                            isRead: isRead,
-                            readAt: readAt,
-                            key: ValueKey(messageId),
-                          )),
+                          ? _buildMessageBubble(
+                              'Encrypted file',
+                              isMe,
+                              timestamp,
+                              messageId: messageId,
+                              messageData: message,
+                              isPending: isPending,
+                              isRead: isRead,
+                              readAt: readAt,
+                              key: ValueKey(messageId),
+                            )
+                          : _buildMessageBubble(
+                              immediateText.isNotEmpty
+                                  ? immediateText
+                                  : 'Encrypted message',
+                              isMe,
+                              timestamp,
+                              messageId: messageId,
+                              messageData: message,
+                              isPending: isPending,
+                              isRead: isRead,
+                              readAt: readAt,
+                              key: ValueKey(messageId),
+                            )),
               );
             }
 
@@ -3776,28 +3865,28 @@ class _MessagesListState extends State<_MessagesList>
                         key: ValueKey(messageId),
                       )
                     : (type == 'file'
-                        ? _buildEncryptedFileBubble(
-                            message: message,
-                            decryptedText: cachedText,
-                            isMe: isMe,
-                            timestamp: timestamp,
-                            isPending: isPending,
-                            isRead: isRead,
-                            readAt: readAt,
-                            messageId: messageId,
-                            key: ValueKey(messageId),
-                          )
-                        : _buildMessageBubble(
-                            cachedText,
-                            isMe,
-                            timestamp,
-                            messageId: messageId,
-                            messageData: message,
-                            isPending: isPending,
-                            isRead: isRead,
-                            readAt: readAt,
-                            key: ValueKey(messageId),
-                          )),
+                          ? _buildEncryptedFileBubble(
+                              message: message,
+                              decryptedText: cachedText,
+                              isMe: isMe,
+                              timestamp: timestamp,
+                              isPending: isPending,
+                              isRead: isRead,
+                              readAt: readAt,
+                              messageId: messageId,
+                              key: ValueKey(messageId),
+                            )
+                          : _buildMessageBubble(
+                              cachedText,
+                              isMe,
+                              timestamp,
+                              messageId: messageId,
+                              messageData: message,
+                              isPending: isPending,
+                              isRead: isRead,
+                              readAt: readAt,
+                              key: ValueKey(messageId),
+                            )),
               );
             }
 
@@ -3882,28 +3971,28 @@ class _MessagesListState extends State<_MessagesList>
                           key: ValueKey(messageId),
                         )
                       : (type == 'file'
-                          ? _buildEncryptedFileBubble(
-                              message: message,
-                              decryptedText: displayText,
-                              isMe: isMe,
-                              timestamp: timestamp,
-                              isPending: isPending,
-                              isRead: isRead,
-                              readAt: readAt,
-                              messageId: messageId,
-                              key: ValueKey(messageId),
-                            )
-                          : _buildMessageBubble(
-                              displayText,
-                              isMe,
-                              timestamp,
-                              messageId: messageId,
-                              messageData: message,
-                              isPending: isPending,
-                              isRead: isRead,
-                              readAt: readAt,
-                              key: ValueKey(messageId),
-                            )),
+                            ? _buildEncryptedFileBubble(
+                                message: message,
+                                decryptedText: displayText,
+                                isMe: isMe,
+                                timestamp: timestamp,
+                                isPending: isPending,
+                                isRead: isRead,
+                                readAt: readAt,
+                                messageId: messageId,
+                                key: ValueKey(messageId),
+                              )
+                            : _buildMessageBubble(
+                                displayText,
+                                isMe,
+                                timestamp,
+                                messageId: messageId,
+                                messageData: message,
+                                isPending: isPending,
+                                isRead: isRead,
+                                readAt: readAt,
+                                key: ValueKey(messageId),
+                              )),
                 );
               },
             );
@@ -3980,8 +4069,9 @@ class _MessagesListState extends State<_MessagesList>
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final bubbleColor =
-        isMe ? colorScheme.primary : colorScheme.surfaceContainerHigh;
+    final bubbleColor = isMe
+        ? colorScheme.primary
+        : colorScheme.surfaceContainerHigh;
     final textColor = isMe ? colorScheme.onPrimary : colorScheme.onSurface;
     final subColor = textColor.withValues(alpha: 0.65);
 
@@ -3999,7 +4089,8 @@ class _MessagesListState extends State<_MessagesList>
     final lat = parts.isNotEmpty ? double.tryParse(parts[0]) : null;
     final lng = parts.length > 1 ? double.tryParse(parts[1]) : null;
     final expiresMs = parts.length > 2 ? int.tryParse(parts[2]) : null;
-    final isActiveLive = liveMessage &&
+    final isActiveLive =
+        liveMessage &&
         (expiresMs == null ||
             DateTime.now().isBefore(
               DateTime.fromMillisecondsSinceEpoch(expiresMs),
@@ -4023,7 +4114,7 @@ class _MessagesListState extends State<_MessagesList>
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: (lat != null && lng != null)
-              ? () => _openLocationInMaps(lat!, lng!)
+              ? () => _openLocationInMaps(lat, lng)
               : null,
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -4037,8 +4128,9 @@ class _MessagesListState extends State<_MessagesList>
                 child: Container(
                   height: 100,
                   width: double.infinity,
-                  color:
-                      isDark ? const Color(0xFF2A3A2A) : const Color(0xFFD4E8CF),
+                  color: isDark
+                      ? const Color(0xFF2A3A2A)
+                      : const Color(0xFFD4E8CF),
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
@@ -4046,8 +4138,7 @@ class _MessagesListState extends State<_MessagesList>
                         child: CustomPaint(
                           painter: _MapGridPainter(
                             accentColor: isMe
-                                ? colorScheme.onPrimary
-                                    .withValues(alpha: 0.12)
+                                ? colorScheme.onPrimary.withValues(alpha: 0.12)
                                 : colorScheme.primary.withValues(alpha: 0.12),
                           ),
                         ),
@@ -4157,6 +4248,7 @@ class _MessagesListState extends State<_MessagesList>
       ],
     );
   }
+
   Widget _buildMessageBubble(
     String text,
     bool isMe,
@@ -4385,9 +4477,7 @@ class _MessagesListState extends State<_MessagesList>
       candidates.add(Uri.parse('http://maps.apple.com/?q=$lat,$lng'));
     }
     candidates.add(
-      Uri.parse(
-        'https://www.google.com/maps/search/?api=1&query=$lat,$lng',
-      ),
+      Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng'),
     );
 
     for (final uri in candidates) {
@@ -4398,9 +4488,9 @@ class _MessagesListState extends State<_MessagesList>
     }
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No maps app available')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No maps app available')));
     }
   }
 
@@ -4593,8 +4683,9 @@ class _MessagesListState extends State<_MessagesList>
         (messageData['stickerFallback']?.toString().trim().isNotEmpty == true)
         ? messageData['stickerFallback'].toString().trim()
         : '';
-    final fallbackText =
-        rawFallback.isNotEmpty ? rawFallback : (parsed?.fallback ?? text.trim());
+    final fallbackText = rawFallback.isNotEmpty
+        ? rawFallback
+        : (parsed?.fallback ?? text.trim());
     final effectiveFallback = fallbackText.isNotEmpty
         ? fallbackText
         : '[Sticker]';

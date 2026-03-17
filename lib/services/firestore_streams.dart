@@ -12,7 +12,10 @@ extension SafeQuerySnapshots<T extends Object?> on Query<T> {
     if (!Platform.isWindows) {
       return snapshots();
     }
-    return _windowsQuerySnapshots(this, windowsPollInterval);
+    assert(windowsPollInterval > Duration.zero);
+    // Native listeners are dramatically cheaper than polling Firestore on
+    // Windows. The previous server-poll loop caused sustained UI stalls.
+    return _distinctStream(snapshots(), _queryDigest);
   }
 }
 
@@ -23,48 +26,29 @@ extension SafeDocumentSnapshots<T extends Object?> on DocumentReference<T> {
     if (!Platform.isWindows) {
       return snapshots();
     }
-    return _windowsDocumentSnapshots(this, windowsPollInterval);
+    assert(windowsPollInterval > Duration.zero);
+    return _distinctStream(snapshots(), _documentDigest);
   }
 }
 
-Stream<QuerySnapshot<T>> _windowsQuerySnapshots<T extends Object?>(
-  Query<T> query,
-  Duration interval,
+Stream<T> _distinctStream<T>(
+  Stream<T> source,
+  String Function(T value) digestBuilder,
 ) async* {
   String? previousDigest;
-  while (true) {
+  await for (final value in source) {
     try {
-      final snapshot = await query.get(const GetOptions(source: Source.server));
-      final digest = _queryDigest(snapshot);
-      if (digest != previousDigest) {
-        previousDigest = digest;
-        yield snapshot;
+      final digest = digestBuilder(value);
+      if (digest == previousDigest) {
+        continue;
       }
-    } catch (e) {
-      debugPrint('Firestore query polling failed: $e');
+      previousDigest = digest;
+      yield value;
+    } catch (e, stack) {
+      debugPrint('Firestore snapshot digest failed: $e');
+      debugPrint('$stack');
+      yield value;
     }
-    await Future<void>.delayed(interval);
-  }
-}
-
-Stream<DocumentSnapshot<T>> _windowsDocumentSnapshots<T extends Object?>(
-  DocumentReference<T> document,
-  Duration interval,
-) async* {
-  String? previousDigest;
-  while (true) {
-    try {
-      final snapshot =
-          await document.get(const GetOptions(source: Source.server));
-      final digest = _documentDigest(snapshot);
-      if (digest != previousDigest) {
-        previousDigest = digest;
-        yield snapshot;
-      }
-    } catch (e) {
-      debugPrint('Firestore document polling failed: $e');
-    }
-    await Future<void>.delayed(interval);
   }
 }
 

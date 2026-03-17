@@ -361,6 +361,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   @override
   void dispose() {
     _userCache.removeListener(_userCacheListener);
+    _userCache.unlistenUser(widget.userId);
     _friendSub?.cancel();
     _blockedSub?.cancel();
     _sentReqSub?.cancel();

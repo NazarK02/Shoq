@@ -5,7 +5,9 @@ import 'dart:io' show Platform;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
+import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -42,6 +44,7 @@ class NotificationService {
   String? _cachedToken;
   bool _fcmInitialized = false;
   bool _localInitialized = false;
+  bool _callKitInitialized = false;
 
   final Map<String, int> _messageCountPerSender = {};
   final Map<String, List<String>> _messagesPerSender = {};
@@ -144,6 +147,7 @@ class NotificationService {
       print('Notification permission not granted yet');
     }
 
+    _initCallKit();
     await _handlePendingNotificationResponse();
   }
 
@@ -223,6 +227,65 @@ class NotificationService {
       await _initializeLocalNotifications();
       _localInitialized = true;
     }
+  }
+
+  void _initCallKit() {
+    if (!supportsFcm || _callKitInitialized) return;
+    _callKitInitialized = true;
+
+    FlutterCallkitIncoming.onEvent.listen((event) async {
+      if (event == null) return;
+      final body = event.body as Map<String, dynamic>? ?? {};
+      final extra =
+          (body['extra'] as Map?)?.cast<String, dynamic>() ?? {};
+      final callId =
+          (body['id'] as String?)?.trim() ??
+          (extra['callId'] as String?)?.trim() ??
+          '';
+
+      switch (event.event) {
+        case Event.actionCallAccept:
+          if (callId.isNotEmpty) {
+            _callIntentController.add({
+              'type': 'call',
+              'callId': callId,
+              'fromId': extra['fromId'] ?? '',
+              'callerName': extra['callerName'] ?? '',
+              if (extra['callerPhotoUrl'] != null)
+                'callerPhotoUrl': extra['callerPhotoUrl'],
+              'isVideo': extra['isVideo'] ?? false,
+              'autoAnswer': true,
+            });
+          }
+          break;
+        case Event.actionCallDecline:
+          if (callId.isNotEmpty) {
+            try {
+              await _firestore.collection('calls').doc(callId).update({
+                'status': 'declined',
+                'endedAt': FieldValue.serverTimestamp(),
+              });
+            } catch (e) {
+              debugPrint('Failed to update declined call: $e');
+            }
+          }
+          break;
+        case Event.actionCallTimeout:
+          if (callId.isNotEmpty) {
+            try {
+              await _firestore.collection('calls').doc(callId).update({
+                'status': 'missed',
+                'endedAt': FieldValue.serverTimestamp(),
+              });
+            } catch (e) {
+              debugPrint('Failed to update missed call: $e');
+            }
+          }
+          break;
+        default:
+          break;
+      }
+    });
   }
 
   Future<String> _getCurrentDeviceId() async {
@@ -484,62 +547,97 @@ class NotificationService {
     String? sdp,
     String? sdpType,
   }) async {
-    if (!supportsLocalNotifications ||
-        _localNotifications == null ||
-        !_localInitialized) {
+    if (!supportsFcm) {
+      if (!supportsLocalNotifications ||
+          _localNotifications == null ||
+          !_localInitialized) {
+        return;
+      }
+
+      final notificationId = callId.hashCode.abs() % 100000;
+      final title = callerName.isEmpty ? 'Incoming call' : callerName;
+      final body = isVideo ? 'Incoming video call' : 'Incoming call';
+      final windowsDetails = WindowsNotificationDetails();
+
+      await _localNotifications!.show(
+        notificationId,
+        title,
+        body,
+        NotificationDetails(windows: windowsDetails),
+        payload: jsonEncode({
+          'type': 'call',
+          'callId': callId,
+          if (fromId != null && fromId.trim().isNotEmpty) 'fromId': fromId,
+          if (callerName.isNotEmpty) 'callerName': callerName,
+          if (callerPhotoUrl != null && callerPhotoUrl.trim().isNotEmpty)
+            'callerPhotoUrl': callerPhotoUrl,
+          'isVideo': isVideo,
+          if (sdp != null && sdpType != null) 'sdp': sdp,
+          if (sdpType != null) 'sdpType': sdpType,
+        }),
+      );
       return;
     }
 
-    final notificationId = callId.hashCode.abs() % 100000;
-    final title = callerName.isEmpty ? 'Incoming call' : callerName;
-    final body = isVideo ? 'Incoming video call' : 'Incoming call';
-
-    final androidDetails = AndroidNotificationDetails(
-      'calls_channel',
-      'Calls',
-      channelDescription: 'Incoming calls',
-      importance: Importance.max,
-      priority: Priority.max,
-      category: AndroidNotificationCategory.call,
-      fullScreenIntent: true,
-      ongoing: true,
-      timeoutAfter: 35000,
-    );
-
-    const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    final windowsDetails = WindowsNotificationDetails();
-
-    final details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-      windows: windowsDetails,
-    );
-
-    await _localNotifications!.show(
-      notificationId,
-      title,
-      body,
-      details,
-      payload: jsonEncode({
-        'type': 'call',
+    final params = CallKitParams(
+      id: callId,
+      nameCaller: callerName.isEmpty ? 'Shoq' : callerName,
+      appName: 'Shoq',
+      avatar: (callerPhotoUrl?.trim().isNotEmpty ?? false)
+          ? callerPhotoUrl
+          : null,
+      handle: callerName.isEmpty ? 'Shoq' : callerName,
+      type: isVideo ? 1 : 0,
+      duration: 35000,
+      textAccept: 'Accept',
+      textDecline: 'Decline',
+      extra: <String, dynamic>{
         'callId': callId,
-        if (fromId != null && fromId.trim().isNotEmpty) 'fromId': fromId,
-        if (callerName.isNotEmpty) 'callerName': callerName,
+        'fromId': fromId ?? '',
+        'callerName': callerName,
         if (callerPhotoUrl != null && callerPhotoUrl.trim().isNotEmpty)
           'callerPhotoUrl': callerPhotoUrl,
         'isVideo': isVideo,
-        if (sdp != null && sdpType != null) 'sdp': sdp,
+        if (sdp != null) 'sdp': sdp,
         if (sdpType != null) 'sdpType': sdpType,
-      }),
+      },
+      android: const AndroidParams(
+        isCustomNotification: true,
+        isShowLogo: false,
+        ringtonePath: 'system_ringtone_default',
+        backgroundColor: '#0d0d0d',
+        actionColor: '#4D9EFF',
+        textColor: '#FFFFFF',
+        incomingCallNotificationChannelName: 'Incoming Calls',
+        missedCallNotificationChannelName: 'Missed Calls',
+        isShowCallID: false,
+      ),
+      ios: const IOSParams(
+        iconName: 'AppIcon',
+        handleType: 'generic',
+        supportsVideo: true,
+        maximumCallGroups: 1,
+        maximumCallsPerCallGroup: 1,
+        audioSessionMode: 'default',
+        audioSessionActive: true,
+        audioSessionPreferredSampleRate: 44100.0,
+        audioSessionPreferredIOBufferDuration: 0.005,
+        supportsDTMF: false,
+        supportsHolding: false,
+        supportsGrouping: false,
+        supportsUngrouping: false,
+        ringtonePath: 'system_ringtone_default',
+      ),
     );
+
+    await FlutterCallkitIncoming.showCallkitIncoming(params);
   }
 
   Future<void> clearCallNotification(String callId) async {
+    if (supportsFcm) {
+      await FlutterCallkitIncoming.endCall(callId);
+      return;
+    }
     if (!supportsLocalNotifications ||
         _localNotifications == null ||
         !_localInitialized) {

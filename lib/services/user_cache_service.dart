@@ -50,6 +50,12 @@ class UserCacheService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Stop listening to live updates for a single user.
+  void unlistenUser(String uid) {
+    if (uid.trim().isEmpty) return;
+    _subs.remove(uid)?.cancel();
+  }
+
   Future<void> _loadUser(String uid, {bool listen = true}) async {
     if (_inflight.containsKey(uid)) return _inflight[uid];
     final future = _loadUserInternal(uid, listen: listen);
@@ -213,9 +219,16 @@ class UserCacheService extends ChangeNotifier {
     while (list.length > _maxPersistedUsers) {
       final removed = list.removeAt(0);
       await prefs.remove('user_cache_$removed');
-      _cache.remove(removed);
+      _evictUser(removed);
     }
 
     await prefs.setStringList(_indexKey, list);
+  }
+
+  void _evictUser(String uid) {
+    _subs.remove(uid)?.cancel();
+    _cache.remove(uid);
+    _inflight.remove(uid);
+    _fetchedFromFirestore.remove(uid);
   }
 }

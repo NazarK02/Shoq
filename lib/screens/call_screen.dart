@@ -40,6 +40,7 @@ class CallScreen extends StatefulWidget {
   final String? peerPhotoUrl;
   final bool isVideo;
   final bool isIncoming;
+  final bool autoAnswer;
 
   const CallScreen.outgoing({
     super.key,
@@ -48,15 +49,19 @@ class CallScreen extends StatefulWidget {
     this.peerPhotoUrl,
     this.isVideo = false,
   }) : invite = null,
-       isIncoming = false;
+       isIncoming = false,
+       autoAnswer = false;
 
-  CallScreen.incoming({super.key, required CallInvite incomingInvite})
-    : invite = incomingInvite,
-      peerId = incomingInvite.fromId,
-      peerName = incomingInvite.callerName,
-      peerPhotoUrl = incomingInvite.callerPhotoUrl,
-      isVideo = incomingInvite.isVideo,
-      isIncoming = true;
+  CallScreen.incoming({
+    super.key,
+    required CallInvite incomingInvite,
+    this.autoAnswer = false,
+  }) : invite = incomingInvite,
+       peerId = incomingInvite.fromId,
+       peerName = incomingInvite.callerName,
+       peerPhotoUrl = incomingInvite.callerPhotoUrl,
+       isVideo = incomingInvite.isVideo,
+       isIncoming = true;
 
   @override
   State<CallScreen> createState() => _CallScreenState();
@@ -154,6 +159,79 @@ class _CallScreenState extends State<CallScreen> {
     });
   }
 
+  void _startConnectionTimeout() {
+    _connectionTimeout?.cancel();
+    _connectionTimeout = Timer(_maxConnectionWait, () {
+      if (_phase == _CallPhase.inCall || _phase == _CallPhase.ended) {
+        return;
+      }
+      debugPrint('⏰ Connection timeout - call failed to establish');
+      _callEndReason = 'failed';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Call failed: Connection timeout'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      _endCallLocal();
+    });
+  }
+
+  bool _signalTargetsThisCall(Map<String, dynamic> message) {
+    if (message['callId']?.toString() != _callId) {
+      return false;
+    }
+
+    final toUserId = message['to']?.toString().trim() ?? '';
+    if (toUserId.isNotEmpty && _selfId != null && toUserId != _selfId) {
+      return false;
+    }
+
+    final toClientId = message['toClientId']?.toString().trim() ?? '';
+    if (toClientId.isNotEmpty && toClientId != _signaling.clientId) {
+      return false;
+    }
+
+    return true;
+  }
+
+  void _bindRemoteVideoTrack(MediaStreamTrack track) {
+    track.enabled = true;
+    track.onMute = () {
+      if (mounted) setState(() {});
+    };
+    track.onUnMute = () {
+      if (mounted) setState(() {});
+    };
+  }
+
+  Future<void> _attachRemoteStream(MediaStream stream) async {
+    _remoteStream = stream;
+
+    if (_isWindowsVideoUnsupported) {
+      if (mounted) setState(() {});
+      return;
+    }
+
+    final videoTracks = stream.getVideoTracks();
+    if (videoTracks.isNotEmpty) {
+      for (final track in videoTracks) {
+        _bindRemoteVideoTrack(track);
+      }
+      _isVideo = true;
+      await _ensureVideoRenderers();
+      _remoteRenderer?.srcObject = stream;
+    }
+
+    if (mounted) setState(() {});
+  }
+
+  String _incomingCallLabel() {
+    return widget.isVideo ? 'Incoming video call' : 'Incoming audio call';
+  }
+
   Offset _clampCameraPosition(Offset position) {
     final media = MediaQuery.of(context);
     final size = media.size;
@@ -162,14 +240,8 @@ class _CallScreenState extends State<CallScreen> {
     final minY = media.padding.top + 64;
     final maxY =
         size.height - _cameraPreviewHeight - (media.padding.bottom + 120);
-    final clampedX = position.dx.clamp(
-      minX,
-      maxX < minX ? minX : maxX,
-    );
-    final clampedY = position.dy.clamp(
-      minY,
-      maxY < minY ? minY : maxY,
-    );
+    final clampedX = position.dx.clamp(minX, maxX < minX ? minX : maxX);
+    final clampedY = position.dy.clamp(minY, maxY < minY ? minY : maxY);
     return Offset(clampedX, clampedY);
   }
 
@@ -266,6 +338,10 @@ class _CallScreenState extends State<CallScreen> {
       if (widget.isIncoming) {
         debugPrint('Initializing incoming call');
         await _initIncomingCall();
+        if (widget.autoAnswer) {
+          debugPrint('Auto-answering incoming call');
+          await _answerCall();
+        }
       } else {
         debugPrint('Initializing outgoing call');
         await _initOutgoingCall();
@@ -438,107 +514,112 @@ class _CallScreenState extends State<CallScreen> {
   Future<void> _listenToSignaling() async {
     _signalSub?.cancel();
     _signalSub = _signaling.messages.listen((message) async {
-      if (message['callId']?.toString() != _callId) return;
-      final type = message['type']?.toString();
-      debugPrint('📨 Received signal: $type');
+      try {
+        if (!_signalTargetsThisCall(message)) return;
+        final type = message['type']?.toString();
+        debugPrint('📨 Received signal: $type');
 
-      if (type == 'call_answer') {
-        final answer = {'sdp': message['sdp'], 'type': message['sdpType']};
-        if (!_remoteDescriptionSet) {
-          debugPrint('📥 Setting remote description (answer)');
-          await _setRemoteDescription(answer);
-          _offerRetry?.cancel();
-          _ringTimeout?.cancel();
-          _markCallConnected();
-          if (mounted) setState(() => _phase = _CallPhase.inCall);
+        if (type == 'call_answer') {
+          final answer = {'sdp': message['sdp'], 'type': message['sdpType']};
+          if (!_remoteDescriptionSet) {
+            debugPrint('📥 Setting remote description (answer)');
+            await _setRemoteDescription(answer);
+            _offerRetry?.cancel();
+            _ringTimeout?.cancel();
+            _startConnectionTimeout();
+            if (mounted) setState(() => _phase = _CallPhase.connecting);
+          }
+          return;
         }
-        return;
-      }
 
-      if (type == 'call_reoffer') {
-        if (_peerConnection == null) return;
-        final offer = {'sdp': message['sdp'], 'type': message['sdpType']};
-        final remoteHasVideo = message['isVideo'] == true;
-        if (remoteHasVideo && !_isWindowsVideoUnsupported) {
-          _isVideo = true;
-          await _ensureVideoRenderers();
+        if (type == 'call_reoffer') {
+          if (_peerConnection == null) return;
+          final offer = {'sdp': message['sdp'], 'type': message['sdpType']};
+          final remoteHasVideo = message['isVideo'] == true;
+          if (remoteHasVideo && !_isWindowsVideoUnsupported) {
+            _isVideo = true;
+            await _ensureVideoRenderers();
+          }
+          try {
+            debugPrint('📥 Applying re-offer');
+            await _setRemoteDescription(offer);
+            final answer = await _peerConnection!.createAnswer(
+              _rtcOfferConstraints(),
+            );
+            await _peerConnection!.setLocalDescription(answer);
+            await _sendSignal(
+              'call_reanswer',
+              data: {'sdp': answer.sdp, 'sdpType': answer.type},
+            );
+          } catch (e) {
+            debugPrint('Failed to handle call_reoffer: $e');
+          }
+          return;
         }
-        try {
-          debugPrint('📥 Applying re-offer');
-          await _setRemoteDescription(offer);
-          final answer = await _peerConnection!.createAnswer(
-            _rtcOfferConstraints(),
+
+        if (type == 'call_reanswer') {
+          if (_peerConnection == null) return;
+          final answer = {'sdp': message['sdp'], 'type': message['sdpType']};
+          try {
+            debugPrint('📥 Applying re-answer');
+            await _setRemoteDescription(answer);
+          } catch (e) {
+            debugPrint('Failed to handle call_reanswer: $e');
+          }
+          return;
+        }
+
+        if (type == 'call_ice') {
+          final candidate = RTCIceCandidate(
+            message['candidate'],
+            message['sdpMid'],
+            message['sdpMLineIndex'],
           );
-          await _peerConnection!.setLocalDescription(answer);
-          await _sendSignal(
-            'call_reanswer',
-            data: {'sdp': answer.sdp, 'sdpType': answer.type},
-          );
-        } catch (e) {
-          debugPrint('Failed to handle call_reoffer: $e');
+          if (_peerConnection == null) return;
+          if (_remoteDescriptionSet) {
+            await _peerConnection!.addCandidate(candidate);
+          } else {
+            _pendingRemoteCandidates.add(candidate);
+          }
+          return;
         }
-        return;
-      }
 
-      if (type == 'call_reanswer') {
-        if (_peerConnection == null) return;
-        final answer = {'sdp': message['sdp'], 'type': message['sdpType']};
-        try {
-          debugPrint('📥 Applying re-answer');
-          await _setRemoteDescription(answer);
-        } catch (e) {
-          debugPrint('Failed to handle call_reanswer: $e');
+        if (type == 'call_taken') {
+          final fromUserId = message['from']?.toString();
+          final fromClientId = message['fromClientId']?.toString();
+          if (fromUserId == _selfId &&
+              fromClientId != null &&
+              fromClientId != _signaling.clientId) {
+            final reason = message['reason']?.toString() ?? 'answered';
+            debugPrint('Call handled on another device: $reason');
+            if (_callId != null) {
+              await NotificationService().clearCallNotification(_callId!);
+            }
+            _offerRetry?.cancel();
+            _ringTimeout?.cancel();
+            _callEndReason = reason == 'declined' ? 'declined' : 'ended';
+            _endCallLocal(sendSummary: false);
+          }
+          return;
         }
-        return;
-      }
 
-      if (type == 'call_ice') {
-        final candidate = RTCIceCandidate(
-          message['candidate'],
-          message['sdpMid'],
-          message['sdpMLineIndex'],
-        );
-        if (_peerConnection == null) return;
-        if (_remoteDescriptionSet) {
-          await _peerConnection!.addCandidate(candidate);
-        } else {
-          _pendingRemoteCandidates.add(candidate);
-        }
-        return;
-      }
-
-      if (type == 'call_taken') {
-        final fromUserId = message['from']?.toString();
-        final fromClientId = message['fromClientId']?.toString();
-        if (fromUserId == _selfId &&
-            fromClientId != null &&
-            fromClientId != _signaling.clientId) {
-          final reason = message['reason']?.toString() ?? 'answered';
-          debugPrint('Call handled on another device: $reason');
+        if (type == 'call_end' ||
+            type == 'call_decline' ||
+            type == 'call_missed') {
+          _callEndReason = type == 'call_decline'
+              ? 'declined'
+              : (type == 'call_missed' ? 'missed' : 'ended');
+          debugPrint('☎️ Call ended by peer: $type');
           if (_callId != null) {
             await NotificationService().clearCallNotification(_callId!);
           }
           _offerRetry?.cancel();
-          _ringTimeout?.cancel();
-          _callEndReason = reason == 'declined' ? 'declined' : 'ended';
-          _endCallLocal(sendSummary: false);
+          _endCallLocal();
+          return;
         }
-        return;
-      }
-
-      if (type == 'call_end' ||
-          type == 'call_decline' ||
-          type == 'call_missed') {
-        _callEndReason = type == 'call_decline'
-            ? 'declined'
-            : (type == 'call_missed' ? 'missed' : 'ended');
-        debugPrint('☎️ Call ended by peer: $type');
-        if (_callId != null) {
-          await NotificationService().clearCallNotification(_callId!);
-        }
-        _offerRetry?.cancel();
-        _endCallLocal();
-        return;
+      } catch (e, stack) {
+        debugPrint('Call signaling handler failed: $e');
+        debugPrint('$stack');
       }
     });
   }
@@ -624,27 +705,14 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _createPeerConnection() async {
     debugPrint('🔗 Creating RTCPeerConnection');
-
-    // Clear any existing connection timeout and start a new one
-    _connectionTimeout?.cancel();
-    _connectionTimeout = Timer(_maxConnectionWait, () {
-      if (_phase != _CallPhase.inCall) {
-        debugPrint('⏰ Connection timeout - call failed to establish');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Call failed: Connection timeout'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-        _endCallLocal();
-      }
-    });
+    _remoteDescriptionSet = false;
+    _pendingRemoteCandidates.clear();
 
     final config = {
       'iceServers': CallConfig.iceServers,
       'sdpSemantics': 'unified-plan',
+      'bundlePolicy': 'max-bundle',
+      'rtcpMuxPolicy': 'require',
     };
 
     final constraints = {
@@ -673,7 +741,7 @@ class _CallScreenState extends State<CallScreen> {
     _peerConnection!.onTrack = (event) async {
       debugPrint('🎵 Remote track received: ${event.track.kind}');
       final track = event.track;
-      MediaStream? stream;
+      MediaStream stream;
       if (event.streams.isNotEmpty) {
         stream = event.streams.first;
       } else {
@@ -684,62 +752,29 @@ class _CallScreenState extends State<CallScreen> {
         }
       }
 
-      _remoteStream = stream;
       if (track.kind == 'video') {
-        if (_isWindowsVideoUnsupported) {
-          if (mounted) setState(() {});
-          return;
-        }
-        track.onMute = () {
-          if (mounted) setState(() {});
-        };
-        track.onUnMute = () {
-          if (mounted) setState(() {});
-        };
-        _isVideo = true;
-        await _ensureVideoRenderers();
-        if (_remoteRenderer != null) {
-          _remoteRenderer!.srcObject = _remoteStream;
-        }
+        _bindRemoteVideoTrack(track);
       }
-      if (mounted) setState(() {});
+      await _attachRemoteStream(stream);
     };
 
-    _peerConnection!.onAddStream = (stream) {
+    _peerConnection!.onAddStream = (stream) async {
       debugPrint('📺 Remote stream added');
-      _remoteStream = stream;
-      if (stream.getVideoTracks().isNotEmpty) {
-        if (_isWindowsVideoUnsupported) {
-          if (mounted) setState(() {});
-          return;
-        }
-        _isVideo = true;
-        for (final track in stream.getVideoTracks()) {
-          track.onMute = () {
-            if (mounted) setState(() {});
-          };
-          track.onUnMute = () {
-            if (mounted) setState(() {});
-          };
-        }
-        unawaited(
-          _ensureVideoRenderers().then((_) {
-            if (_remoteRenderer != null && _hasRemoteVideo()) {
-              _remoteRenderer!.srcObject = _remoteStream;
-            }
-            if (mounted) setState(() {});
-          }),
-        );
-      }
-      if (mounted) setState(() {});
+      await _attachRemoteStream(stream);
     };
 
     _peerConnection!.onConnectionState = (state) {
       debugPrint('🔗 Connection state: $state');
 
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnecting) {
+        if (mounted && _phase != _CallPhase.connecting) {
+          setState(() => _phase = _CallPhase.connecting);
+        }
+      }
+
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         debugPrint('✅ Call connected!');
-        _connectionTimeout?.cancel(); // Cancel timeout on successful connection
+        _connectionTimeout?.cancel();
         _markCallConnected();
         if (mounted) setState(() => _phase = _CallPhase.inCall);
       }
@@ -888,6 +923,7 @@ class _CallScreenState extends State<CallScreen> {
 
     try {
       await _createPeerConnection();
+      await _setRemoteDescription(_remoteOffer!);
       await _startLocalStream();
     } catch (e, stack) {
       debugPrint('❌ Error answering call: $e');
@@ -896,8 +932,6 @@ class _CallScreenState extends State<CallScreen> {
       _endCallLocal();
       return;
     }
-
-    await _setRemoteDescription(_remoteOffer!);
 
     final answer = await _peerConnection!.createAnswer(_rtcOfferConstraints());
     await _peerConnection!.setLocalDescription(answer);
@@ -909,9 +943,9 @@ class _CallScreenState extends State<CallScreen> {
     unawaited(_updateCallStatus('answered'));
     await _broadcastCallHandledToOwnDevices('answered');
 
-    _markCallConnected();
+    _startConnectionTimeout();
     await NotificationService().clearCallNotification(_callId!);
-    if (mounted) setState(() => _phase = _CallPhase.inCall);
+    if (mounted) setState(() => _phase = _CallPhase.connecting);
 
     debugPrint('✅ Call answered');
   }
@@ -950,6 +984,7 @@ class _CallScreenState extends State<CallScreen> {
     setState(() => _phase = _CallPhase.ended);
     _offerRetry?.cancel();
     _ringTimeout?.cancel();
+    _connectionTimeout?.cancel();
     _cleanupRtc();
 
     Future.delayed(const Duration(milliseconds: 300), () {
@@ -1018,10 +1053,7 @@ class _CallScreenState extends State<CallScreen> {
         'callerName': _callerName,
         'callerPhotoUrl': _callerPhotoUrl,
         'isVideo': _isVideo,
-        'offer': {
-          'sdp': _localOffer!['sdp'],
-          'type': _localOffer!['sdpType'],
-        },
+        'offer': {'sdp': _localOffer!['sdp'], 'type': _localOffer!['sdpType']},
         'status': 'ringing',
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -1042,8 +1074,7 @@ class _CallScreenState extends State<CallScreen> {
         'updatedAt': FieldValue.serverTimestamp(),
         if (status == 'answered') 'answeredAt': FieldValue.serverTimestamp(),
         if (status == 'ended') 'endedAt': FieldValue.serverTimestamp(),
-        if (status == 'declined')
-          'declinedAt': FieldValue.serverTimestamp(),
+        if (status == 'declined') 'declinedAt': FieldValue.serverTimestamp(),
         if (status == 'missed') 'missedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {
@@ -1106,6 +1137,7 @@ class _CallScreenState extends State<CallScreen> {
 
   void _cleanupRtc() {
     debugPrint('🧹 Cleaning up RTC resources');
+    _connectionTimeout?.cancel();
 
     for (final track in _localStream?.getTracks() ?? []) {
       track.stop();
@@ -1193,7 +1225,9 @@ class _CallScreenState extends State<CallScreen> {
 
       try {
         await _chatService.initializeEncryption();
-        final conversationId = await _chatService.initializeConversation(peerId);
+        final conversationId = await _chatService.initializeConversation(
+          peerId,
+        );
         if (conversationId == null) return;
         final normalizedCallId =
             (_callId ??
@@ -1388,8 +1422,124 @@ class _CallScreenState extends State<CallScreen> {
     if (_phase != _CallPhase.inCall) return false;
     if (_remoteStream == null) return false;
     final tracks = _remoteStream!.getVideoTracks();
-    return tracks.isNotEmpty &&
-        tracks.any((t) => t.enabled && t.muted != true);
+    if (tracks.isEmpty) return false;
+    return tracks.any((t) => t.enabled);
+  }
+
+  Widget _buildIncomingCallScreen() {
+    final hasPhoto = _peerPhotoUrl?.isNotEmpty ?? false;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: hasPhoto
+                ? DecoratedBox(
+                    decoration: BoxDecoration(
+                      image: DecorationImage(
+                        image: NetworkImage(_peerPhotoUrl!),
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withValues(alpha: 0.35),
+                            Colors.black.withValues(alpha: 0.78),
+                            const Color(0xFF060606),
+                          ],
+                        ),
+                      ),
+                    ),
+                  )
+                : Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0xFF101821),
+                          Color(0xFF0E131B),
+                          Color(0xFF050607),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.16),
+                      ),
+                    ),
+                    child: Text(
+                      _incomingCallLabel(),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  _buildAvatar(),
+                  const SizedBox(height: 24),
+                  Text(
+                    _peerDisplayName,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 30,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    DateFormat('h:mm a').format(DateTime.now()),
+                    style: const TextStyle(color: Colors.white70, fontSize: 15),
+                  ),
+                  const Spacer(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildCircleButton(
+                        icon: Icons.call_end,
+                        color: Colors.red,
+                        label: 'Decline',
+                        onPressed: _declineCall,
+                        size: 76,
+                      ),
+                      _buildCircleButton(
+                        icon: widget.isVideo ? Icons.videocam : Icons.call,
+                        color: Colors.green,
+                        label: 'Accept',
+                        onPressed: _answerCall,
+                        size: 76,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildAvatar() {
@@ -1439,34 +1589,36 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     // Fallback avatar/background for audio calls or before remote video starts.
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [const Color(0xFF1a1a1a), const Color(0xFF2d2d2d)],
+    return SizedBox.expand(
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF1a1a1a), Color(0xFF2d2d2d)],
+          ),
         ),
-      ),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _buildAvatar(),
-            const SizedBox(height: 24),
-            Text(
-              _peerDisplayName,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.w500,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildAvatar(),
+              const SizedBox(height: 24),
+              Text(
+                _peerDisplayName,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _statusText(),
-              style: const TextStyle(color: Colors.white70, fontSize: 16),
-            ),
-          ],
+              const SizedBox(height: 12),
+              Text(
+                _statusText(),
+                style: const TextStyle(color: Colors.white70, fontSize: 16),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1508,8 +1660,9 @@ class _CallScreenState extends State<CallScreen> {
         onPanEnd: (_) {
           final snapX = _snapCameraX(_cameraPosition.dx);
           setState(() {
-            _cameraPosition =
-                _clampCameraPosition(Offset(snapX, _cameraPosition.dy));
+            _cameraPosition = _clampCameraPosition(
+              Offset(snapX, _cameraPosition.dy),
+            );
           });
         },
         child: Stack(
@@ -1544,11 +1697,7 @@ class _CallScreenState extends State<CallScreen> {
                     shape: BoxShape.circle,
                   ),
                   padding: const EdgeInsets.all(4),
-                  child: const Icon(
-                    Icons.close,
-                    color: Colors.white,
-                    size: 16,
-                  ),
+                  child: const Icon(Icons.close, color: Colors.white, size: 16),
                 ),
               ),
             ),
@@ -1599,10 +1748,7 @@ class _CallScreenState extends State<CallScreen> {
                 onPressed: _minimizeToHome,
                 tooltip: 'Return to chat',
                 icon: const Icon(Icons.arrow_back, color: Colors.white),
-                constraints: const BoxConstraints(
-                  minWidth: 48,
-                  minHeight: 48,
-                ),
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               ),
             ],
           ),
@@ -1695,10 +1841,11 @@ class _CallScreenState extends State<CallScreen> {
     required Color color,
     required VoidCallback onPressed,
     String? label,
+    double size = 60,
   }) {
     final button = Container(
-      width: 60,
-      height: 60,
+      width: size,
+      height: size,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       child: IconButton(
         icon: Icon(icon, color: Colors.white, size: 28),
@@ -1735,6 +1882,10 @@ class _CallScreenState extends State<CallScreen> {
         backgroundColor: const Color(0xFF1a1a1a),
         body: SafeArea(child: _buildLoadingIndicator()),
       );
+    }
+
+    if (widget.isIncoming && _phase == _CallPhase.ringing) {
+      return _buildIncomingCallScreen();
     }
 
     return Scaffold(
