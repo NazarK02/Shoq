@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../services/email_verification_service.dart';
 import '../services/user_service_e2ee.dart';
 import '../services/theme_service.dart';
 import '../generated/app_localizations.dart';
@@ -24,6 +25,8 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final EmailVerificationService _verificationService =
+      EmailVerificationService();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final ImagePicker _picker = ImagePicker();
@@ -1026,7 +1029,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final friendId = _userData?['friendId']?.toString().trim() ?? '';
     final bio = _getBio();
     final location = _userData?['location'] ?? '';
-    final emailVerified = user?.emailVerified ?? false;
+    final emailVerified =
+        user != null &&
+        (_verificationService.isLocallyVerified(user.uid) ||
+            user.emailVerified == true);
     final socialLinks = _getSocialLinks();
     final l = AppLocalizations.of(context);
 

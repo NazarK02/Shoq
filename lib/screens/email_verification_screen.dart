@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../services/email_verification_service.dart';
 import '../services/user_service_e2ee.dart';
 
 class EmailVerificationScreen extends StatefulWidget {
@@ -14,7 +15,10 @@ class EmailVerificationScreen extends StatefulWidget {
 
 class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final EmailVerificationService _verificationService =
+      EmailVerificationService();
   Timer? _timer;
+  Timer? _resendTimer;
   bool _isResending = false;
   int _resendCountdown = 0;
   bool _verificationCheckInProgress = false;
@@ -31,14 +35,13 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   @override
   void initState() {
     super.initState();
-    if (!Platform.isWindows) {
-      _startVerificationCheck();
-    }
+    _startVerificationCheck();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _resendTimer?.cancel();
     super.dispose();
   }
 
@@ -46,10 +49,11 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
     try {
       final user = _auth.currentUser;
       if (user != null && !user.emailVerified) {
-        // Workaround for Firebase Windows threading bug: defer off the widget tree's hot path
+        // Defer the send so navigation/state changes do not race the auth call.
         await Future.delayed(Duration.zero);
-        await user.sendEmailVerification();
+        await EmailVerificationService().sendVerificationEmail(user);
 
+        if (!mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Verification email sent!')),
@@ -60,13 +64,16 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
           _resendCountdown = 60;
         });
 
-        Timer.periodic(const Duration(seconds: 1), (timer) {
+        _resendTimer?.cancel();
+        _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+          if (!mounted) {
+            timer.cancel();
+            return;
+          }
           if (_resendCountdown > 0) {
-            if (mounted) {
-              setState(() {
-                _resendCountdown--;
-              });
-            }
+            setState(() {
+              _resendCountdown--;
+            });
           } else {
             timer.cancel();
           }
@@ -81,8 +88,24 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
     }
   }
 
+  Future<bool> _refreshVerificationStatus(User user) async {
+    final attempts = Platform.isWindows ? 3 : 1;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      final verified = await _verificationService.refreshEmailVerified(user);
+      if (verified) {
+        _verificationService.markLocallyVerified(user.uid);
+        return true;
+      }
+
+      if (attempt < attempts - 1) {
+        await Future.delayed(const Duration(seconds: 1));
+      }
+    }
+
+    return false;
+  }
+
   void _startVerificationCheck() {
-    if (Platform.isWindows) return;
     if (_timer != null) return;
     final interval = const Duration(seconds: 3);
     _timer = Timer.periodic(interval, (timer) async {
@@ -91,8 +114,8 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
       try {
         final user = _auth.currentUser;
         if (user != null) {
-          await user.reload().timeout(const Duration(seconds: 5));
-          if (_auth.currentUser?.emailVerified == true) {
+          final verified = await _refreshVerificationStatus(user);
+          if (verified) {
             _handleVerifiedState();
           }
         }
@@ -106,9 +129,15 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
 
   Future<void> _resendEmail() async {
     if (_resendCountdown > 0 || _isResending) return;
+    if (!mounted) return;
     setState(() => _isResending = true);
-    await _sendVerificationEmail();
-    setState(() => _isResending = false);
+    try {
+      await _sendVerificationEmail();
+    } finally {
+      if (mounted) {
+        setState(() => _isResending = false);
+      }
+    }
   }
 
   Future<void> _signOut() async {
@@ -210,26 +239,14 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                     final messenger = ScaffoldMessenger.of(context);
                     final user = _auth.currentUser;
                     if (user != null) {
-                      if (Platform.isWindows) {
-                        try {
-                          final token = await user.getIdTokenResult(true);
-                          final claims = token.claims ?? const <String, dynamic>{};
-                          final verified =
-                              claims['email_verified'] == true ||
-                              claims['emailVerified'] == true;
-                          if (verified) {
-                            _handleVerifiedState();
-                            return;
-                          }
-                        } catch (e) {
-                          debugPrint('Windows verification check failed: $e');
-                        }
-                      } else {
-                        await user.reload();
-                        if (_auth.currentUser?.emailVerified == true) {
+                      try {
+                        final verified = await _refreshVerificationStatus(user);
+                        if (verified) {
                           _handleVerifiedState();
                           return;
                         }
+                      } catch (e) {
+                        debugPrint('Verification check failed: $e');
                       }
                       if (!mounted) return;
                       messenger.showSnackBar(

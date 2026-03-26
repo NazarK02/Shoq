@@ -553,9 +553,8 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
         'participants': [currentUser.uid, friendId],
         'createdBy': currentUser.uid,
         'createdAt': FieldValue.serverTimestamp(),
-        'lastMessage': null,
-        'lastMessageTime': null,
-      });
+        'encrypted': true,
+      }, SetOptions(merge: true));
 
       // Add to friends
       await _firestore

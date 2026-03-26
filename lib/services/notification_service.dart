@@ -32,6 +32,7 @@ class NotificationService {
   static const String _markReadActionId = 'mark_read';
   static const String _replyActionId = 'reply';
   static const String _pendingNotificationKey = 'pending_notification_payload';
+  static const String _pendingCallIntentKey = 'pending_call_intent_payload';
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -53,8 +54,37 @@ class NotificationService {
 
   String? _activeChatUserId;
 
-  Stream<Map<String, dynamic>> get callIntents =>
-      _callIntentController.stream;
+  Stream<Map<String, dynamic>> get callIntents => _callIntentController.stream;
+
+  Future<void> cachePendingCallIntent(Map<String, dynamic> payload) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_pendingCallIntentKey, jsonEncode(payload));
+  }
+
+  Future<Map<String, dynamic>?> getPendingCallIntent() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pendingCallIntentKey);
+    return _decodePayload(raw);
+  }
+
+  Future<void> clearPendingCallIntent({String? callId}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (callId == null || callId.trim().isEmpty) {
+      await prefs.remove(_pendingCallIntentKey);
+      return;
+    }
+
+    final raw = prefs.getString(_pendingCallIntentKey);
+    final pending = _decodePayload(raw);
+    if (pending == null) {
+      await prefs.remove(_pendingCallIntentKey);
+      return;
+    }
+
+    if (pending['callId']?.toString() == callId) {
+      await prefs.remove(_pendingCallIntentKey);
+    }
+  }
 
   bool get supportsFcm {
     if (kIsWeb) return false;
@@ -236,8 +266,7 @@ class NotificationService {
     FlutterCallkitIncoming.onEvent.listen((event) async {
       if (event == null) return;
       final body = event.body as Map<String, dynamic>? ?? {};
-      final extra =
-          (body['extra'] as Map?)?.cast<String, dynamic>() ?? {};
+      final extra = (body['extra'] as Map?)?.cast<String, dynamic>() ?? {};
       final callId =
           (body['id'] as String?)?.trim() ??
           (extra['callId'] as String?)?.trim() ??
@@ -246,25 +275,35 @@ class NotificationService {
       switch (event.event) {
         case Event.actionCallAccept:
           if (callId.isNotEmpty) {
-            _callIntentController.add({
+            final payload = {
               'type': 'call',
               'callId': callId,
               'fromId': extra['fromId'] ?? '',
+              if (extra['conversationId'] != null)
+                'conversationId': extra['conversationId'],
               'callerName': extra['callerName'] ?? '',
               if (extra['callerPhotoUrl'] != null)
                 'callerPhotoUrl': extra['callerPhotoUrl'],
+              if (extra['fromClientId'] != null)
+                'fromClientId': extra['fromClientId'],
               'isVideo': extra['isVideo'] ?? false,
               'autoAnswer': true,
-            });
+            };
+            await cachePendingCallIntent(payload);
+            _callIntentController.add(payload);
           }
           break;
         case Event.actionCallDecline:
           if (callId.isNotEmpty) {
             try {
-              await _firestore.collection('calls').doc(callId).update({
-                'status': 'declined',
-                'endedAt': FieldValue.serverTimestamp(),
-              });
+              final conversationId = _resolveCallConversationId(extra);
+              if (conversationId != null) {
+                await _chatService.updateCallMessageStatus(
+                  conversationId: conversationId,
+                  callId: callId,
+                  status: 'declined',
+                );
+              }
             } catch (e) {
               debugPrint('Failed to update declined call: $e');
             }
@@ -273,10 +312,14 @@ class NotificationService {
         case Event.actionCallTimeout:
           if (callId.isNotEmpty) {
             try {
-              await _firestore.collection('calls').doc(callId).update({
-                'status': 'missed',
-                'endedAt': FieldValue.serverTimestamp(),
-              });
+              final conversationId = _resolveCallConversationId(extra);
+              if (conversationId != null) {
+                await _chatService.updateCallMessageStatus(
+                  conversationId: conversationId,
+                  callId: callId,
+                  status: 'missed',
+                );
+              }
             } catch (e) {
               debugPrint('Failed to update missed call: $e');
             }
@@ -299,6 +342,21 @@ class NotificationService {
     return 'unknown_device';
   }
 
+  String? _resolveCallConversationId(Map<String, dynamic> data) {
+    final explicit = (data['conversationId']?.toString() ?? '').trim();
+    if (explicit.isNotEmpty) {
+      return explicit;
+    }
+
+    final fromId = (data['fromId']?.toString() ?? '').trim();
+    final currentUserId = _auth.currentUser?.uid ?? '';
+    if (fromId.isEmpty || currentUserId.isEmpty) {
+      return null;
+    }
+
+    return _chatService.getDirectConversationId(fromId, currentUserId);
+  }
+
   Future<void> _saveTokenToFirestore(String token) async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -309,7 +367,7 @@ class NotificationService {
     try {
       final deviceId = await _getCurrentDeviceId();
       await _firestore.collection('users').doc(user.uid).set({
-        'fcmToken': token,
+        'fcmToken': FieldValue.delete(),
         'fcmTokens.$deviceId': token,
         'lastTokenUpdate': FieldValue.serverTimestamp(),
         'lastTokenDeviceId': deviceId,
@@ -350,26 +408,6 @@ class NotificationService {
     _messagesPerSender.clear();
   }
 
-  List<String> _extractRecipientTokens(Map<String, dynamic>? userData) {
-    final tokens = <String>{};
-
-    final legacyToken = userData?['fcmToken'];
-    if (legacyToken is String && legacyToken.trim().isNotEmpty) {
-      tokens.add(legacyToken.trim());
-    }
-
-    final tokenMap = userData?['fcmTokens'];
-    if (tokenMap is Map) {
-      for (final value in tokenMap.values) {
-        if (value is String && value.trim().isNotEmpty) {
-          tokens.add(value.trim());
-        }
-      }
-    }
-
-    return tokens.toList(growable: false);
-  }
-
   void _handleForegroundMessage(RemoteMessage message) {
     print('Foreground push received: ${message.messageId}');
     if (message.data['type']?.toString() == 'call_offer') {
@@ -406,6 +444,7 @@ class NotificationService {
 
     final type = payload['type']?.toString();
     if (type == 'call') {
+      await cachePendingCallIntent(payload);
       _callIntentController.add(payload);
       return;
     }
@@ -455,6 +494,7 @@ class NotificationService {
     final payload = _decodePayload(raw);
     if (payload == null) return;
     if (payload['type']?.toString() == 'call') {
+      await cachePendingCallIntent(payload);
       _callIntentController.add(payload);
     }
   }
@@ -543,6 +583,8 @@ class NotificationService {
     required String callerName,
     required bool isVideo,
     String? fromId,
+    String? conversationId,
+    String? fromClientId,
     String? callerPhotoUrl,
     String? sdp,
     String? sdpType,
@@ -568,8 +610,12 @@ class NotificationService {
           'type': 'call',
           'callId': callId,
           if (fromId != null && fromId.trim().isNotEmpty) 'fromId': fromId,
+          if (conversationId != null && conversationId.trim().isNotEmpty)
+            'conversationId': conversationId,
+          if (fromClientId?.trim().isNotEmpty ?? false)
+            'fromClientId': fromClientId,
           if (callerName.isNotEmpty) 'callerName': callerName,
-          if (callerPhotoUrl != null && callerPhotoUrl.trim().isNotEmpty)
+          if (callerPhotoUrl?.trim().isNotEmpty ?? false)
             'callerPhotoUrl': callerPhotoUrl,
           'isVideo': isVideo,
           if (sdp != null && sdpType != null) 'sdp': sdp,
@@ -594,8 +640,12 @@ class NotificationService {
       extra: <String, dynamic>{
         'callId': callId,
         'fromId': fromId ?? '',
+        if (conversationId != null && conversationId.trim().isNotEmpty)
+          'conversationId': conversationId,
+        if (fromClientId?.trim().isNotEmpty ?? false)
+          'fromClientId': fromClientId,
         'callerName': callerName,
-        if (callerPhotoUrl != null && callerPhotoUrl.trim().isNotEmpty)
+        if (callerPhotoUrl?.trim().isNotEmpty ?? false)
           'callerPhotoUrl': callerPhotoUrl,
         'isVideo': isVideo,
         if (sdp != null) 'sdp': sdp,
@@ -662,14 +712,15 @@ class NotificationService {
       final callId = data['callId']?.toString() ?? '';
       final callerName = data['callerName']?.toString() ?? 'User';
       final callerPhotoUrl = data['callerPhotoUrl']?.toString();
-      final isVideo =
-          data['isVideo'] == true || data['isVideo'] == 'true';
+      final isVideo = data['isVideo'] == true || data['isVideo'] == 'true';
       if (callId.isEmpty) return;
       await showIncomingCallNotification(
         callId: callId,
         callerName: callerName,
         isVideo: isVideo,
         fromId: data['fromId']?.toString(),
+        conversationId: data['conversationId']?.toString(),
+        fromClientId: data['fromClientId']?.toString(),
         callerPhotoUrl: callerPhotoUrl,
         sdp: data['sdp']?.toString(),
         sdpType: data['sdpType']?.toString(),
@@ -810,37 +861,11 @@ class NotificationService {
     required String senderName,
   }) async {
     try {
-      final recipientDoc = await _firestore
-          .collection('users')
-          .doc(recipientId)
-          .get();
-
-      if (!recipientDoc.exists) {
-        print('Recipient user document not found');
-        return;
-      }
-
-      final recipientData = recipientDoc.data();
-      final tokens = _extractRecipientTokens(recipientData);
-
-      if (tokens.isEmpty) {
-        print('Recipient has no FCM tokens');
-        return;
-      }
-
       await _firestore.collection('notifications').add({
-        'type': 'friend_request',
         'recipientId': recipientId,
-        'senderId': _auth.currentUser?.uid,
-        'fcmToken': tokens.first,
-        'fcmTokens': tokens,
         'title': 'New Friend Request',
         'body': '$senderName sent you a friend request',
-        'data': {
-          'type': 'friend_request',
-          'senderId': _auth.currentUser?.uid,
-          'senderName': senderName,
-        },
+        'data': {'type': 'friend_request', 'senderId': _auth.currentUser?.uid},
         'createdAt': FieldValue.serverTimestamp(),
         'processed': false,
       });
@@ -856,32 +881,10 @@ class NotificationService {
     String? conversationId,
   }) async {
     try {
-      final recipientDoc = await _firestore
-          .collection('users')
-          .doc(recipientId)
-          .get();
-
-      if (!recipientDoc.exists) {
-        print('Recipient user document not found');
-        return;
-      }
-
-      final recipientData = recipientDoc.data();
-      final tokens = _extractRecipientTokens(recipientData);
-
-      if (tokens.isEmpty) {
-        print('Recipient has no FCM tokens');
-        return;
-      }
-
       final trimmedConversationId = conversationId?.trim();
 
       await _firestore.collection('notifications').add({
-        'type': 'new_message',
         'recipientId': recipientId,
-        'senderId': _auth.currentUser?.uid,
-        'fcmToken': tokens.first,
-        'fcmTokens': tokens,
         'title': senderName,
         'body': messageText.length > 100
             ? '${messageText.substring(0, 100)}...'
@@ -889,8 +892,6 @@ class NotificationService {
         'data': {
           'type': 'new_message',
           'senderId': _auth.currentUser?.uid,
-          'senderName': senderName,
-          'messageText': messageText,
           if (trimmedConversationId != null && trimmedConversationId.isNotEmpty)
             'conversationId': trimmedConversationId,
         },
@@ -956,41 +957,28 @@ class NotificationService {
     required String callerName,
     required bool isVideo,
     required String fromId,
+    String? fromClientId,
     String? callerPhotoUrl,
     String? sdp,
     String? sdpType,
   }) async {
     try {
-      final recipientDoc = await _firestore
-          .collection('users')
-          .doc(recipientId)
-          .get();
-
-      if (!recipientDoc.exists) {
-        print('Recipient user document not found');
-        return;
-      }
-
-      final recipientData = recipientDoc.data();
-      final tokens = _extractRecipientTokens(recipientData);
-
-      if (tokens.isEmpty) {
-        print('Recipient has no FCM tokens');
-        return;
-      }
+      final conversationId = _chatService.getDirectConversationId(
+        fromId,
+        recipientId,
+      );
 
       await _firestore.collection('notifications').add({
-        'type': 'call_offer',
         'recipientId': recipientId,
-        'senderId': fromId,
-        'fcmToken': tokens.first,
-        'fcmTokens': tokens,
         'title': callerName.isEmpty ? 'Incoming call' : callerName,
         'body': isVideo ? 'Incoming video call' : 'Incoming call',
         'data': {
           'type': 'call_offer',
           'callId': callId,
+          'conversationId': conversationId,
           'fromId': fromId,
+          if (fromClientId?.trim().isNotEmpty ?? false)
+            'fromClientId': fromClientId,
           'callerName': callerName,
           if (callerPhotoUrl != null && callerPhotoUrl.trim().isNotEmpty)
             'callerPhotoUrl': callerPhotoUrl,

@@ -12,6 +12,7 @@ import 'package:mime/mime.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:provider/provider.dart';
 
+import '../core/utils/ui_scale.dart';
 import '../models/chat_sticker.dart';
 import '../models/server_channel.dart';
 import '../services/chat_service_e2ee.dart';
@@ -130,6 +131,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   bool _cacheHydrated = false;
   bool _persistentCacheHydrated = false;
   String _lastPersistedPayloadSignature = 'empty';
+  final Set<String> _prefetchedAvatarUrls = {};
 
   List<String> _participants = [];
   List<ServerChannel> _channels = const [ServerChannel.general];
@@ -469,6 +471,16 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     );
   }
 
+  Widget _buildLoadingState() {
+    return ListView.builder(
+      controller: _scrollController,
+      reverse: true,
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+      itemCount: 0,
+      itemBuilder: (context, index) => const SizedBox.shrink(),
+    );
+  }
+
   String _mapSignature(dynamic value) {
     if (value is! Map) return '';
     final parts = <String>[];
@@ -516,6 +528,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
           );
 
           _warmParticipants(participants);
+          _scheduleAvatarPrecache(avatarUrl);
 
           setState(() {
             if (title.isNotEmpty) _title = title;
@@ -1481,13 +1494,6 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isInitializing) {
-      return Scaffold(
-        appBar: AppBar(title: Text(_title)),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
     if (_error != null) {
       return Scaffold(
         appBar: AppBar(title: Text(_title)),
@@ -1938,7 +1944,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
               ),
             );
           }
-          return const Center(child: CircularProgressIndicator());
+          return _buildLoadingState();
         }
 
         if (snapshot.hasError) {
@@ -2040,6 +2046,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     if (!isMe && senderId.isNotEmpty) {
       _userCache.warmUsers([senderId], listen: false);
     }
+    _scheduleAvatarPrecache(senderAvatar);
 
     final bubbleColor = isMe
         ? Theme.of(context).colorScheme.primary
@@ -2209,19 +2216,22 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     }
 
     Widget buildStickerBody(String fallbackText) {
+      final ui = context.uiScaleData;
       final stickerUrl = data['stickerUrl']?.toString().trim() ?? '';
       final displayFallback = fallbackText.trim().isEmpty
           ? (data['sticker']?.toString().trim() ?? '\u{1F44D}')
           : fallbackText.trim();
+      final stickerExtent = ui.scale(156, min: 140, max: 188);
+      final emojiFallbackFont = displayFallback.runes.length <= 2
+          ? ui.scale(48, min: 42, max: 56)
+          : ui.scale(38, min: 34, max: 44);
+      final imageFallbackFont = ui.scale(42, min: 38, max: 50);
 
       if (stickerUrl.isEmpty) {
         return Text(
           displayFallback,
           style: _withEmojiFallback(
-            TextStyle(
-              fontSize: displayFallback.runes.length <= 2 ? 44 : 36,
-              height: 1.05,
-            ),
+            TextStyle(fontSize: emojiFallbackFont, height: 1.05),
           ),
         );
       }
@@ -2244,37 +2254,37 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
           child: isGif
               ? Image.network(
                   stickerUrl,
-                  width: 134,
-                  height: 134,
+                  width: stickerExtent,
+                  height: stickerExtent,
                   fit: BoxFit.cover,
                   gaplessPlayback: true,
                   errorBuilder: (context, error, stackTrace) => Container(
-                    width: 134,
-                    height: 134,
+                    width: stickerExtent,
+                    height: stickerExtent,
                     alignment: Alignment.center,
                     color: Colors.black12,
                     child: Text(
                       displayFallback,
                       style: _withEmojiFallback(
-                        const TextStyle(fontSize: 40, height: 1.05),
+                        TextStyle(fontSize: imageFallbackFont, height: 1.05),
                       ),
                     ),
                   ),
                 )
               : CachedNetworkImage(
                   imageUrl: stickerUrl,
-                  width: 134,
-                  height: 134,
+                  width: stickerExtent,
+                  height: stickerExtent,
                   fit: BoxFit.cover,
                   errorWidget: (context, url, error) => Container(
-                    width: 134,
-                    height: 134,
+                    width: stickerExtent,
+                    height: stickerExtent,
                     alignment: Alignment.center,
                     color: Colors.black12,
                     child: Text(
                       displayFallback,
                       style: _withEmojiFallback(
-                        const TextStyle(fontSize: 40, height: 1.05),
+                        TextStyle(fontSize: imageFallbackFont, height: 1.05),
                       ),
                     ),
                   ),
@@ -2330,35 +2340,35 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                 },
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxHeight: 280,
-                      minWidth: 120,
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 220,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Container(color: Colors.black12),
+                        isGif
+                            ? Image.network(
+                                fileUrl,
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const Center(
+                                      child: Icon(Icons.broken_image),
+                                    ),
+                              )
+                            : CachedNetworkImage(
+                                imageUrl: fileUrl,
+                                fit: BoxFit.cover,
+                                placeholder: (context, url) =>
+                                    const SizedBox.shrink(),
+                                errorWidget: (context, url, error) =>
+                                    const Center(
+                                      child: Icon(Icons.broken_image),
+                                    ),
+                              ),
+                      ],
                     ),
-                    child: isGif
-                        ? Image.network(
-                            fileUrl,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) =>
-                                Container(
-                                  color: Colors.black12,
-                                  height: 160,
-                                  width: double.infinity,
-                                  alignment: Alignment.center,
-                                  child: const Icon(Icons.broken_image),
-                                ),
-                          )
-                        : CachedNetworkImage(
-                            imageUrl: fileUrl,
-                            fit: BoxFit.cover,
-                            errorWidget: (context, url, error) => Container(
-                              color: Colors.black12,
-                              height: 160,
-                              width: double.infinity,
-                              alignment: Alignment.center,
-                              child: const Icon(Icons.broken_image),
-                            ),
-                          ),
                   ),
                 ),
               ),
@@ -2493,7 +2503,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
             snapshot.data?.trim() ??
             _decryptedCache[messageId]?.trim() ??
             (persistedText.isNotEmpty ? persistedText : optimisticText);
-        return buildTextBody(text.isNotEmpty ? text : 'Encrypted message');
+        return buildTextBody(text.isNotEmpty ? text : ' ');
       },
     );
   }
@@ -2540,7 +2550,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
               ),
               const SizedBox(width: 10),
               FilledButton.icon(
-                onPressed: _openingVoiceChannel
+                onPressed: _openingVoiceChannel || _isInitializing
                     ? null
                     : () => unawaited(_openVoiceChannel()),
                 icon: const Icon(Icons.call, size: 18),
@@ -2556,6 +2566,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         ? '${_channelPrefix(_activeChannel)}${_activeChannelName()}'
         : _title;
     final canSendText = !_isServer || _channelSupportsTextComposer();
+    final isComposerBusy = _isInitializing || _isSending;
     final isFileChannel = _isServer && channelType == ServerChannelType.file;
     final isForumChannel = _isServer && channelType == ServerChannelType.forum;
     final isAssignmentsChannel =
@@ -2577,7 +2588,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                 padding: const EdgeInsets.only(right: 6),
                 child: IconButton(
                   tooltip: 'New post',
-                  onPressed: _isSending ? null : _createForumPost,
+                  onPressed: isComposerBusy ? null : _createForumPost,
                   icon: const Icon(Icons.post_add),
                 ),
               ),
@@ -2586,7 +2597,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                 padding: const EdgeInsets.only(right: 6),
                 child: IconButton(
                   tooltip: 'Create assignment',
-                  onPressed: _isSending ? null : _addAssignmentToActiveChannel,
+                  onPressed: isComposerBusy ? null : _addAssignmentToActiveChannel,
                   icon: const Icon(Icons.assignment_add),
                 ),
               ),
@@ -2599,7 +2610,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                   child: IconButton(
                     padding: EdgeInsets.zero,
                     iconSize: 20,
-                    onPressed: _isSending ? null : _showStickerGifPicker,
+                    onPressed: isComposerBusy ? null : _showStickerGifPicker,
                     icon: const Icon(Icons.gif_box_outlined),
                     tooltip: 'Stickers & GIFs',
                     visualDensity: VisualDensity.compact,
@@ -2611,12 +2622,13 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                 controller: _messageController,
                 minLines: 1,
                 maxLines: 8,
-                keyboardType:
-                    isFileChannel ? TextInputType.text : TextInputType.multiline,
+                keyboardType: isFileChannel
+                    ? TextInputType.text
+                    : TextInputType.multiline,
                 style: _withEmojiFallback(
                   const TextStyle(fontSize: 14.5, height: 1.35),
                 ),
-                enabled: canSendText || isFileChannel,
+                enabled: (canSendText || isFileChannel) && !isComposerBusy,
                 textCapitalization: TextCapitalization.sentences,
                 decoration: InputDecoration(
                   hintText: hint,
@@ -2640,19 +2652,13 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
               child: IconButton.filled(
                 padding: EdgeInsets.zero,
                 iconSize: 18,
-                onPressed: _isSending
+                onPressed: isComposerBusy
                     ? null
                     : (isFileChannel
                           ? _sendFileToActiveChannel
                           : (canSendText ? _sendMessage : null)),
                 visualDensity: VisualDensity.compact,
-                icon: _isSending
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(isFileChannel ? Icons.upload_file : Icons.send),
+                icon: Icon(isFileChannel ? Icons.upload_file : Icons.send),
               ),
             ),
           ],
@@ -2695,6 +2701,16 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         ),
       ),
     );
+  }
+
+  void _scheduleAvatarPrecache(String? photoUrl) {
+    if (photoUrl == null || photoUrl.isEmpty) return;
+    if (_prefetchedAvatarUrls.contains(photoUrl)) return;
+    _prefetchedAvatarUrls.add(photoUrl);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(precacheImage(CachedNetworkImageProvider(photoUrl), context));
+    });
   }
 
   String? _normalizePhotoUrl(dynamic value) {

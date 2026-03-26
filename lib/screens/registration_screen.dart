@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
+import '../services/email_verification_service.dart';
 import '../services/theme_service.dart';
 import '../services/windows_google_auth_service.dart';
 import '../services/firebase_options.dart';
@@ -58,6 +59,25 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     _confirmPasswordController.dispose();
     _nameController.dispose();
     super.dispose();
+  }
+
+  InputDecoration _fieldDecoration({
+    required String labelText,
+    required IconData icon,
+    Widget? suffixIcon,
+  }) {
+    return InputDecoration(
+      labelText: labelText,
+      prefixIcon: Icon(icon, size: 20),
+      prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+      suffixIcon: suffixIcon,
+      suffixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+    );
   }
 
   Future<UserCredential> _createUserWithEmail(
@@ -179,18 +199,19 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       if (!Platform.isWindows) {
         // IMPORTANT: Reload the user to get the updated displayName
         await userCredential.user?.reload();
+      }
 
-        // Get the refreshed user object
-        User? refreshedUser = _auth.currentUser;
-
-        // Send verification email
+      final verificationUser = _auth.currentUser ?? userCredential.user;
+      if (verificationUser != null) {
         print('📧 Sending verification email...');
-        // Workaround for Firebase Windows threading bug: defer off the widget tree's hot path
+        // Defer the send so we do not do auth work inline with navigation.
         await Future.delayed(Duration.zero);
-        await refreshedUser?.sendEmailVerification();
+        await EmailVerificationService().sendVerificationEmail(
+          verificationUser,
+        );
         print('✅ Verification email sent');
       } else {
-        print('Windows: skipping auto verification email; user can resend manually.');
+        print('⚠️ No signed-in user available for verification email.');
       }
 
       if (mounted) {
@@ -198,7 +219,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           SnackBar(
             content: Text(
               Platform.isWindows
-                  ? 'Account created. Please verify your email from the verification screen.'
+                  ? 'Account created. Verification email sent. Please verify from the screen.'
                   : l.verificationEmailSent,
             ),
           ),
@@ -412,12 +433,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                       // Name Field
                       TextFormField(
                         controller: _nameController,
-                        decoration: InputDecoration(
+                        decoration: _fieldDecoration(
                           labelText: l.fullName,
-                          prefixIcon: const Icon(Icons.person_outline),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                          icon: Icons.person_outline,
                         ),
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) {
@@ -432,12 +450,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                       TextFormField(
                         controller: _emailController,
                         keyboardType: TextInputType.emailAddress,
-                        decoration: InputDecoration(
+                        decoration: _fieldDecoration(
                           labelText: l.email,
-                          prefixIcon: const Icon(Icons.email_outlined),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                          icon: Icons.email_outlined,
                         ),
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) {
@@ -455,9 +470,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                       TextFormField(
                         controller: _passwordController,
                         obscureText: _obscurePassword,
-                        decoration: InputDecoration(
+                        decoration: _fieldDecoration(
                           labelText: l.password,
-                          prefixIcon: const Icon(Icons.lock_outline),
+                          icon: Icons.lock_outline,
                           suffixIcon: IconButton(
                             icon: Icon(
                               _obscurePassword
@@ -469,9 +484,6 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                 () => _obscurePassword = !_obscurePassword,
                               );
                             },
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
                           ),
                         ),
                         validator: (value) {
@@ -490,9 +502,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                       TextFormField(
                         controller: _confirmPasswordController,
                         obscureText: _obscureConfirmPassword,
-                        decoration: InputDecoration(
+                        decoration: _fieldDecoration(
                           labelText: l.confirmPassword,
-                          prefixIcon: const Icon(Icons.lock_outline),
+                          icon: Icons.lock_outline,
                           suffixIcon: IconButton(
                             icon: Icon(
                               _obscureConfirmPassword
@@ -505,9 +517,6 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                     !_obscureConfirmPassword,
                               );
                             },
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
                           ),
                         ),
                         validator: (value) {

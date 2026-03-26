@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -69,6 +71,7 @@ class ChatMessageText extends StatefulWidget {
 class _ChatMessageTextState extends State<ChatMessageText> {
   final LinkPreviewService _previewService = LinkPreviewService();
   final List<TapGestureRecognizer> _recognizers = [];
+  String _lastPrecacheSignature = '';
 
   @override
   void dispose() {
@@ -76,11 +79,50 @@ class _ChatMessageTextState extends State<ChatMessageText> {
     super.dispose();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scheduleMediaPrecache();
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatMessageText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      _scheduleMediaPrecache();
+    }
+  }
+
   void _disposeRecognizers() {
     for (final recognizer in _recognizers) {
       recognizer.dispose();
     }
     _recognizers.clear();
+  }
+
+  void _scheduleMediaPrecache() {
+    final standaloneMediaLink = _resolveStandaloneMediaLink(
+      _previewService.extractLinks(widget.text, maxCount: 4),
+    );
+    if (standaloneMediaLink == null) return;
+
+    final signature = standaloneMediaLink;
+    if (signature == _lastPrecacheSignature) return;
+    _lastPrecacheSignature = signature;
+
+    unawaited(_precacheMedia(standaloneMediaLink));
+  }
+
+  Future<void> _precacheMedia(String url) async {
+    if (!mounted) return;
+    final ImageProvider<Object> provider = _previewService.isLikelyGifUrl(url)
+        ? NetworkImage(url) as ImageProvider<Object>
+        : CachedNetworkImageProvider(url) as ImageProvider<Object>;
+    try {
+      await precacheImage(provider, context);
+    } catch (_) {
+      // Best-effort only. The preview still renders with a fixed frame.
+    }
   }
 
   Future<void> _openLink(String rawUrl) async {
@@ -265,47 +307,54 @@ class _StandaloneMediaLink extends StatelessWidget {
       },
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: Stack(
-          children: [
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 260, minWidth: 120),
-              child: isGif
-                  ? Image.network(
-                      url,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) =>
-                          _imageError(),
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: url,
-                      fit: BoxFit.cover,
-                      errorWidget: (context, url, error) => _imageError(),
+        child: SizedBox(
+          width: double.infinity,
+          height: 220,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Container(color: Colors.black12),
+              Positioned.fill(
+                child: isGif
+                    ? Image.network(
+                        url,
+                        fit: BoxFit.cover,
+                        gaplessPlayback: true,
+                        errorBuilder: (context, error, stackTrace) =>
+                            _imageError(),
+                      )
+                    : CachedNetworkImage(
+                        imageUrl: url,
+                        fit: BoxFit.cover,
+                        placeholder: (context, url) => const SizedBox.shrink(),
+                        errorWidget: (context, url, error) => _imageError(),
+                      ),
+              ),
+              if (isGif)
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
                     ),
-            ),
-            if (isGif)
-              Positioned(
-                right: 8,
-                bottom: 8,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Text(
-                    'GIF',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text(
+                      'GIF',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );

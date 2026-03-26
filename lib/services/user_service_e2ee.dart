@@ -10,8 +10,6 @@ import 'crypto_service.dart';
 import 'device_info_service.dart';
 
 class UserService {
-  static const String _friendIdRegistryCollection = 'friendIdRegistry';
-
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final CryptoService _crypto = CryptoService();
@@ -36,25 +34,8 @@ class UserService {
           existingData['friendId']?.toString().trim() ?? '';
       String friendId = existingFriendId;
       if (friendId.isEmpty) {
-        // Check registry first in case another device already claimed an ID.
         try {
-          final registryClaim = await _firestore
-              .collection(_friendIdRegistryCollection)
-              .where('uid', isEqualTo: user.uid)
-              .limit(1)
-              .get();
-          if (registryClaim.docs.isNotEmpty) {
-            friendId =
-                registryClaim.docs.first.data()['friendId']?.toString().trim() ??
-                '';
-          }
-        } catch (_) {
-          // Ignore registry lookup errors and fall back to generation.
-        }
-      }
-      if (friendId.isEmpty) {
-        try {
-          friendId = await _generateAndReserveFriendId(
+          friendId = await _generateUniqueFriendId(
             uid: user.uid,
             preferredSeed: user.displayName ?? user.email ?? 'user',
           );
@@ -109,7 +90,7 @@ class UserService {
     }
   }
 
-  Future<String> _generateAndReserveFriendId({
+  Future<String> _generateUniqueFriendId({
     required String uid,
     required String preferredSeed,
   }) async {
@@ -119,28 +100,17 @@ class UserService {
       final suffixLength = attempt < 24 ? 4 : 5;
       final candidate = '$base${_randomAlphaNum(suffixLength)}';
       final candidateLower = candidate.toLowerCase();
-      final claimRef = _firestore
-          .collection(_friendIdRegistryCollection)
-          .doc(candidateLower);
-
       try {
-        await _firestore.runTransaction((tx) async {
-          final claimDoc = await tx.get(claimRef);
-          if (claimDoc.exists) {
-            final ownerUid = claimDoc.data()?['uid']?.toString() ?? '';
-            if (ownerUid == uid) return;
-            throw _FriendIdTakenException();
-          }
-
-          tx.set(claimRef, {
-            'uid': uid,
-            'friendId': candidate,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        });
-
-        return candidate;
-      } on _FriendIdTakenException {
+        final existing = await _firestore
+            .collection('users')
+            .where('friendIdLower', isEqualTo: candidateLower)
+            .limit(1)
+            .get();
+        if (existing.docs.isEmpty || existing.docs.first.id == uid) {
+          return candidate;
+        }
+      } catch (_) {
+        // Best-effort uniqueness check. Retry with a different suffix.
         continue;
       }
     }
@@ -412,5 +382,3 @@ class UserService {
     await _auth.signOut();
   }
 }
-
-class _FriendIdTakenException implements Exception {}

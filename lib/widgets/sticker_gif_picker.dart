@@ -11,6 +11,7 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../core/utils/ui_scale.dart';
 import '../models/chat_sticker.dart';
 import '../services/giphy_service.dart';
 
@@ -44,12 +45,22 @@ class _StickerGifPickerState extends State<StickerGifPicker>
   bool _gifLoading = false;
   String _lastQuery = '';
   Timer? _debounce;
+  int _gifLimit = 18;
+  bool _didStartInitialLoad = false;
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
-    // Pre-load trending GIFs when the sheet opens.
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didStartInitialLoad) return;
+    final ui = context.uiScaleData;
+    _gifLimit = ui.isCompactPhone ? 12 : 18;
+    _didStartInitialLoad = true;
     _searchGifs('');
   }
 
@@ -74,7 +85,7 @@ class _StickerGifPickerState extends State<StickerGifPicker>
     setState(() => _gifLoading = true);
     final results = await _giphy.search(
       query.trim().isEmpty ? 'trending' : query.trim(),
-      limit: 24,
+      limit: _gifLimit,
     );
     if (mounted) {
       setState(() {
@@ -87,10 +98,11 @@ class _StickerGifPickerState extends State<StickerGifPicker>
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final ui = context.uiScaleData;
     final screenH = MediaQuery.of(context).size.height;
 
     return SizedBox(
-      height: screenH * 0.58,
+      height: screenH * (ui.isCompactPhone ? 0.68 : 0.62),
       child: Column(
         children: [
           TabBar(
@@ -107,10 +119,7 @@ class _StickerGifPickerState extends State<StickerGifPicker>
           Expanded(
             child: TabBarView(
               controller: _tabs,
-              children: [
-                _buildStickerGrid(cs),
-                _buildGifTab(cs),
-              ],
+              children: [_buildStickerGrid(cs), _buildGifTab(cs)],
             ),
           ),
         ],
@@ -119,13 +128,19 @@ class _StickerGifPickerState extends State<StickerGifPicker>
   }
 
   Widget _buildStickerGrid(ColorScheme cs) {
+    final ui = context.uiScaleData;
+    final crossAxisCount = ui.columns(compactPhone: 3, phone: 4, tablet: 5);
+    final spacing = ui.scale(10, min: 8, max: 14);
+    final padding = ui.scale(12, min: 10, max: 16);
+    final thumbnailSize = ui.scale(60, min: 52, max: 74);
+
     return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      padding: EdgeInsets.fromLTRB(padding, spacing, padding, padding),
       itemCount: kDefaultChatStickers.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 5,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        mainAxisSpacing: spacing,
+        crossAxisSpacing: spacing,
         childAspectRatio: 1,
       ),
       itemBuilder: (context, i) {
@@ -136,19 +151,23 @@ class _StickerGifPickerState extends State<StickerGifPicker>
           child: Container(
             decoration: BoxDecoration(
               color: cs.surfaceContainerHighest.withValues(alpha: 0.55),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(
+                ui.scale(14, min: 12, max: 18),
+              ),
             ),
             alignment: Alignment.center,
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(
+                ui.scale(12, min: 10, max: 16),
+              ),
               child: CachedNetworkImage(
                 imageUrl: sticker.imageUrl,
-                width: 46,
-                height: 46,
+                width: thumbnailSize,
+                height: thumbnailSize,
                 fit: BoxFit.cover,
-                errorWidget: (_, __, ___) => Text(
+                errorWidget: (context, url, error) => Text(
                   sticker.fallback,
-                  style: const TextStyle(fontSize: 30),
+                  style: TextStyle(fontSize: ui.scale(34, min: 28, max: 40)),
                 ),
               ),
             ),
@@ -159,10 +178,21 @@ class _StickerGifPickerState extends State<StickerGifPicker>
   }
 
   Widget _buildGifTab(ColorScheme cs) {
+    final ui = context.uiScaleData;
+    final horizontalPadding = ui.scale(12, min: 10, max: 16);
+    final verticalPadding = ui.scale(10, min: 8, max: 14);
+    final gifColumns = ui.columns(compactPhone: 2, phone: 2, tablet: 3);
+    final gridSpacing = ui.scale(8, min: 6, max: 10);
+
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            verticalPadding,
+            horizontalPadding,
+            gridSpacing,
+          ),
           child: TextField(
             controller: _searchCtrl,
             onChanged: _onSearchChanged,
@@ -170,10 +200,16 @@ class _StickerGifPickerState extends State<StickerGifPicker>
             onSubmitted: _searchGifs,
             decoration: InputDecoration(
               hintText: 'Search GIFs...',
-              prefixIcon: const Icon(Icons.search, size: 20),
+              prefixIcon: Icon(
+                Icons.search,
+                size: ui.scale(20, min: 18, max: 22),
+              ),
               suffixIcon: _searchCtrl.text.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear, size: 18),
+                      icon: Icon(
+                        Icons.clear,
+                        size: ui.scale(18, min: 16, max: 20),
+                      ),
                       onPressed: () {
                         _searchCtrl.clear();
                         _searchGifs('');
@@ -182,12 +218,14 @@ class _StickerGifPickerState extends State<StickerGifPicker>
                   : null,
               filled: true,
               fillColor: cs.surfaceContainerHigh,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 8,
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: ui.scale(14, min: 12, max: 18),
+                vertical: ui.scale(10, min: 8, max: 12),
               ),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(
+                  ui.scale(24, min: 20, max: 28),
+                ),
                 borderSide: BorderSide.none,
               ),
               isDense: true,
@@ -198,53 +236,63 @@ class _StickerGifPickerState extends State<StickerGifPicker>
           child: _gifLoading
               ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
               : _gifs.isEmpty
-                  ? Center(
-                      child: Text(
-                        _lastQuery.isEmpty
-                            ? 'GIF key not configured.\nSee giphy_service.dart.'
-                            : 'No GIFs found.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: cs.onSurfaceVariant,
-                          fontSize: 13,
+              ? Center(
+                  child: Text(
+                    _lastQuery.isEmpty
+                        ? 'GIF key not configured.\nSee giphy_service.dart.'
+                        : 'No GIFs found.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontSize: ui.scale(13, min: 12, max: 15),
+                    ),
+                  ),
+                )
+              : GridView.builder(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    0,
+                    horizontalPadding,
+                    horizontalPadding,
+                  ),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: gifColumns,
+                    mainAxisSpacing: gridSpacing,
+                    crossAxisSpacing: gridSpacing,
+                    childAspectRatio: ui.isCompactPhone ? 0.9 : 0.96,
+                  ),
+                  itemCount: _gifs.length,
+                  itemBuilder: (context, i) {
+                    final gif = _gifs[i];
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(
+                        ui.scale(12, min: 10, max: 16),
+                      ),
+                      onTap: () => Navigator.of(context).pop(gif),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(
+                          ui.scale(12, min: 10, max: 16),
                         ),
-                      ),
-                    )
-                  : GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 3,
-                        mainAxisSpacing: 6,
-                        crossAxisSpacing: 6,
-                        childAspectRatio: 1,
-                      ),
-                      itemCount: _gifs.length,
-                      itemBuilder: (context, i) {
-                        final gif = _gifs[i];
-                        return InkWell(
-                          borderRadius: BorderRadius.circular(10),
-                          onTap: () => Navigator.of(context).pop(gif),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: Image.network(
-                              gif.previewUrl,
-                              fit: BoxFit.cover,
-                              loadingBuilder: (_, child, progress) {
-                                if (progress == null) return child;
-                                return Container(
-                                  color: cs.surfaceContainerHigh,
-                                  alignment: Alignment.center,
-                                  child: const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 1.5,
-                                    ),
-                                  ),
-                                );
-                              },
-                              errorBuilder: (_, __, ___) => Container(
+                        child: Image.network(
+                          gif.previewUrl,
+                          fit: BoxFit.cover,
+                          filterQuality: FilterQuality.low,
+                          loadingBuilder: (_, child, progress) {
+                            if (progress == null) return child;
+                            return Container(
+                              color: cs.surfaceContainerHigh,
+                              alignment: Alignment.center,
+                              child: const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.5,
+                                ),
+                              ),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) =>
+                              Container(
                                 color: cs.surfaceContainerHigh,
                                 alignment: Alignment.center,
                                 child: Icon(
@@ -253,19 +301,19 @@ class _StickerGifPickerState extends State<StickerGifPicker>
                                   size: 20,
                                 ),
                               ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
         ),
         Padding(
-          padding: const EdgeInsets.only(bottom: 6),
+          padding: EdgeInsets.only(bottom: ui.scale(6, min: 4, max: 8)),
           child: Text(
             'Powered by GIPHY',
             style: TextStyle(
               color: cs.onSurfaceVariant.withValues(alpha: 0.7),
-              fontSize: 11,
+              fontSize: ui.scale(11, min: 10, max: 13),
             ),
           ),
         ),
@@ -273,4 +321,3 @@ class _StickerGifPickerState extends State<StickerGifPicker>
     );
   }
 }
-

@@ -18,17 +18,42 @@ exports.sendPushNotification = onDocumentCreated(
       // Prevent double processing
       if (notification.processed) return;
 
-      const {fcmToken, fcmTokens, title, body, data} = notification;
+      const {recipientId, fcmToken, fcmTokens, title, body, data} =
+          notification;
 
       const tokens = new Set();
-      if (typeof fcmToken === "string" && fcmToken.trim()) {
-        tokens.add(fcmToken.trim());
-      }
-      if (Array.isArray(fcmTokens)) {
-        for (const token of fcmTokens) {
-          if (typeof token === "string" && token.trim()) {
-            tokens.add(token.trim());
+      const addToken = (token) => {
+        if (typeof token === "string" && token.trim()) {
+          tokens.add(token.trim());
+        }
+      };
+      const addTokensFromCollection = (value) => {
+        if (Array.isArray(value)) {
+          for (const token of value) addToken(token);
+          return;
+        }
+        if (value && typeof value === "object") {
+          for (const token of Object.values(value)) addToken(token);
+        }
+      };
+
+      addToken(fcmToken);
+      addTokensFromCollection(fcmTokens);
+
+      if (tokens.size === 0 && typeof recipientId === "string" &&
+          recipientId.trim()) {
+        try {
+          const userSnap = await admin.firestore()
+              .collection("users")
+              .doc(recipientId.trim())
+              .get();
+          const userData = userSnap.data();
+          if (userData) {
+            addToken(userData.fcmToken);
+            addTokensFromCollection(userData.fcmTokens);
           }
+        } catch (error) {
+          console.log("Failed to resolve recipient tokens:", error);
         }
       }
 

@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/firestore_streams.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
@@ -23,6 +25,7 @@ import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
+import '../core/utils/ui_scale.dart';
 import '../models/chat_sticker.dart';
 import '../services/notification_service.dart';
 import '../services/video_cache_service.dart';
@@ -131,31 +134,6 @@ class _StickerPayload {
   });
 }
 
-class _MapGridPainter extends CustomPainter {
-  final Color accentColor;
-
-  const _MapGridPainter({required this.accentColor});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = accentColor
-      ..strokeWidth = 1;
-    const step = 20.0;
-    for (double x = 0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-    for (double y = 0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_MapGridPainter oldDelegate) {
-    return oldDelegate.accentColor != accentColor;
-  }
-}
-
 class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     with WidgetsBindingObserver {
   static const ResolutionPreset _videoMessageResolution =
@@ -198,6 +176,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   int _videoRecordingSeconds = 0;
   Timer? _videoRecordingTimer;
   Timer? _liveLocationTimer;
+  String? _liveLocationMessageId;
+  LatLng? _liveLocationPosition;
+  DateTime? _liveLocationExpiresAt;
   String? _videoRecorderError;
   _RecorderMode _recorderMode = _RecorderMode.audio;
   _ReplyDraft? _replyDraft;
@@ -207,6 +188,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _conversationMetaSub;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _recipientSub;
+  final Set<String> _prefetchedAvatarUrls = {};
 
   @override
   void initState() {
@@ -216,6 +198,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     _notificationService.setActiveChat(widget.recipientId);
     _recipientData = _userCache.getCachedUser(widget.recipientId);
     _userCache.warmUsers([widget.recipientId], listen: false);
+    _scheduleRecipientAvatarPrecache();
     _scrollController.addListener(_handleScrollChanged);
 
     final currentUser = _auth.currentUser;
@@ -353,8 +336,33 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
               _recipientData = snapshot.data()!;
             });
             _userCache.mergeUserData(widget.recipientId, snapshot.data()!);
+            _scheduleRecipientAvatarPrecache();
           }
         });
+  }
+
+  void _scheduleRecipientAvatarPrecache() {
+    final photoUrl = _normalizePhotoUrl(
+      _recipientData?['photoUrl'] ?? _recipientData?['photoURL'],
+    );
+    if (photoUrl == null || _prefetchedAvatarUrls.contains(photoUrl)) return;
+    _prefetchedAvatarUrls.add(photoUrl);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(precacheImage(CachedNetworkImageProvider(photoUrl), context));
+    });
+  }
+
+  String? _normalizePhotoUrl(dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty || text.toLowerCase() == 'null') return null;
+    final uri = Uri.tryParse(text);
+    if (uri == null || !uri.hasScheme) return null;
+    final scheme = uri.scheme.toLowerCase();
+    if ((scheme != 'http' && scheme != 'https') || uri.host.isEmpty) {
+      return null;
+    }
+    return text;
   }
 
   Future<void> _sendMessage({
@@ -1475,6 +1483,18 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   Widget _buildMessageInput() {
     final colorScheme = Theme.of(context).colorScheme;
     final isAnyRecording = _isRecordingAudio || _isRecordingVideo;
+    final hasActiveLiveLocation = _liveLocationTimer != null;
+    final liveLocationRemaining = _liveLocationExpiresAt?.difference(
+      DateTime.now(),
+    );
+    final liveLocationRemainingText =
+        liveLocationRemaining == null
+            ? null
+            : _formatCompactDuration(
+                liveLocationRemaining.inSeconds < 0
+                    ? 0
+                    : liveLocationRemaining.inSeconds,
+              );
 
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
@@ -1596,6 +1616,74 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                         visualDensity: VisualDensity.compact,
                       ),
                     ],
+                  ],
+                ),
+              ),
+            if (hasActiveLiveLocation)
+              Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.location_on,
+                      size: 16,
+                      color: colorScheme.error,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Live location is active',
+                            style: TextStyle(
+                              color: colorScheme.onErrorContainer,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (liveLocationRemainingText != null)
+                            Text(
+                              'Ends in $liveLocationRemainingText',
+                              style: TextStyle(
+                                color: colorScheme.onErrorContainer
+                                    .withValues(alpha: 0.82),
+                                fontSize: 11,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => unawaited(
+                        _stopLiveLocation(finalizeMessage: true),
+                      ),
+                      icon: Icon(
+                        Icons.stop_circle_outlined,
+                        size: 18,
+                        color: colorScheme.onErrorContainer,
+                      ),
+                      label: Text(
+                        'Stop',
+                        style: TextStyle(color: colorScheme.onErrorContainer),
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1807,6 +1895,14 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       showDragHandle: true,
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
+        final hasActiveLiveLocation = _liveLocationTimer != null;
+        final remaining = _liveLocationExpiresAt?.difference(DateTime.now());
+        final remainingText =
+            remaining == null
+                ? null
+                : _formatCompactDuration(
+                    remaining.inSeconds < 0 ? 0 : remaining.inSeconds,
+                  );
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
@@ -1821,6 +1917,63 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                   ),
                 ),
                 const SizedBox(height: 12),
+                if (hasActiveLiveLocation)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: cs.errorContainer,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.location_on,
+                          color: cs.onErrorContainer,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Live location is active',
+                                style: TextStyle(
+                                  color: cs.onErrorContainer,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              if (remainingText != null)
+                                Text(
+                                  'Ends in $remainingText',
+                                  style: TextStyle(
+                                    color: cs.onErrorContainer.withValues(
+                                      alpha: 0.82,
+                                    ),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () async {
+                            Navigator.pop(ctx);
+                            await _stopLiveLocation(finalizeMessage: true);
+                          },
+                          icon: Icon(
+                            Icons.stop_circle_outlined,
+                            color: cs.onErrorContainer,
+                          ),
+                          label: Text(
+                            'Stop',
+                            style: TextStyle(color: cs.onErrorContainer),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ListTile(
                   leading: CircleAvatar(
                     backgroundColor: cs.primaryContainer,
@@ -1914,6 +2067,10 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       final permission = await _resolveLocationPermission();
       if (permission == null) return;
 
+      if (_liveLocationTimer != null) {
+        await _stopLiveLocation(finalizeMessage: true);
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -1945,13 +2102,20 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         overrideMessageId: msgId,
       );
 
+      if (!mounted) return;
+      setState(() {
+        _liveLocationMessageId = msgId;
+        _liveLocationPosition = LatLng(position.latitude, position.longitude);
+        _liveLocationExpiresAt = expiresAt;
+      });
+
       _liveLocationTimer?.cancel();
       _liveLocationTimer = Timer.periodic(const Duration(seconds: 30), (
         _,
       ) async {
         if (!mounted) return;
         if (DateTime.now().isAfter(expiresAt)) {
-          await _stopLiveLocation();
+          await _stopLiveLocation(finalizeMessage: false);
           return;
         }
         try {
@@ -1967,6 +2131,11 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
             lng: pos.longitude,
             expiresAt: expiresAt,
           );
+          if (mounted) {
+            setState(() {
+              _liveLocationPosition = LatLng(pos.latitude, pos.longitude);
+            });
+          }
         } catch (e) {
           debugPrint('Live location update failed: $e');
         }
@@ -2003,9 +2172,54 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         .update(update);
   }
 
-  Future<void> _stopLiveLocation() async {
+  Future<void> _stopLiveLocation({bool finalizeMessage = false}) async {
+    final messageId = _liveLocationMessageId;
+    final lastPosition = _liveLocationPosition;
+    final conversationId = _conversationId;
+
     _liveLocationTimer?.cancel();
     _liveLocationTimer = null;
+    _liveLocationMessageId = null;
+    _liveLocationPosition = null;
+    _liveLocationExpiresAt = null;
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    if (!finalizeMessage ||
+        conversationId == null ||
+        messageId == null ||
+        lastPosition == null) {
+      return;
+    }
+
+    try {
+      await _updateLiveLocationMessage(
+        messageId: messageId,
+        lat: lastPosition.latitude,
+        lng: lastPosition.longitude,
+        expiresAt: DateTime.now().subtract(const Duration(seconds: 1)),
+      );
+    } catch (e) {
+      debugPrint('Could not stop live location: $e');
+    }
+  }
+
+  String _formatCompactDuration(int totalSeconds) {
+    var seconds = totalSeconds;
+    if (seconds < 0) seconds = 0;
+
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    final secs = seconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:'
+          '${minutes.toString().padLeft(2, '0')}:'
+          '${secs.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:'
+        '${secs.toString().padLeft(2, '0')}';
   }
 
   Future<LocationPermission?> _resolveLocationPermission() async {
@@ -2331,6 +2545,7 @@ class _MessagesListState extends State<_MessagesList>
   String? _latestLiveMessagesOwnerId;
   String _lastPersistedPayloadSignature = '';
   String _lastLiveMessageCacheSeedKey = '';
+  String _lastMediaPrefetchSignature = '';
 
   @override
   void initState() {
@@ -2372,6 +2587,7 @@ class _MessagesListState extends State<_MessagesList>
     _persistentCacheHydrated = widget.conversationId == null;
     _lastPersistedPayloadSignature = '';
     _lastLiveMessageCacheSeedKey = '';
+    _lastMediaPrefetchSignature = '';
   }
 
   void _hydrateLocalMessages() {
@@ -2619,6 +2835,71 @@ class _MessagesListState extends State<_MessagesList>
     });
   }
 
+  void _scheduleMediaPrecache({
+    required List<QueryDocumentSnapshot> liveMessages,
+    required List<Map<String, dynamic>> persistedMessages,
+  }) {
+    final urls = <String>{};
+
+    void collectMediaUrl(Map<String, dynamic> message) {
+      final type = message['type']?.toString().trim().toLowerCase() ?? 'text';
+      if (type == 'file') {
+        final fileUrl = message['fileUrl']?.toString().trim() ?? '';
+        final mimeType = message['mimeType']?.toString().trim().toLowerCase() ?? '';
+        if (fileUrl.isNotEmpty &&
+            (mimeType.startsWith('image/') || _looksLikeImageUrl(fileUrl))) {
+          urls.add(fileUrl);
+        }
+        return;
+      }
+
+      if (type == 'sticker') {
+        final stickerUrl = message['stickerUrl']?.toString().trim() ?? '';
+        if (stickerUrl.isNotEmpty) {
+          urls.add(stickerUrl);
+        }
+      }
+    }
+
+    for (final doc in liveMessages) {
+      final data = doc.data();
+      if (data is! Map) continue;
+      collectMediaUrl(Map<String, dynamic>.from(data));
+    }
+    for (final message in persistedMessages) {
+      collectMediaUrl(message);
+    }
+
+    if (urls.isEmpty) return;
+    final sortedUrls = urls.toList()..sort();
+    final signature = sortedUrls.join('|');
+    if (signature == _lastMediaPrefetchSignature) return;
+    _lastMediaPrefetchSignature = signature;
+
+    unawaited(_prefetchMedia(sortedUrls));
+  }
+
+  Future<void> _prefetchMedia(List<String> urls) async {
+    if (!mounted) return;
+
+    for (final url in urls.take(16)) {
+      final uri = Uri.tryParse(url);
+      if (uri == null ||
+          (uri.scheme != 'http' && uri.scheme != 'https')) {
+        continue;
+      }
+
+      final ImageProvider<Object> provider = _looksLikeGifUrl(url)
+          ? NetworkImage(url) as ImageProvider<Object>
+          : CachedNetworkImageProvider(url) as ImageProvider<Object>;
+      try {
+        await precacheImage(provider, context);
+      } catch (_) {
+        // Best-effort only. The bubble still has a fixed-size frame.
+      }
+    }
+  }
+
   void _schedulePersistedCacheWriteFromLive() {
     final conversationId = widget.conversationId;
     final uid = _latestLiveMessagesOwnerId;
@@ -2826,6 +3107,10 @@ class _MessagesListState extends State<_MessagesList>
 
   Widget _buildPersistedMessagesList(String currentUserId) {
     final orderedMessages = _persistedMessages.reversed.toList();
+    _scheduleMediaPrecache(
+      liveMessages: const [],
+      persistedMessages: _persistedMessages,
+    );
     _scheduleAutoScrollIfNeeded(orderedMessages.length);
 
     return ListView.builder(
@@ -3719,6 +4004,10 @@ class _MessagesListState extends State<_MessagesList>
         );
         final orderedMessages = messages.reversed.toList();
         final totalItems = orderedMessages.length + pendingItems.length;
+        _scheduleMediaPrecache(
+          liveMessages: messages,
+          persistedMessages: _persistedMessages,
+        );
         _scheduleAutoScrollIfNeeded(totalItems);
 
         return ListView.builder(
@@ -3822,7 +4111,7 @@ class _MessagesListState extends State<_MessagesList>
                       )
                     : (type == 'file'
                           ? _buildMessageBubble(
-                              'Encrypted file',
+                              immediateText.isNotEmpty ? immediateText : ' ',
                               isMe,
                               timestamp,
                               messageId: messageId,
@@ -3833,9 +4122,7 @@ class _MessagesListState extends State<_MessagesList>
                               key: ValueKey(messageId),
                             )
                           : _buildMessageBubble(
-                              immediateText.isNotEmpty
-                                  ? immediateText
-                                  : 'Encrypted message',
+                              immediateText.isNotEmpty ? immediateText : ' ',
                               isMe,
                               timestamp,
                               messageId: messageId,
@@ -3934,9 +4221,6 @@ class _MessagesListState extends State<_MessagesList>
                       (persistedText.isNotEmpty
                           ? persistedText
                           : optimisticText);
-                  if (displayText.isEmpty) {
-                    displayText = 'Encrypted message';
-                  }
                 } else {
                   displayText = decryptSnapshot.data ?? '';
                   if (displayText.isEmpty) {
@@ -3952,7 +4236,7 @@ class _MessagesListState extends State<_MessagesList>
                   if (displayText.isEmpty &&
                       type != 'sticker' &&
                       type != 'file') {
-                    displayText = 'Encrypted message';
+                    displayText = ' ';
                   }
                 }
 
@@ -4007,29 +4291,8 @@ class _MessagesListState extends State<_MessagesList>
       controller: widget.scrollController,
       reverse: true,
       padding: const EdgeInsets.all(16),
-      itemCount: 5,
-      itemBuilder: (context, index) {
-        final isMe = index.isEven;
-        return Align(
-          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            width: MediaQuery.of(context).size.width * 0.45,
-            height: 46,
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              color: Theme.of(
-                context,
-              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(16),
-                topRight: const Radius.circular(16),
-                bottomLeft: Radius.circular(isMe ? 16 : 4),
-                bottomRight: Radius.circular(isMe ? 4 : 16),
-              ),
-            ),
-          ),
-        );
-      },
+      itemCount: 0,
+      itemBuilder: (context, index) => const SizedBox.shrink(),
     );
   }
 
@@ -4038,15 +4301,19 @@ class _MessagesListState extends State<_MessagesList>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.lock, size: 64, color: Colors.green),
+          Icon(
+            Icons.chat_bubble_outline,
+            size: 64,
+            color: Theme.of(context).colorScheme.primary,
+          ),
           const SizedBox(height: 16),
           const Text(
-            'Encrypted chat',
+            'No messages yet',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(
-            'Messages are end-to-end encrypted.\nOnly you and ${widget.recipientName} can read them.',
+            'Messages will appear here.',
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 14, color: Colors.grey),
           ),
@@ -4114,70 +4381,45 @@ class _MessagesListState extends State<_MessagesList>
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: (lat != null && lng != null)
-              ? () => _openLocationInMaps(lat, lng)
+              ? () => _openLocationMapScreen(
+                  lat: lat,
+                  lng: lng,
+                  isLive: isActiveLive,
+                  expiresAt: expiresMs == null
+                      ? null
+                      : DateTime.fromMillisecondsSinceEpoch(expiresMs),
+                )
               : null,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ClipRRect(
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  topRight: Radius.circular(16),
-                ),
-                child: Container(
-                  height: 100,
+              if (lat != null && lng != null)
+                _LocationMapPreview(
+                  lat: lat,
+                  lng: lng,
+                  isMe: isMe,
+                  isLive: isActiveLive,
+                  accentColor: isMe
+                      ? colorScheme.onPrimary
+                      : colorScheme.error,
+                )
+              else
+                Container(
+                  height: 132,
                   width: double.infinity,
                   color: isDark
                       ? const Color(0xFF2A3A2A)
                       : const Color(0xFFD4E8CF),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Positioned.fill(
-                        child: CustomPaint(
-                          painter: _MapGridPainter(
-                            accentColor: isMe
-                                ? colorScheme.onPrimary.withValues(alpha: 0.12)
-                                : colorScheme.primary.withValues(alpha: 0.12),
-                          ),
-                        ),
-                      ),
-                      Icon(
-                        Icons.location_on,
-                        size: 36,
-                        color: isMe
-                            ? colorScheme.onPrimary.withValues(alpha: 0.85)
-                            : colorScheme.error,
-                      ),
-                      if (isActiveLive)
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Text(
-                              'LIVE',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.location_on,
+                    size: 36,
+                    color: isMe
+                        ? colorScheme.onPrimary.withValues(alpha: 0.85)
+                        : colorScheme.error,
                   ),
                 ),
-              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
                 child: Column(
@@ -4218,7 +4460,7 @@ class _MessagesListState extends State<_MessagesList>
   }) {
     if (lat == null || lng == null) {
       return Text(
-        'Tap to open in Maps',
+        'Tap to open in app',
         style: TextStyle(
           color: subColor,
           fontSize: 11,
@@ -4228,7 +4470,7 @@ class _MessagesListState extends State<_MessagesList>
     }
     final statusText = isLive
         ? 'Updating live - Tap to open'
-        : (wasLive ? 'Live ended - Tap to open' : 'Tap to open in Maps');
+        : (wasLive ? 'Live ended - Tap to open' : 'Tap to open in app');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -4468,30 +4710,23 @@ class _MessagesListState extends State<_MessagesList>
     );
   }
 
-  Future<void> _openLocationInMaps(double lat, double lng) async {
-    final candidates = <Uri>[];
-    if (Platform.isAndroid) {
-      candidates.add(Uri.parse('geo:$lat,$lng?q=$lat,$lng'));
-    } else if (Platform.isIOS) {
-      candidates.add(Uri.parse('maps://?q=$lat,$lng'));
-      candidates.add(Uri.parse('http://maps.apple.com/?q=$lat,$lng'));
-    }
-    candidates.add(
-      Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng'),
+  Future<void> _openLocationMapScreen({
+    required double lat,
+    required double lng,
+    required bool isLive,
+    DateTime? expiresAt,
+  }) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _LocationMapScreen(
+          lat: lat,
+          lng: lng,
+          isLive: isLive,
+          expiresAt: expiresAt,
+        ),
+      ),
     );
-
-    for (final uri in candidates) {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        return;
-      }
-    }
-
-    if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('No maps app available')));
-    }
   }
 
   _StickerPayload? _parseStickerPayload(String raw) {
@@ -4644,7 +4879,7 @@ class _MessagesListState extends State<_MessagesList>
     final merged = _mergePayload(base, parsed);
     if (merged.isEmpty) {
       return _buildMessageBubble(
-        'Encrypted file',
+        ' ',
         isMe,
         timestamp,
         messageId: messageId,
@@ -4674,6 +4909,7 @@ class _MessagesListState extends State<_MessagesList>
     required String text,
     required Map<String, dynamic> messageData,
   }) {
+    final ui = context.uiScaleData;
     final parsed = _parseStickerPayload(text);
     final rawStickerUrl = messageData['stickerUrl']?.toString().trim() ?? '';
     final stickerUrl = rawStickerUrl.isNotEmpty
@@ -4689,15 +4925,17 @@ class _MessagesListState extends State<_MessagesList>
     final effectiveFallback = fallbackText.isNotEmpty
         ? fallbackText
         : '[Sticker]';
+    final stickerExtent = ui.scale(156, min: 140, max: 188);
+    final emojiFallbackFont = effectiveFallback.runes.length <= 2
+        ? ui.scale(50, min: 44, max: 58)
+        : ui.scale(40, min: 36, max: 46);
+    final imageFallbackFont = ui.scale(44, min: 40, max: 52);
 
     if (stickerUrl.isEmpty) {
       return Text(
         effectiveFallback,
         style: _withEmojiFallback(
-          TextStyle(
-            fontSize: effectiveFallback.runes.length <= 2 ? 46 : 38,
-            height: 1.05,
-          ),
+          TextStyle(fontSize: emojiFallbackFont, height: 1.05),
         ),
       );
     }
@@ -4720,37 +4958,37 @@ class _MessagesListState extends State<_MessagesList>
         child: isGif
             ? Image.network(
                 stickerUrl,
-                width: 134,
-                height: 134,
+                width: stickerExtent,
+                height: stickerExtent,
                 fit: BoxFit.cover,
                 gaplessPlayback: true,
                 errorBuilder: (context, error, stackTrace) => Container(
-                  width: 134,
-                  height: 134,
+                  width: stickerExtent,
+                  height: stickerExtent,
                   alignment: Alignment.center,
                   color: Colors.black12,
                   child: Text(
                     effectiveFallback,
                     style: _withEmojiFallback(
-                      const TextStyle(fontSize: 42, height: 1.05),
+                      TextStyle(fontSize: imageFallbackFont, height: 1.05),
                     ),
                   ),
                 ),
               )
             : CachedNetworkImage(
                 imageUrl: stickerUrl,
-                width: 134,
-                height: 134,
+                width: stickerExtent,
+                height: stickerExtent,
                 fit: BoxFit.cover,
                 errorWidget: (context, url, error) => Container(
-                  width: 134,
-                  height: 134,
+                  width: stickerExtent,
+                  height: stickerExtent,
                   alignment: Alignment.center,
                   color: Colors.black12,
                   child: Text(
                     effectiveFallback,
                     style: _withEmojiFallback(
-                      const TextStyle(fontSize: 42, height: 1.05),
+                      TextStyle(fontSize: imageFallbackFont, height: 1.05),
                     ),
                   ),
                 ),
@@ -5149,51 +5387,45 @@ class _MessagesListState extends State<_MessagesList>
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.75,
-                maxHeight: 400,
+            child: SizedBox(
+              width: double.infinity,
+              height: 220,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Container(color: Colors.grey[800]),
+                  isGif
+                      ? Image.network(
+                          fileUrl,
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                          errorBuilder: (context, error, stackTrace) =>
+                              Container(
+                                alignment: Alignment.center,
+                                child: const Icon(
+                                  Icons.broken_image,
+                                  size: 48,
+                                  color: Colors.white54,
+                                ),
+                              ),
+                        )
+                      : CachedNetworkImage(
+                          imageUrl: fileUrl,
+                          fit: BoxFit.cover,
+                          placeholder: (_, url) => const SizedBox.shrink(),
+                          errorWidget: (_, url, error) => Container(
+                            alignment: Alignment.center,
+                            child: const Icon(
+                              Icons.broken_image,
+                              size: 48,
+                              color: Colors.white54,
+                            ),
+                          ),
+                        ),
+                ],
               ),
-              child: isGif
-                  ? Image.network(
-                      fileUrl,
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        height: 200,
-                        color: Colors.grey[800],
-                        child: const Center(
-                          child: Icon(
-                            Icons.broken_image,
-                            size: 48,
-                            color: Colors.white54,
-                          ),
-                        ),
-                      ),
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: fileUrl,
-                      fit: BoxFit.cover,
-                      placeholder: (_, url) => Container(
-                        height: 200,
-                        color: Colors.grey[800],
-                        child: const Center(child: CircularProgressIndicator()),
-                      ),
-                      errorWidget: (_, url, error) => Container(
-                        height: 200,
-                        color: Colors.grey[800],
-                        child: const Center(
-                          child: Icon(
-                            Icons.broken_image,
-                            size: 48,
-                            color: Colors.white54,
-                          ),
-                        ),
-                      ),
-                    ),
             ),
           ),
-          // Timestamp overlay
           if (timestamp != null)
             Positioned(
               bottom: 8,
@@ -6162,9 +6394,7 @@ class _LiveStatusWidgetState extends State<_LiveStatusWidget> {
     return StreamBuilder<Map<String, dynamic>?>(
       stream: PresenceService().getUserStatusStream(widget.userId),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Text('Loading...', style: TextStyle(fontSize: 12));
-        }
+        if (!snapshot.hasData) return const SizedBox.shrink();
 
         final statusText = PresenceService.getStatusText(snapshot.data);
 
@@ -6245,4 +6475,420 @@ class _MediaComposerResult {
   final String caption;
 
   const _MediaComposerResult({required this.files, required this.caption});
+}
+
+class _LocationMapPreview extends StatelessWidget {
+  final double lat;
+  final double lng;
+  final bool isMe;
+  final bool isLive;
+  final Color accentColor;
+
+  const _LocationMapPreview({
+    required this.lat,
+    required this.lng,
+    required this.isMe,
+    required this.isLive,
+    required this.accentColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final point = LatLng(lat, lng);
+    final liveChipColor = isMe ? Colors.white : Colors.redAccent;
+    final liveChipBackground = isMe
+        ? Colors.white.withValues(alpha: 0.2)
+        : Colors.black.withValues(alpha: 0.45);
+
+    return ClipRRect(
+      borderRadius: const BorderRadius.only(
+        topLeft: Radius.circular(16),
+        topRight: Radius.circular(16),
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        height: 132,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            IgnorePointer(
+              ignoring: true,
+              child: _LocationMapCanvas(
+                point: point,
+                interactive: false,
+                accentColor: accentColor,
+                backgroundColor: isMe
+                    ? const Color(0xFF183126)
+                    : const Color(0xFFEAF6E4),
+              ),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.28),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              left: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.42),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  isLive ? 'LIVE' : 'MAP',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.95),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              right: 8,
+              bottom: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: liveChipBackground,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.open_in_new_rounded,
+                      size: 13,
+                      color: liveChipColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Open in app',
+                      style: TextStyle(
+                        color: liveChipColor,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 8,
+              bottom: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.42),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '${lat.toStringAsFixed(4)}, ${lng.toStringAsFixed(4)}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LocationMapScreen extends StatelessWidget {
+  final double lat;
+  final double lng;
+  final bool isLive;
+  final DateTime? expiresAt;
+
+  const _LocationMapScreen({
+    required this.lat,
+    required this.lng,
+    required this.isLive,
+    this.expiresAt,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final point = LatLng(lat, lng);
+    final remaining = expiresAt?.difference(DateTime.now());
+    final remainingText =
+        remaining != null && remaining.inSeconds > 0
+            ? _formatCountdown(remaining)
+            : null;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(isLive ? 'Live location' : 'Location'),
+        actions: [
+          IconButton(
+            tooltip: 'Open in Maps',
+            onPressed: () async {
+              final opened = await _launchExternalMaps(lat, lng);
+              if (!context.mounted) return;
+              if (!opened) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('No maps app available')),
+                );
+              }
+            },
+            icon: const Icon(Icons.open_in_new),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: _LocationMapCanvas(
+              point: point,
+              interactive: true,
+              accentColor: Colors.redAccent,
+              backgroundColor: const Color(0xFFEAF6E4),
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .outlineVariant
+                        .withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.location_on,
+                          color: isLive
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            isLive ? 'Live location' : 'Shared location',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        if (remainingText != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .errorContainer,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              'Ends in $remainingText',
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onErrorContainer,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    SelectableText(
+                      '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () async {
+                              final opened = await _launchExternalMaps(
+                                lat,
+                                lng,
+                              );
+                              if (!context.mounted) return;
+                              if (!opened) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('No maps app available'),
+                                  ),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.directions),
+                            label: const Text('Open in Maps'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocationMapCanvas extends StatelessWidget {
+  final LatLng point;
+  final bool interactive;
+  final Color accentColor;
+  final Color backgroundColor;
+
+  const _LocationMapCanvas({
+    required this.point,
+    required this.interactive,
+    required this.accentColor,
+    required this.backgroundColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FlutterMap(
+      options: MapOptions(
+        initialCenter: point,
+        initialZoom: 15.5,
+        backgroundColor: backgroundColor,
+        keepAlive: true,
+        interactionOptions: interactive
+            ? const InteractionOptions()
+            : const InteractionOptions(flags: InteractiveFlag.none),
+      ),
+      children: [
+        TileLayer(
+          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          tileDisplay: const TileDisplay.instantaneous(),
+          userAgentPackageName: 'com.example.shoq',
+        ),
+        MarkerLayer(
+          markers: [
+            Marker(
+              point: point,
+              width: 48,
+              height: 48,
+              child: _LocationPin(accentColor: accentColor),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _LocationPin extends StatelessWidget {
+  final Color accentColor;
+
+  const _LocationPin({required this.accentColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Icon(
+          Icons.location_pin,
+          size: 46,
+          color: accentColor,
+        ),
+        Positioned(
+          top: 15,
+          child: Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(color: accentColor, width: 2),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+String _formatCountdown(Duration duration) {
+  var seconds = duration.inSeconds;
+  if (seconds < 0) seconds = 0;
+  final hours = seconds ~/ 3600;
+  final minutes = (seconds % 3600) ~/ 60;
+  final secs = seconds % 60;
+  if (hours > 0) {
+    return '${hours.toString().padLeft(2, '0')}:'
+        '${minutes.toString().padLeft(2, '0')}:'
+        '${secs.toString().padLeft(2, '0')}';
+  }
+  return '${minutes.toString().padLeft(2, '0')}:'
+      '${secs.toString().padLeft(2, '0')}';
+}
+
+Future<bool> _launchExternalMaps(double lat, double lng) async {
+  final candidates = <Uri>[];
+  if (Platform.isAndroid) {
+    candidates.add(Uri.parse('geo:$lat,$lng?q=$lat,$lng'));
+  } else if (Platform.isIOS) {
+    candidates.add(Uri.parse('maps://?q=$lat,$lng'));
+    candidates.add(Uri.parse('http://maps.apple.com/?q=$lat,$lng'));
+  }
+  candidates.add(
+    Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng'),
+  );
+
+  for (final uri in candidates) {
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      return true;
+    }
+  }
+
+  return false;
 }

@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../core/utils/ui_scale.dart';
 import 'home_screen.dart';
 import '../services/active_session_service.dart';
 import '../services/call_config.dart';
@@ -71,7 +71,6 @@ enum _CallPhase { ringing, connecting, inCall, ended }
 
 class _CallScreenState extends State<CallScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final SignalingService _signaling = SignalingService();
   final ChatService _chatService = ChatService();
   late final String _sessionId;
@@ -120,10 +119,6 @@ class _CallScreenState extends State<CallScreen> {
   String _callEndReason = 'ended';
   bool _callSummarySent = false;
 
-  // Camera preview positioning
-  static const double _cameraPreviewWidth = 120;
-  static const double _cameraPreviewHeight = 160;
-  static const double _cameraPreviewMargin = 12;
   Offset _cameraPosition = Offset.zero;
   bool _cameraPositionInitialized = false;
   bool _showCameraPreview = true;
@@ -132,12 +127,25 @@ class _CallScreenState extends State<CallScreen> {
   bool get _isWindowsVideoUnsupported => false;
 
   Map<String, dynamic> _videoCallConstraints() {
+    final isMobile = Platform.isAndroid || Platform.isIOS;
     return {
       'facingMode': 'user',
-      'width': {'ideal': 960},
-      'height': {'ideal': 540},
-      'frameRate': {'ideal': 24, 'max': 30},
+      'width': {'ideal': isMobile ? 640 : 960, 'max': isMobile ? 1280 : 1920},
+      'height': {'ideal': isMobile ? 360 : 540, 'max': isMobile ? 720 : 1080},
+      'frameRate': {'ideal': isMobile ? 18 : 24, 'max': isMobile ? 24 : 30},
     };
+  }
+
+  double _cameraPreviewWidth(BuildContext context) {
+    return context.uiScaleData.scale(124, min: 100, max: 176);
+  }
+
+  double _cameraPreviewHeight(BuildContext context) {
+    return context.uiScaleData.scale(168, min: 132, max: 228);
+  }
+
+  double _cameraPreviewMargin(BuildContext context) {
+    return context.uiScaleData.scale(12, min: 8, max: 20);
   }
 
   void _scheduleCameraPositionInit() {
@@ -145,12 +153,13 @@ class _CallScreenState extends State<CallScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _cameraPositionInitialized) return;
       final media = MediaQuery.of(context);
+      final ui = context.uiScaleData;
       final size = media.size;
-      final topInset = media.padding.top + 64;
-      final maxX = size.width - _cameraPreviewWidth - _cameraPreviewMargin;
-      final initialX = maxX < _cameraPreviewMargin
-          ? _cameraPreviewMargin
-          : maxX;
+      final previewWidth = _cameraPreviewWidth(context);
+      final previewMargin = _cameraPreviewMargin(context);
+      final topInset = media.padding.top + ui.scale(64, min: 56, max: 84);
+      final maxX = size.width - previewWidth - previewMargin;
+      final initialX = maxX < previewMargin ? previewMargin : maxX;
       final initialY = topInset;
       setState(() {
         _cameraPosition = Offset(initialX, initialY);
@@ -234,12 +243,18 @@ class _CallScreenState extends State<CallScreen> {
 
   Offset _clampCameraPosition(Offset position) {
     final media = MediaQuery.of(context);
+    final ui = context.uiScaleData;
     final size = media.size;
-    final minX = _cameraPreviewMargin;
-    final maxX = size.width - _cameraPreviewWidth - _cameraPreviewMargin;
-    final minY = media.padding.top + 64;
+    final previewWidth = _cameraPreviewWidth(context);
+    final previewHeight = _cameraPreviewHeight(context);
+    final previewMargin = _cameraPreviewMargin(context);
+    final minX = previewMargin;
+    final maxX = size.width - previewWidth - previewMargin;
+    final minY = media.padding.top + ui.scale(64, min: 56, max: 84);
     final maxY =
-        size.height - _cameraPreviewHeight - (media.padding.bottom + 120);
+        size.height -
+        previewHeight -
+        (media.padding.bottom + ui.scale(120, min: 104, max: 156));
     final clampedX = position.dx.clamp(minX, maxX < minX ? minX : maxX);
     final clampedY = position.dy.clamp(minY, maxY < minY ? minY : maxY);
     return Offset(clampedX, clampedY);
@@ -248,11 +263,13 @@ class _CallScreenState extends State<CallScreen> {
   double _snapCameraX(double currentX) {
     final media = MediaQuery.of(context);
     final size = media.size;
-    final centerX = currentX + (_cameraPreviewWidth / 2);
-    final maxX = size.width - _cameraPreviewWidth - _cameraPreviewMargin;
+    final previewWidth = _cameraPreviewWidth(context);
+    final previewMargin = _cameraPreviewMargin(context);
+    final centerX = currentX + (previewWidth / 2);
+    final maxX = size.width - previewWidth - previewMargin;
     final target = centerX < size.width / 2
-        ? _cameraPreviewMargin
-        : (maxX < _cameraPreviewMargin ? _cameraPreviewMargin : maxX);
+        ? previewMargin
+        : (maxX < previewMargin ? previewMargin : maxX);
     return target;
   }
 
@@ -1035,6 +1052,7 @@ class _CallScreenState extends State<CallScreen> {
         callerPhotoUrl: _callerPhotoUrl,
         isVideo: _isVideo,
         fromId: _selfId!,
+        fromClientId: _signaling.clientId,
       );
     } catch (e) {
       debugPrint('Failed to send call notification: $e');
@@ -1044,23 +1062,25 @@ class _CallScreenState extends State<CallScreen> {
   Future<void> _createCallDoc() async {
     if (_callId == null || _selfId == null || _peerId == null) return;
     if (_localOffer == null) return;
+    final conversationId = _chatService.getDirectConversationId(
+      _selfId!,
+      _peerId!,
+    );
     try {
-      await _firestore.collection('calls').doc(_callId).set({
-        'callId': _callId,
-        'fromId': _selfId,
-        'toId': _peerId,
-        'fromClientId': _signaling.clientId,
-        'callerName': _callerName,
-        'callerPhotoUrl': _callerPhotoUrl,
-        'isVideo': _isVideo,
-        'offer': {'sdp': _localOffer!['sdp'], 'type': _localOffer!['sdpType']},
-        'status': 'ringing',
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'expiresAt': Timestamp.fromDate(
-          DateTime.now().add(const Duration(minutes: 2)),
-        ),
-      }, SetOptions(merge: true));
+      await _chatService.saveCallMessage(
+        conversationId: conversationId,
+        callId: _callId!,
+        fromId: _selfId!,
+        toId: _peerId!,
+        fromClientId: _signaling.clientId,
+        callerName: _callerName,
+        callerPhotoUrl: _callerPhotoUrl,
+        isVideo: _isVideo,
+        offer: {
+          'sdp': _localOffer!['sdp'],
+          'sdpType': _localOffer!['sdpType'],
+        },
+      );
     } catch (e) {
       debugPrint('Failed to create call doc: $e');
     }
@@ -1068,15 +1088,19 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _updateCallStatus(String status) async {
     if (_callId == null) return;
+    final currentUser = _auth.currentUser;
+    final peerId = _peerId;
+    if (currentUser == null || peerId == null || peerId.trim().isEmpty) return;
+    final conversationId = _chatService.getDirectConversationId(
+      currentUser.uid,
+      peerId,
+    );
     try {
-      await _firestore.collection('calls').doc(_callId).set({
-        'status': status,
-        'updatedAt': FieldValue.serverTimestamp(),
-        if (status == 'answered') 'answeredAt': FieldValue.serverTimestamp(),
-        if (status == 'ended') 'endedAt': FieldValue.serverTimestamp(),
-        if (status == 'declined') 'declinedAt': FieldValue.serverTimestamp(),
-        if (status == 'missed') 'missedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      await _chatService.updateCallMessageStatus(
+        conversationId: conversationId,
+        callId: _callId!,
+        status: status,
+      );
     } catch (e) {
       debugPrint('Failed to update call status: $e');
     }
@@ -1428,6 +1452,17 @@ class _CallScreenState extends State<CallScreen> {
 
   Widget _buildIncomingCallScreen() {
     final hasPhoto = _peerPhotoUrl?.isNotEmpty ?? false;
+    final ui = context.uiScaleData;
+    final horizontalPadding = ui.scale(24, min: 18, max: 32);
+    final topPadding = ui.scale(28, min: 20, max: 40);
+    final bottomPadding = ui.scale(32, min: 24, max: 40);
+    final badgeHorizontal = ui.scale(14, min: 12, max: 18);
+    final badgeVertical = ui.scale(8, min: 6, max: 12);
+    final avatarRadius = ui.scale(60, min: 50, max: 76);
+    final nameFont = ui.scale(30, min: 24, max: 38);
+    final timeFont = ui.scale(15, min: 13, max: 18);
+    final actionButtonSize = ui.scale(80, min: 68, max: 94);
+    final actionSpacing = ui.scale(24, min: 18, max: 30);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -1472,13 +1507,18 @@ class _CallScreenState extends State<CallScreen> {
           ),
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                topPadding,
+                horizontalPadding,
+                bottomPadding,
+              ),
               child: Column(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: badgeHorizontal,
+                      vertical: badgeVertical,
                     ),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.12),
@@ -1489,29 +1529,29 @@ class _CallScreenState extends State<CallScreen> {
                     ),
                     child: Text(
                       _incomingCallLabel(),
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Colors.white70,
-                        fontSize: 13,
+                        fontSize: ui.scale(13, min: 11, max: 16),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
                   const Spacer(),
-                  _buildAvatar(),
-                  const SizedBox(height: 24),
+                  _buildAvatar(radius: avatarRadius),
+                  SizedBox(height: actionSpacing),
                   Text(
                     _peerDisplayName,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Colors.white,
-                      fontSize: 30,
+                      fontSize: nameFont,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  SizedBox(height: ui.scale(10, min: 8, max: 14)),
                   Text(
                     DateFormat('h:mm a').format(DateTime.now()),
-                    style: const TextStyle(color: Colors.white70, fontSize: 15),
+                    style: TextStyle(color: Colors.white70, fontSize: timeFont),
                   ),
                   const Spacer(),
                   Row(
@@ -1522,14 +1562,14 @@ class _CallScreenState extends State<CallScreen> {
                         color: Colors.red,
                         label: 'Decline',
                         onPressed: _declineCall,
-                        size: 76,
+                        size: actionButtonSize,
                       ),
                       _buildCircleButton(
                         icon: widget.isVideo ? Icons.videocam : Icons.call,
                         color: Colors.green,
                         label: 'Accept',
                         onPressed: _answerCall,
-                        size: 76,
+                        size: actionButtonSize,
                       ),
                     ],
                   ),
@@ -1542,23 +1582,30 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
-  Widget _buildAvatar() {
+  Widget _buildAvatar({double? radius}) {
+    final resolvedRadius =
+        radius ?? context.uiScaleData.scale(56, min: 46, max: 72);
     if (_peerPhotoUrl == null || _peerPhotoUrl!.isEmpty) {
       return CircleAvatar(
-        radius: 56,
+        radius: resolvedRadius,
         backgroundColor: Colors.grey[800],
-        child: const Icon(Icons.person, size: 64, color: Colors.white70),
+        child: Icon(
+          Icons.person,
+          size: resolvedRadius * 1.15,
+          color: Colors.white70,
+        ),
       );
     }
 
     return CircleAvatar(
-      radius: 56,
+      radius: resolvedRadius,
       backgroundImage: NetworkImage(_peerPhotoUrl!),
       backgroundColor: Colors.grey[800],
     );
   }
 
   Widget _buildLoadingIndicator() {
+    final ui = context.uiScaleData;
     return Container(
       color: const Color(0xFF1a1a1a),
       child: Center(
@@ -1566,10 +1613,13 @@ class _CallScreenState extends State<CallScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const CircularProgressIndicator(color: Colors.white),
-            const SizedBox(height: 24),
+            SizedBox(height: ui.scale(24, min: 18, max: 32)),
             Text(
               'Initializing ${_isVideo ? 'video' : 'audio'} call...',
-              style: const TextStyle(color: Colors.white70, fontSize: 16),
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: ui.scale(16, min: 14, max: 18),
+              ),
             ),
           ],
         ),
@@ -1578,6 +1628,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Widget _buildRemoteView() {
+    final ui = context.uiScaleData;
     // Show remote video whenever a remote video track is active.
     if (_remoteRenderer != null &&
         _remoteRenderer!.srcObject != null &&
@@ -1602,20 +1653,23 @@ class _CallScreenState extends State<CallScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _buildAvatar(),
-              const SizedBox(height: 24),
+              _buildAvatar(radius: ui.scale(58, min: 48, max: 72)),
+              SizedBox(height: ui.scale(24, min: 18, max: 30)),
               Text(
                 _peerDisplayName,
-                style: const TextStyle(
+                style: TextStyle(
                   color: Colors.white,
-                  fontSize: 24,
+                  fontSize: ui.scale(24, min: 20, max: 30),
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: ui.scale(12, min: 8, max: 16)),
               Text(
                 _statusText(),
-                style: const TextStyle(color: Colors.white70, fontSize: 16),
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: ui.scale(16, min: 14, max: 18),
+                ),
               ),
             ],
           ),
@@ -1625,6 +1679,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Widget _buildLocalPreview() {
+    final ui = context.uiScaleData;
     final hasLocalVideo = (_localStream?.getVideoTracks().isNotEmpty ?? false);
     if (!hasLocalVideo ||
         _isCameraOff ||
@@ -1668,13 +1723,17 @@ class _CallScreenState extends State<CallScreen> {
         child: Stack(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(
+                ui.scale(12, min: 10, max: 16),
+              ),
               child: Container(
-                width: _cameraPreviewWidth,
-                height: _cameraPreviewHeight,
+                width: _cameraPreviewWidth(context),
+                height: _cameraPreviewHeight(context),
                 decoration: BoxDecoration(
                   border: Border.all(color: Colors.white24, width: 2),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(
+                    ui.scale(12, min: 10, max: 16),
+                  ),
                 ),
                 child: RTCVideoView(
                   _localRenderer!,
@@ -1685,8 +1744,8 @@ class _CallScreenState extends State<CallScreen> {
             ),
             // Minimize/close button for camera preview
             Positioned(
-              top: 4,
-              right: 4,
+              top: ui.scale(4, min: 2, max: 6),
+              right: ui.scale(4, min: 2, max: 6),
               child: GestureDetector(
                 onTap: () {
                   setState(() => _showCameraPreview = false);
@@ -1696,8 +1755,12 @@ class _CallScreenState extends State<CallScreen> {
                     color: Colors.black.withValues(alpha: 0.6),
                     shape: BoxShape.circle,
                   ),
-                  padding: const EdgeInsets.all(4),
-                  child: const Icon(Icons.close, color: Colors.white, size: 16),
+                  padding: EdgeInsets.all(ui.scale(4, min: 3, max: 6)),
+                  child: Icon(
+                    Icons.close,
+                    color: Colors.white,
+                    size: ui.scale(16, min: 14, max: 20),
+                  ),
                 ),
               ),
             ),
@@ -1708,6 +1771,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Widget _buildTopActions() {
+    final ui = context.uiScaleData;
     return Positioned(
       top: 0,
       left: 0,
@@ -1715,7 +1779,12 @@ class _CallScreenState extends State<CallScreen> {
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          padding: EdgeInsets.fromLTRB(
+            ui.scale(12, min: 10, max: 18),
+            ui.scale(8, min: 6, max: 12),
+            ui.scale(12, min: 10, max: 18),
+            0,
+          ),
           child: Row(
             children: [
               Expanded(
@@ -1723,9 +1792,9 @@ class _CallScreenState extends State<CallScreen> {
                   _peerDisplayName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white70,
-                    fontSize: 13,
+                    fontSize: ui.scale(13, min: 11, max: 16),
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -1737,18 +1806,29 @@ class _CallScreenState extends State<CallScreen> {
                     setState(() => _showCameraPreview = true);
                   },
                   tooltip: 'Show camera',
-                  icon: const Icon(Icons.videocam, color: Colors.white),
-                  constraints: const BoxConstraints(
-                    minWidth: 44,
-                    minHeight: 44,
+                  icon: Icon(
+                    Icons.videocam,
+                    color: Colors.white,
+                    size: ui.scale(22, min: 20, max: 26),
+                  ),
+                  constraints: BoxConstraints(
+                    minWidth: ui.scale(44, min: 40, max: 52),
+                    minHeight: ui.scale(44, min: 40, max: 52),
                   ),
                 ),
               // Return/back button - clearly visible and accessible
               IconButton(
                 onPressed: _minimizeToHome,
                 tooltip: 'Return to chat',
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                icon: Icon(
+                  Icons.arrow_back,
+                  color: Colors.white,
+                  size: ui.scale(22, min: 20, max: 26),
+                ),
+                constraints: BoxConstraints(
+                  minWidth: ui.scale(48, min: 44, max: 56),
+                  minHeight: ui.scale(48, min: 44, max: 56),
+                ),
               ),
             ],
           ),
@@ -1758,9 +1838,11 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Widget _buildControls() {
+    final ui = context.uiScaleData;
+    final buttonSize = ui.scale(60, min: 52, max: 74);
     if (widget.isIncoming && _phase == _CallPhase.ringing) {
       return Container(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.all(ui.scale(24, min: 18, max: 30)),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
@@ -1776,12 +1858,14 @@ class _CallScreenState extends State<CallScreen> {
               color: Colors.red,
               label: 'Decline',
               onPressed: _declineCall,
+              size: buttonSize,
             ),
             _buildCircleButton(
               icon: Icons.call,
               color: Colors.green,
               label: 'Accept',
               onPressed: _answerCall,
+              size: buttonSize,
             ),
           ],
         ),
@@ -1793,7 +1877,7 @@ class _CallScreenState extends State<CallScreen> {
     final canUseVideoControls = !_isWindowsVideoUnsupported;
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(ui.scale(16, min: 12, max: 22)),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.bottomCenter,
@@ -1808,28 +1892,33 @@ class _CallScreenState extends State<CallScreen> {
             icon: _isMuted ? Icons.mic_off : Icons.mic,
             color: _isMuted ? Colors.red : Colors.white24,
             onPressed: _toggleMute,
+            size: buttonSize,
           ),
           if (canUseVideoControls)
             _buildCircleButton(
               icon: _isCameraOff ? Icons.videocam_off : Icons.videocam,
               color: _isCameraOff ? Colors.red : Colors.white24,
               onPressed: _toggleCamera,
+              size: buttonSize,
             ),
           if (canUseVideoControls)
             _buildCircleButton(
               icon: Icons.cameraswitch,
               color: hasLocalVideoTrack ? Colors.white24 : Colors.white10,
               onPressed: _switchCamera,
+              size: buttonSize,
             ),
           _buildCircleButton(
             icon: _isSpeakerOn ? Icons.volume_up : Icons.volume_down,
             color: Colors.white24,
             onPressed: _toggleSpeaker,
+            size: buttonSize,
           ),
           _buildCircleButton(
             icon: Icons.call_end,
             color: Colors.red,
             onPressed: _hangUp,
+            size: buttonSize,
           ),
         ],
       ),
@@ -1843,12 +1932,14 @@ class _CallScreenState extends State<CallScreen> {
     String? label,
     double size = 60,
   }) {
+    final ui = context.uiScaleData;
+    final iconSize = (size * 0.46).clamp(22.0, 34.0);
     final button = Container(
       width: size,
       height: size,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       child: IconButton(
-        icon: Icon(icon, color: Colors.white, size: 28),
+        icon: Icon(icon, color: Colors.white, size: iconSize),
         onPressed: onPressed,
       ),
     );
@@ -1858,12 +1949,12 @@ class _CallScreenState extends State<CallScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           button,
-          const SizedBox(height: 8),
+          SizedBox(height: ui.scale(8, min: 6, max: 10)),
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               color: Colors.white,
-              fontSize: 12,
+              fontSize: ui.scale(12, min: 11, max: 14),
               fontWeight: FontWeight.w500,
             ),
           ),

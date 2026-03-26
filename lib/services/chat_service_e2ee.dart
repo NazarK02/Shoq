@@ -68,6 +68,159 @@ class ChatService {
     return 'direct_${sortedIds.join('_')}';
   }
 
+  String getCallMessageId(String callId) {
+    final trimmed = callId.trim();
+    if (trimmed.isEmpty) return 'call_';
+    return 'call_$trimmed';
+  }
+
+  DocumentReference<Map<String, dynamic>> _callMessageRef(
+    String conversationId,
+    String callId,
+  ) {
+    return _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .doc(getCallMessageId(callId));
+  }
+
+  Future<Map<String, dynamic>> _buildConversationPreviewPayload({
+    required String previewText,
+    required List<String> recipientIds,
+    bool includeCurrentUserInRecipients = false,
+  }) async {
+    final payload = await _buildEncryptedTextPayloadForRecipients(
+      messageText: previewText,
+      recipientIds: recipientIds,
+      includeTimestamps: false,
+      includeCurrentUserInRecipients: includeCurrentUserInRecipients,
+      messageType: 'text',
+    );
+
+    // Keep the preview payload minimal while still decryptable by all
+    // participants.
+    payload.remove('recipientIds');
+    payload.remove('senderDeviceId');
+    payload.remove('encryptionVersion');
+    return payload;
+  }
+
+  Future<void> _updateConversationLastMessage({
+    required String conversationId,
+    required String previewText,
+    required List<String> recipientIds,
+    bool includeCurrentUserInRecipients = false,
+    required String senderId,
+  }) async {
+    final trimmedPreview = previewText.trim();
+    if (trimmedPreview.isEmpty) return;
+
+    final previewPayload = await _buildConversationPreviewPayload(
+      previewText: trimmedPreview,
+      recipientIds: recipientIds,
+      includeCurrentUserInRecipients: includeCurrentUserInRecipients,
+    );
+
+    await _firestore.collection('conversations').doc(conversationId).set({
+      'lastMessage': previewPayload,
+      'lastMessageTime': FieldValue.serverTimestamp(),
+      'lastSenderId': senderId,
+      'hasMessages': true,
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> saveCallMessage({
+    required String conversationId,
+    required String callId,
+    required String fromId,
+    required String toId,
+    String? fromClientId,
+    required String callerName,
+    String? callerPhotoUrl,
+    required bool isVideo,
+    required Map<String, dynamic> offer,
+  }) async {
+    final normalizedCallId = callId.trim();
+    if (conversationId.trim().isEmpty || normalizedCallId.isEmpty) return;
+
+    final trimmedFromClientId = fromClientId?.trim();
+    final trimmedCallerPhotoUrl = callerPhotoUrl?.trim();
+    final offerPayload = <String, dynamic>{
+      'sdp': offer['sdp']?.toString() ?? '',
+      'type': offer['sdpType']?.toString() ?? offer['type']?.toString() ?? '',
+    };
+
+    await _callMessageRef(conversationId, normalizedCallId).set({
+      'callId': normalizedCallId,
+      'senderId': fromId,
+      'toId': toId,
+      if (trimmedFromClientId != null && trimmedFromClientId.isNotEmpty)
+        'fromClientId': trimmedFromClientId,
+      'callerName': callerName,
+      if (trimmedCallerPhotoUrl != null && trimmedCallerPhotoUrl.isNotEmpty)
+        'callerPhotoUrl': trimmedCallerPhotoUrl,
+      'isVideo': isVideo,
+      'offer': offerPayload,
+      'status': 'ringing',
+      'encrypted': false,
+      'read': true,
+      'type': 'call_offer',
+      'timestamp': FieldValue.serverTimestamp(),
+      'clientTimestamp': Timestamp.now(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().add(const Duration(minutes: 2)),
+      ),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> updateCallMessageStatus({
+    required String conversationId,
+    required String callId,
+    required String status,
+  }) async {
+    final normalizedCallId = callId.trim();
+    if (conversationId.trim().isEmpty || normalizedCallId.isEmpty) return;
+
+    final update = <String, dynamic>{
+      'status': status,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    if (status == 'answered') {
+      update['answeredAt'] = FieldValue.serverTimestamp();
+    } else if (status == 'ended') {
+      update['endedAt'] = FieldValue.serverTimestamp();
+    } else if (status == 'declined') {
+      update['declinedAt'] = FieldValue.serverTimestamp();
+    } else if (status == 'missed') {
+      update['missedAt'] = FieldValue.serverTimestamp();
+    }
+
+    await _callMessageRef(conversationId, normalizedCallId).set(
+      update,
+      SetOptions(merge: true),
+    );
+  }
+
+  Future<Map<String, dynamic>?> loadCallMessage({
+    required String conversationId,
+    required String callId,
+  }) async {
+    final normalizedCallId = callId.trim();
+    if (conversationId.trim().isEmpty || normalizedCallId.isEmpty) {
+      return null;
+    }
+
+    try {
+      final doc = await _callMessageRef(conversationId, normalizedCallId).get();
+      return doc.data();
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Initialize or get existing conversation
   /// Also ensures both users have E2EE enabled
   Future<String?> initializeConversation(String recipientId) async {
@@ -96,10 +249,7 @@ class ChatService {
         'participants': [currentUser.uid, recipientId],
         'createdBy': currentUser.uid,
         'createdAt': FieldValue.serverTimestamp(),
-        'lastMessage': null,
-        'lastMessageTime': null,
         'encrypted': true,
-        'hasMessages': false, // Track if conversation has any messages
       });
     }
 
@@ -470,13 +620,12 @@ class ChatService {
           : messagesRef.doc();
       await messageRef.set(payload);
 
-      // Update conversation metadata with plaintext preview for UI
-      await _firestore.collection('conversations').doc(conversationId).update({
-        'lastMessage': preview,
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastSenderId': currentUser.uid,
-        'hasMessages': true,
-      });
+      await _updateConversationLastMessage(
+        conversationId: conversationId,
+        previewText: preview,
+        recipientIds: [recipientId],
+        senderId: currentUser.uid,
+      );
 
       print('Encrypted message sent successfully');
     } catch (e) {
@@ -537,12 +686,12 @@ class ChatService {
           : messagesRef.doc();
       await messageRef.set(payload);
 
-      await _firestore.collection('conversations').doc(conversationId).set({
-        'lastMessage': 'Sticker',
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastSenderId': currentUser.uid,
-        'hasMessages': true,
-      }, SetOptions(merge: true));
+      await _updateConversationLastMessage(
+        conversationId: conversationId,
+        previewText: 'Sticker',
+        recipientIds: [recipientId],
+        senderId: currentUser.uid,
+      );
     } catch (e) {
       print('Failed to send sticker message: $e');
       rethrow;
@@ -618,14 +767,15 @@ class ChatService {
         : messagesRef.doc();
     await messageRef.set(payload);
 
-    await _firestore.collection('conversations').doc(conversationId).set({
-      'lastMessage': messageType == 'sticker'
+    await _updateConversationLastMessage(
+      conversationId: conversationId,
+      previewText: messageType == 'sticker'
           ? 'Sticker'
           : _buildMessagePreview(trimmedText),
-      'lastMessageTime': FieldValue.serverTimestamp(),
-      'lastSenderId': currentUser.uid,
-      'hasMessages': true,
-    }, SetOptions(merge: true));
+      recipientIds: effectiveRecipientIds,
+      includeCurrentUserInRecipients: selfOnlyConversation,
+      senderId: currentUser.uid,
+    );
   }
 
   /// Edit an existing encrypted text message.
@@ -661,12 +811,12 @@ class ChatService {
     final preview = trimmed.length > 50
         ? '${trimmed.substring(0, 50)}...'
         : trimmed;
-    await _firestore.collection('conversations').doc(conversationId).set({
-      'lastMessage': preview,
-      'lastMessageTime': FieldValue.serverTimestamp(),
-      'lastSenderId': currentUser.uid,
-      'hasMessages': true,
-    }, SetOptions(merge: true));
+    await _updateConversationLastMessage(
+      conversationId: conversationId,
+      previewText: preview,
+      recipientIds: [recipientId],
+      senderId: currentUser.uid,
+    );
   }
 
   /// Send a file message (file contents are not E2EE; metadata may be encrypted).
@@ -853,12 +1003,14 @@ class ChatService {
     final preview = (trimmedCaption != null && trimmedCaption.isNotEmpty)
         ? _buildMessagePreview(trimmedCaption)
         : 'File: $displayName';
-    await _firestore.collection('conversations').doc(conversationId).update({
-      'lastMessage': preview,
-      'lastMessageTime': FieldValue.serverTimestamp(),
-      'lastSenderId': currentUser.uid,
-      'hasMessages': true,
-    });
+    if (trimmedRecipientId != null && trimmedRecipientId.isNotEmpty) {
+      await _updateConversationLastMessage(
+        conversationId: conversationId,
+        previewText: preview,
+        recipientIds: [trimmedRecipientId],
+        senderId: currentUser.uid,
+      );
+    }
   }
 
   /// Get messages stream (returns encrypted messages)
@@ -1160,9 +1312,10 @@ class ChatService {
     await batch.commit();
 
     await _firestore.collection('conversations').doc(conversationId).update({
-      'lastMessage': null,
-      'lastMessageTime': null,
-      'hasMessages': false,
+      'lastMessage': FieldValue.delete(),
+      'lastMessageTime': FieldValue.delete(),
+      'lastSenderId': FieldValue.delete(),
+      'hasMessages': FieldValue.delete(),
     });
   }
 

@@ -15,10 +15,12 @@ import 'screens/home_screen.dart';
 import 'screens/email_verification_screen.dart';
 import 'services/firebase_options.dart';
 import 'services/notification_service.dart';
+import 'services/email_verification_service.dart';
 import 'services/theme_service.dart';
 import 'services/presence_service.dart';
 import 'services/user_service_e2ee.dart';
 import 'services/app_prefetch_service.dart';
+import 'services/chat_service_e2ee.dart';
 import 'services/user_cache_service.dart';
 import 'services/conversation_cache_service.dart';
 import 'services/video_cache_service.dart';
@@ -113,6 +115,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       callerName: callerName,
       isVideo: isVideo,
       fromId: data['fromId']?.toString(),
+      conversationId: data['conversationId']?.toString(),
+      fromClientId: data['fromClientId']?.toString(),
       callerPhotoUrl: data['callerPhotoUrl']?.toString(),
       sdp: data['sdp']?.toString(),
       sdpType: data['sdpType']?.toString(),
@@ -121,9 +125,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await _initCrashLogPath();
-
   FlutterError.onError = (details) {
     FlutterError.dumpErrorToConsole(details);
     unawaited(_logCrash('FlutterError', details.exception, details.stack));
@@ -151,6 +152,9 @@ Future<void> main() async {
 
   runZonedGuarded(
     () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      await _initCrashLogPath();
+
       /// Firebase init
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
@@ -228,8 +232,8 @@ class MyApp extends StatelessWidget {
       navigatorObservers: [AppRouteService()],
       title: 'Shoq App',
       debugShowCheckedModeBanner: false,
-      theme: ThemeService.lightTheme,
-      darkTheme: ThemeService.darkTheme,
+      theme: ThemeService.lightThemeFor(uiScale: themeService.uiScale),
+      darkTheme: ThemeService.darkThemeFor(uiScale: themeService.uiScale),
       themeMode: themeService.themeMode,
       locale: localeService.locale,
       supportedLocales: LocaleService.supportedLocales,
@@ -241,37 +245,22 @@ class MyApp extends StatelessWidget {
       ],
       builder: (context, child) {
         final mq = MediaQuery.of(context);
-        final layoutScale = themeService.uiScale;
         final systemTextScale = mq.textScaler.scale(1.0);
         final effectiveTextScaler = TextScaler.linear(
           (systemTextScale * themeService.textScale).clamp(0.5, 3.0),
         );
-        final scaledSize = mq.size / layoutScale;
 
         return MediaQuery(
           data: mq.copyWith(
-            size: scaledSize,
-            padding: mq.padding * (1.0 / layoutScale),
-            viewPadding: mq.viewPadding * (1.0 / layoutScale),
-            viewInsets: mq.viewInsets * (1.0 / layoutScale),
-            systemGestureInsets: mq.systemGestureInsets * (1.0 / layoutScale),
             textScaler: effectiveTextScaler,
             disableAnimations:
                 mq.disableAnimations || themeService.reduceMotion,
           ),
-          child: Transform.scale(
-            scale: layoutScale,
-            alignment: Alignment.topLeft,
-            child: SizedBox(
-              width: scaledSize.width,
-              height: scaledSize.height,
-              child: Stack(
-                children: [
-                  child ?? const SizedBox.shrink(),
-                  ActiveSessionBanner(navigatorKey: appNavigatorKey),
-                ],
-              ),
-            ),
+          child: Stack(
+            children: [
+              child ?? const SizedBox.shrink(),
+              ActiveSessionBanner(navigatorKey: appNavigatorKey),
+            ],
           ),
         );
       },
@@ -290,12 +279,16 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   final PresenceService _presenceService = PresenceService();
+  final EmailVerificationService _verificationService =
+      EmailVerificationService();
   StreamSubscription<User?>? _authSubscription;
   StreamSubscription<Map<String, dynamic>>? _incomingCallSub;
   StreamSubscription<Map<String, dynamic>>? _callNotificationSub;
   String? _activeIncomingCallId;
   bool _callRouteOpen = false;
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
+  Map<String, dynamic>? _pendingCallPayload;
+  bool _restorePendingCallInProgress = false;
   bool _e2eeInitialized = false;
   bool _bootstrapInProgress = false;
   String? _bootstrappedUid;
@@ -353,6 +346,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         }
         await _bootstrapForUser(user);
       } else {
+        final previousBootstrappedUid = _bootstrappedUid;
         _presenceService.stopPresenceTracking();
         UserService().stopUserDocListener();
         UserCacheService().clear();
@@ -365,6 +359,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         _bootstrapInProgress = false;
         _windowsTokenVerified = false;
         _windowsTokenVerifiedUid = null;
+        _pendingCallPayload = null;
+        _verificationService.clearLocallyVerified(previousBootstrappedUid ?? '');
+        unawaited(NotificationService().clearPendingCallIntent());
       }
     });
   }
@@ -383,6 +380,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       _verificationCheckUid = null;
       _windowsTokenVerified = false;
       _windowsTokenVerifiedUid = null;
+      _pendingCallPayload = null;
+      _verificationService.clearLocallyVerified(_bootstrappedUid ?? '');
+      unawaited(NotificationService().clearPendingCallIntent());
       await UserService().signOut();
     } catch (e) {
       debugPrint('Force sign-out failed: $e');
@@ -403,13 +403,21 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       }
       UserService().loadCachedProfile();
       UserService().startUserDocListener();
-      AppPrefetchService().warmUpForUser(user.uid);
       _startIncomingCallListener(user.uid);
+      unawaited(_restorePendingCallIntent());
       // Initialize E2EE for logged-in users (only once per session)
       if (!_e2eeInitialized) {
         await _initializeE2EEForUser();
         _e2eeInitialized = true;
       }
+
+      try {
+        await ChatService().initializeEncryption();
+      } catch (e) {
+        debugPrint('Chat encryption priming failed: $e');
+      }
+
+      unawaited(AppPrefetchService().warmUpForUser(user.uid));
 
       _presenceService.startPresenceTracking();
       _bootstrappedUid = user.uid;
@@ -494,11 +502,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           return;
         }
 
-        final token = await current.getIdTokenResult(true);
-        final claims = token.claims ?? const <String, dynamic>{};
-        final verified =
-            claims['email_verified'] == true || claims['emailVerified'] == true;
+        final verified = await _verificationService.refreshEmailVerified(
+          current,
+        );
         if (verified) {
+          _verificationService.markLocallyVerified(user.uid);
           _windowsTokenVerified = true;
           _windowsTokenVerifiedUid = user.uid;
           _windowsTokenPollTimer?.cancel();
@@ -529,10 +537,27 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
       final callId = message['callId']?.toString() ?? '';
       if (callId.isEmpty) return;
-      if (_callRouteOpen || _activeIncomingCallId == callId) return;
-
-      _activeIncomingCallId = callId;
-      _callRouteOpen = true;
+      final fromUserId = message['from']?.toString().trim() ?? '';
+      final payload = <String, dynamic>{
+        'type': 'call',
+        'callId': callId,
+        'fromId': fromUserId,
+        if (fromUserId.isNotEmpty)
+          'conversationId': ChatService().getDirectConversationId(
+            fromUserId,
+            uid,
+          ),
+        'fromClientId': message['fromClientId']?.toString(),
+        'callerName': message['callerName']?.toString() ?? 'User',
+        'callerPhotoUrl': message['callerPhotoUrl']?.toString(),
+        'isVideo': message['isVideo'] == true,
+      };
+      final pendingCallId = _pendingCallPayload?['callId']?.toString();
+      if (_callRouteOpen ||
+          _activeIncomingCallId == callId ||
+          pendingCallId == callId) {
+        return;
+      }
 
       final callerName = message['callerName']?.toString() ?? 'User';
       final isVideoRequested = message['isVideo'] == true;
@@ -540,11 +565,20 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
       if (_appLifecycleState != AppLifecycleState.resumed ||
           Platform.isWindows) {
+        _pendingCallPayload = payload;
+        unawaited(NotificationService().cachePendingCallIntent(payload));
         NotificationService().showIncomingCallNotification(
           callId: callId,
           callerName: callerName,
           isVideo: isVideo,
+          fromId: message['from']?.toString(),
+          conversationId: payload['conversationId']?.toString(),
+          fromClientId: message['fromClientId']?.toString(),
+          callerPhotoUrl: message['callerPhotoUrl']?.toString(),
+          sdp: message['sdp']?.toString(),
+          sdpType: message['sdpType']?.toString(),
         );
+        return;
       }
 
       final invite = CallInvite(
@@ -557,16 +591,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         offer: {'sdp': message['sdp'], 'type': message['sdpType']},
       );
 
-      Navigator.of(context)
-          .push(
-            MaterialPageRoute(
-              builder: (_) => CallScreen.incoming(incomingInvite: invite),
-            ),
-          )
-          .whenComplete(() {
-            _callRouteOpen = false;
-            _activeIncomingCallId = null;
-          });
+      unawaited(_pushIncomingCallRoute(invite));
     });
   }
 
@@ -584,59 +609,160 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     if (user == null) return;
 
     final callId = payload['callId']?.toString() ?? '';
-    if (callId.isEmpty) return;
+    if (callId.isEmpty) {
+      await NotificationService().clearPendingCallIntent();
+      return;
+    }
+    if (_appLifecycleState != AppLifecycleState.resumed) {
+      _pendingCallPayload = Map<String, dynamic>.from(payload);
+      await NotificationService().cachePendingCallIntent(payload);
+      return;
+    }
+
     final autoAnswer =
         payload['autoAnswer'] == true || payload['autoAnswer'] == 'true';
-    if (_callRouteOpen || _activeIncomingCallId == callId) return;
+    if (_callRouteOpen || _activeIncomingCallId == callId) {
+      _pendingCallPayload = null;
+      await NotificationService().clearPendingCallIntent(callId: callId);
+      return;
+    }
 
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('calls')
-          .doc(callId)
-          .get();
-      if (!doc.exists || !mounted) return;
-
-      final data = doc.data() ?? const <String, dynamic>{};
-      final toId = data['toId']?.toString() ?? '';
-      if (toId != user.uid) return;
-
-      final status = data['status']?.toString() ?? 'ringing';
-      if (status != 'ringing') return;
-
-      final offer = data['offer'];
-      if (offer is! Map) return;
-      final sdp = offer['sdp']?.toString();
-      final sdpType = offer['type']?.toString();
-      if (sdp == null || sdpType == null) return;
-
-      final invite = CallInvite(
-        callId: callId,
-        fromId: data['fromId']?.toString() ?? '',
-        fromClientId: data['fromClientId']?.toString(),
-        callerName: data['callerName']?.toString() ?? 'User',
-        callerPhotoUrl: data['callerPhotoUrl']?.toString(),
-        isVideo: data['isVideo'] == true,
-        offer: {'sdp': sdp, 'type': sdpType},
+      final invite = await _loadIncomingInvite(
+        payload: payload,
+        userId: user.uid,
       );
+      if (invite == null) {
+        _pendingCallPayload = null;
+        await NotificationService().clearPendingCallIntent(callId: callId);
+        return;
+      }
 
-      _activeIncomingCallId = callId;
-      _callRouteOpen = true;
-
-      Navigator.of(context)
-          .push(
-            MaterialPageRoute(
-              builder: (_) => CallScreen.incoming(
-                incomingInvite: invite,
-                autoAnswer: autoAnswer,
-              ),
-            ),
-          )
-          .whenComplete(() {
-            _callRouteOpen = false;
-            _activeIncomingCallId = null;
-          });
+      final pushed = await _pushIncomingCallRoute(
+        invite,
+        autoAnswer: autoAnswer,
+      );
+      if (pushed) {
+        _pendingCallPayload = null;
+        await NotificationService().clearPendingCallIntent(callId: callId);
+      }
     } catch (e) {
       debugPrint('Failed to handle call notification: $e');
+    }
+  }
+
+  Future<CallInvite?> _loadIncomingInvite({
+    required Map<String, dynamic> payload,
+    required String userId,
+  }) async {
+    final callId = payload['callId']?.toString() ?? '';
+    if (callId.isEmpty) return null;
+
+    final fromId = (payload['fromId']?.toString() ?? '').trim();
+    final payloadConversationId =
+        (payload['conversationId']?.toString() ?? '').trim();
+    final conversationId = payloadConversationId.isNotEmpty
+        ? payloadConversationId
+        : (fromId.isNotEmpty
+            ? ChatService().getDirectConversationId(fromId, userId)
+            : '');
+
+    Map<String, dynamic> data = payload;
+    if (conversationId.isNotEmpty) {
+      final callDoc = await ChatService().loadCallMessage(
+        conversationId: conversationId,
+        callId: callId,
+      );
+      if (callDoc != null && callDoc.isNotEmpty) {
+        data = callDoc;
+        final toId = data['toId']?.toString() ?? '';
+        if (toId.isNotEmpty && toId != userId) {
+          return null;
+        }
+
+        final status = data['status']?.toString() ?? 'ringing';
+        if (status != 'ringing') {
+          return null;
+        }
+      }
+    }
+
+    final offerData = data['offer'];
+    final offer = offerData is Map
+        ? Map<String, dynamic>.from(offerData)
+        : null;
+    final sdp = offer?['sdp']?.toString() ?? payload['sdp']?.toString();
+    final sdpType =
+        offer?['type']?.toString() ?? payload['sdpType']?.toString();
+    if (sdp == null || sdpType == null) {
+      return null;
+    }
+
+    return CallInvite(
+      callId: callId,
+      fromId: data['fromId']?.toString() ?? payload['fromId']?.toString() ?? '',
+      fromClientId:
+          data['fromClientId']?.toString() ??
+          payload['fromClientId']?.toString(),
+      callerName:
+          data['callerName']?.toString() ??
+          payload['callerName']?.toString() ??
+          'User',
+      callerPhotoUrl:
+          data['callerPhotoUrl']?.toString() ??
+          payload['callerPhotoUrl']?.toString(),
+      isVideo: data['isVideo'] == true || payload['isVideo'] == true,
+      offer: {'sdp': sdp, 'type': sdpType},
+    );
+  }
+
+  Future<bool> _pushIncomingCallRoute(
+    CallInvite invite, {
+    bool autoAnswer = false,
+  }) async {
+    final navigator = appNavigatorKey.currentState;
+    if (!mounted || navigator == null) {
+      return false;
+    }
+
+    _activeIncomingCallId = invite.callId;
+    _callRouteOpen = true;
+
+    navigator
+        .push(
+          MaterialPageRoute(
+            builder: (_) => CallScreen.incoming(
+              incomingInvite: invite,
+              autoAnswer: autoAnswer,
+            ),
+          ),
+        )
+        .whenComplete(() {
+          _callRouteOpen = false;
+          if (_activeIncomingCallId == invite.callId) {
+            _activeIncomingCallId = null;
+          }
+        });
+    return true;
+  }
+
+  Future<void> _restorePendingCallIntent() async {
+    if (!mounted || _restorePendingCallInProgress) return;
+    if (_appLifecycleState != AppLifecycleState.resumed) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    _restorePendingCallInProgress = true;
+    try {
+      final payload =
+          _pendingCallPayload ??
+          await NotificationService().getPendingCallIntent();
+      if (payload == null) {
+        return;
+      }
+      await _handleCallNotification(Map<String, dynamic>.from(payload));
+    } finally {
+      _restorePendingCallInProgress = false;
     }
   }
 
@@ -676,6 +802,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       case AppLifecycleState.resumed:
         SignalingService().ensureConnected(userId: user.uid);
         _presenceService.setOnline();
+        unawaited(_restorePendingCallIntent());
+        unawaited(AppPrefetchService().warmUpForUser(user.uid));
         break;
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
@@ -713,15 +841,21 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             (p) => p.providerId == 'google.com',
           );
 
-          if (isGoogleUser) {
-            _stopVerificationPolling();
-            return const HomeScreen();
-          }
+        if (isGoogleUser) {
+          _stopVerificationPolling();
+          return const HomeScreen();
+        }
 
-          if (activeUser.emailVerified) {
-            _stopVerificationPolling();
-            return const HomeScreen();
-          }
+        if (Platform.isWindows &&
+            _verificationService.isLocallyVerified(activeUser.uid)) {
+          _stopVerificationPolling();
+          return const HomeScreen();
+        }
+
+        if (activeUser.emailVerified) {
+          _stopVerificationPolling();
+          return const HomeScreen();
+        }
 
           final tokenVerified =
               _windowsTokenVerified &&

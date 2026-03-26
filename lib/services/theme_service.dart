@@ -93,13 +93,14 @@ class ThemeService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Light theme
-  static ThemeData get lightTheme {
+  static ThemeData get lightTheme => lightThemeFor();
+
+  static ThemeData lightThemeFor({double uiScale = 1.0}) {
     final colorScheme = ColorScheme.fromSeed(
       seedColor: const Color(0xFF0F766E),
       brightness: Brightness.light,
     );
-    return ThemeData(
+    final baseTheme = ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
       colorScheme: colorScheme,
@@ -134,15 +135,17 @@ class ThemeService extends ChangeNotifier {
         foregroundColor: colorScheme.onPrimary,
       ),
     );
+    return _applyUiScale(baseTheme, uiScale: uiScale);
   }
 
-  // Dark theme
-  static ThemeData get darkTheme {
+  static ThemeData get darkTheme => darkThemeFor();
+
+  static ThemeData darkThemeFor({double uiScale = 1.0}) {
     final colorScheme = ColorScheme.fromSeed(
       seedColor: const Color(0xFF0F766E),
       brightness: Brightness.dark,
     );
-    return ThemeData(
+    final baseTheme = ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       colorScheme: colorScheme,
@@ -176,6 +179,68 @@ class ThemeService extends ChangeNotifier {
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: colorScheme.primary,
         foregroundColor: colorScheme.onPrimary,
+      ),
+    );
+    return _applyUiScale(baseTheme, uiScale: uiScale);
+  }
+
+  static ThemeData _applyUiScale(
+    ThemeData baseTheme, {
+    required double uiScale,
+  }) {
+    final scale = uiScale.clamp(0.65, 1.65);
+    final visualDensity = ((scale - 1.0) * 4.0).clamp(-1.8, 2.0);
+    final cornerRadius = (12 * scale).clamp(10.0, 20.0);
+    final toolbarHeight = (56 * scale).clamp(52.0, 72.0);
+    final minTileHeight = (56 * scale).clamp(48.0, 74.0);
+    final horizontalPadding = (16 * scale).clamp(12.0, 24.0);
+    final inputVerticalPadding = (12 * scale).clamp(10.0, 18.0);
+    final iconSize = (24 * scale).clamp(20.0, 32.0);
+    final fabExtent = (56 * scale).clamp(48.0, 72.0);
+    final tabPadding = (12 * scale).clamp(10.0, 18.0);
+
+    OutlineInputBorder inputBorder(Color color, {double width = 1}) {
+      return OutlineInputBorder(
+        borderRadius: BorderRadius.circular(cornerRadius),
+        borderSide: BorderSide(color: color, width: width),
+      );
+    }
+
+    return baseTheme.copyWith(
+      visualDensity: VisualDensity(
+        horizontal: visualDensity,
+        vertical: visualDensity,
+      ),
+      iconTheme: baseTheme.iconTheme.copyWith(size: iconSize),
+      primaryIconTheme: baseTheme.primaryIconTheme.copyWith(size: iconSize),
+      appBarTheme: baseTheme.appBarTheme.copyWith(toolbarHeight: toolbarHeight),
+      listTileTheme: baseTheme.listTileTheme.copyWith(
+        minTileHeight: minTileHeight,
+        minLeadingWidth: (24 * scale).clamp(20.0, 40.0),
+        contentPadding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+      ),
+      tabBarTheme: baseTheme.tabBarTheme.copyWith(
+        labelPadding: EdgeInsets.symmetric(horizontal: tabPadding),
+      ),
+      cardTheme: baseTheme.cardTheme.copyWith(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(cornerRadius),
+        ),
+      ),
+      inputDecorationTheme: baseTheme.inputDecorationTheme.copyWith(
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: horizontalPadding,
+          vertical: inputVerticalPadding,
+        ),
+        border: inputBorder(Colors.transparent, width: 0),
+        enabledBorder: inputBorder(Colors.transparent, width: 0),
+        focusedBorder: inputBorder(baseTheme.colorScheme.primary, width: 1.4),
+      ),
+      floatingActionButtonTheme: baseTheme.floatingActionButtonTheme.copyWith(
+        sizeConstraints: BoxConstraints.tightFor(
+          width: fabExtent,
+          height: fabExtent,
+        ),
       ),
     );
   }

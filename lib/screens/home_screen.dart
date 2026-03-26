@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'package:app_links/app_links.dart';
@@ -12,6 +13,7 @@ import 'settings_screen.dart';
 import 'room_chat_screen.dart';
 import '../models/server_channel.dart';
 import '../services/notification_service.dart';
+import '../services/chat_service_e2ee.dart';
 import '../services/presence_service.dart';
 import '../services/user_service_e2ee.dart';
 import '../services/user_cache_service.dart';
@@ -47,6 +49,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final UserCacheService _userCache = UserCacheService();
   final ConversationCacheService _conversationCache =
       ConversationCacheService();
+  final ChatService _chatService = ChatService();
   final ChatFolderService _folderService = ChatFolderService();
   final ServerInviteService _inviteService = ServerInviteService();
   final AppLinks _appLinks = AppLinks();
@@ -880,17 +883,11 @@ class _HomeScreenState extends State<HomeScreen> {
         'type': type,
         'title': title,
         'description': '',
-        'avatarUrl': null,
         'participants': participants.toList(),
         'createdBy': user.uid,
         if (isServer) 'admins': [user.uid],
-        if (isServer) 'activeInviteCode': null,
         'createdAt': FieldValue.serverTimestamp(),
         if (isServer) 'channels': [ServerChannel.general.toMap()],
-        'lastMessage': null,
-        'lastMessageTime': null,
-        'lastSenderId': null,
-        'hasMessages': false,
         'encrypted': true,
       });
       return ref.id;
@@ -1080,13 +1077,6 @@ class _HomeScreenState extends State<HomeScreen> {
       names.add('+${participants.length - 3}');
     }
     return names.join(', ');
-  }
-
-  String _resolveLastMessagePreview(Map<String, dynamic> chatData) {
-    final raw = chatData['lastMessage']?.toString().trim() ?? '';
-    if (raw.isNotEmpty) return raw;
-    if (chatData['lastMessageTime'] != null) return 'Sent a message';
-    return 'Start chatting';
   }
 
   Widget _buildRoomAvatar({required String type, required String? avatarUrl}) {
@@ -1495,7 +1485,6 @@ class _HomeScreenState extends State<HomeScreen> {
             final isOnline = isDirect && userData != null
                 ? PresenceService.isUserOnline(userData)
                 : false;
-            final lastMessageText = _resolveLastMessagePreview(chatData);
             final rawLastMessageTime = chatData['lastMessageTime'];
             final lastMessageTimeLabel = rawLastMessageTime is Timestamp
                 ? _formatTime(rawLastMessageTime)
@@ -1583,11 +1572,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     subtitle: Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            lastMessageText,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.grey),
+                          child: _ConversationLastMessagePreview(
+                            conversationId: conversationId,
+                            chatData: chatData,
+                            chatService: _chatService,
                           ),
                         ),
                         if (lastMessageTimeLabel != null) ...[
@@ -1884,6 +1872,113 @@ class _HomeScreenState extends State<HomeScreen> {
         fadeInDuration: const Duration(milliseconds: 150),
         fadeOutDuration: const Duration(milliseconds: 150),
       ),
+    );
+  }
+}
+
+class _ConversationLastMessagePreview extends StatefulWidget {
+  final String conversationId;
+  final Map<String, dynamic> chatData;
+  final ChatService chatService;
+
+  const _ConversationLastMessagePreview({
+    required this.conversationId,
+    required this.chatData,
+    required this.chatService,
+  });
+
+  @override
+  State<_ConversationLastMessagePreview> createState() =>
+      _ConversationLastMessagePreviewState();
+}
+
+class _ConversationLastMessagePreviewState
+    extends State<_ConversationLastMessagePreview> {
+  String? _resolvedText;
+  String? _signature;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolvePreview();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ConversationLastMessagePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_signatureFor(widget.chatData) != _signature) {
+      _resolvedText = null;
+      _resolvePreview();
+    }
+  }
+
+  String _signatureFor(Map<String, dynamic> chatData) {
+    final raw = chatData['lastMessage'];
+    if (raw is Map || raw is List) {
+      try {
+        return jsonEncode(raw);
+      } catch (_) {}
+    }
+
+    final fallback = raw?.toString().trim() ?? '';
+    if (fallback.isNotEmpty) return fallback;
+    return '${widget.conversationId}|${chatData['lastMessageTime']}|${chatData['hasMessages']}';
+  }
+
+  Future<void> _resolvePreview() async {
+    final signature = _signatureFor(widget.chatData);
+    _signature = signature;
+
+    final raw = widget.chatData['lastMessage'];
+    if (raw is String) {
+      final text = raw.trim();
+      if (text.isNotEmpty) {
+        if (mounted && _signature == signature) {
+          setState(() => _resolvedText = text);
+        }
+        return;
+      }
+    }
+
+    if (raw is! Map) {
+      if (mounted && _signature == signature) {
+        setState(() => _resolvedText = null);
+      }
+      return;
+    }
+
+    try {
+      if (!widget.chatService.isEncryptionReady) {
+        await widget.chatService.initializeEncryption();
+      }
+      final text = await widget.chatService.decryptMessage(
+        messageData: Map<String, dynamic>.from(raw),
+      );
+      if (!mounted || _signature != signature) return;
+      setState(() => _resolvedText = text.trim());
+    } catch (_) {
+      if (!mounted || _signature != signature) return;
+      setState(() => _resolvedText = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final raw = widget.chatData['lastMessage'];
+    final fallback = widget.chatData['hasMessages'] == true
+        ? 'Sent a message'
+        : 'Start chatting';
+
+    final resolved = _resolvedText?.trim() ?? '';
+    final displayText = resolved.isNotEmpty
+        ? resolved
+        : (raw is String && raw.trim().isNotEmpty ? raw.trim() : fallback);
+
+    return Text(
+      displayText,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(color: Colors.grey),
     );
   }
 }
