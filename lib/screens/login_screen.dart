@@ -222,14 +222,14 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'Welcome Back',
+                        l.welcomeBack,
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.headlineMedium
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Sign in to continue',
+                        l.signInToContinue,
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Colors.grey[600],
@@ -304,7 +304,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   setState(() => _rememberMe = value ?? false);
                                 },
                               ),
-                              const Text('Remember me'),
+                              Text(l.rememberMe),
                             ],
                           ),
                           TextButton(
@@ -401,7 +401,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(
-                            "Don't have an account? ",
+                            l.dontHaveAnAccount,
                             style: TextStyle(color: Colors.grey[600]),
                           ),
                           GestureDetector(

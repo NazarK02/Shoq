@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../generated/app_localizations.dart';
 import '../services/firestore_streams.dart';
 import 'chat_screen_e2ee.dart';
 import 'user_profile_view_screen.dart';
@@ -27,6 +28,8 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
   final _searchController = TextEditingController();
   String _filter = '';
 
+  AppLocalizations get _l => AppLocalizations.of(context);
+
   @override
   void initState() {
     super.initState();
@@ -48,7 +51,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
     MyQrSheet.show(
       context,
       uid: user.uid,
-      displayName: user.displayName ?? user.email ?? 'Me',
+      displayName: user.displayName ?? user.email ?? _l.defaultUser,
     );
   }
 
@@ -66,23 +69,23 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
     final user = _auth.currentUser;
 
     if (user == null) {
-      return const Scaffold(body: Center(child: Text('Not logged in')));
+      return Scaffold(body: Center(child: Text(_l.notLoggedIn)));
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Friends'),
+        title: Text(_l.friendsTitle),
         actions: [
           // Show own QR
           IconButton(
             icon: const Icon(Icons.qr_code_outlined),
-            tooltip: 'My QR Code',
+            tooltip: _l.myQrCode,
             onPressed: _openMyQr,
           ),
           // Add friend (scan or search)
           IconButton(
             icon: const Icon(Icons.person_add_outlined),
-            tooltip: 'Add Friend',
+            tooltip: _l.addFriend,
             onPressed: _openAddFriend,
           ),
           const SizedBox(width: 4),
@@ -94,7 +97,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text('Friends'),
+                  Text(_l.friendsTitle),
                   const SizedBox(width: 8),
                   _buildFriendsCountBadge(user.uid),
                 ],
@@ -104,13 +107,13 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text('Requests'),
+                  Text(_l.requestsTitle),
                   const SizedBox(width: 8),
                   _buildRequestsBadge(user.uid),
                 ],
               ),
             ),
-            const Tab(text: 'Blocked'),
+            Tab(text: _l.blockedTitle),
           ],
         ),
       ),
@@ -134,7 +137,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
             controller: _searchController,
             onChanged: (v) => setState(() => _filter = v),
             decoration: InputDecoration(
-              hintText: 'Search friends',
+              hintText: _l.searchFriends,
               prefixIcon: const Icon(Icons.search, size: 20),
               suffixIcon: _filter.isNotEmpty
                   ? IconButton(
@@ -240,12 +243,12 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
                 Icon(Icons.people_outline, size: 80, color: Colors.grey[400]),
                 const SizedBox(height: 16),
                 Text(
-                  'No friends yet',
+                  _l.noFriendsYet,
                   style: TextStyle(fontSize: 18, color: Colors.grey[600]),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Send friend requests to connect',
+                  _l.sendFriendRequestsToConnect,
                   style: TextStyle(fontSize: 14, color: Colors.grey[500]),
                 ),
               ],
@@ -286,7 +289,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
                 Icon(Icons.search_off_outlined, size: 80, color: Colors.grey[400]),
                 const SizedBox(height: 16),
                 Text(
-                  'No friends match "$_filter"',
+                  _l.noFriendsMatch(_filter),
                   style: TextStyle(fontSize: 18, color: Colors.grey[600]),
                 ),
               ],
@@ -344,7 +347,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'No friend requests',
+                  _l.noFriendRequests,
                   style: TextStyle(fontSize: 18, color: Colors.grey[600]),
                 ),
               ],
@@ -394,7 +397,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
                 Icon(Icons.block, size: 80, color: Colors.grey[400]),
                 const SizedBox(height: 16),
                 Text(
-                  'No blocked users',
+                  _l.noBlockedUsers,
                   style: TextStyle(fontSize: 18, color: Colors.grey[600]),
                 ),
               ],
@@ -428,7 +431,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
               subtitle: Text(blocked['email']),
               trailing: ElevatedButton(
                 onPressed: () => _unblockUser(blocked['userId']),
-                child: const Text('Unblock'),
+                child: Text(_l.unblock),
               ),
             );
           },
@@ -447,7 +450,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
     final friendId = userData['uid'] as String?;
     if (friendId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invalid user data')),
+        SnackBar(content: Text(_l.invalidUserData)),
       );
       return;
     }
@@ -455,7 +458,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
     try {
       if (friendId == currentUser.uid) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('You cannot add yourself')),
+          SnackBar(content: Text(_l.cannotAddYourself)),
         );
         return;
       }
@@ -470,7 +473,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
 
       if (existingFriend.exists) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Already friends')),
+          SnackBar(content: Text(_l.alreadyFriends)),
         );
         return;
       }
@@ -485,7 +488,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
 
       if (existingRequest.docs.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend request already sent')),
+          SnackBar(content: Text(_l.friendRequestAlreadySent)),
         );
         return;
       }
@@ -504,7 +507,8 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
             .collection('users')
             .doc(currentUser.uid)
             .get();
-        final senderName = currentUserData.data()?['displayName'] ?? 'Someone';
+        final senderName =
+            currentUserData.data()?['displayName'] ?? _l.defaultUser;
 
         await NotificationService().sendFriendRequestNotification(
           recipientId: friendId,
@@ -515,16 +519,16 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       }
 
       if (mounted) {
-        final friendName = userData['displayName'] as String? ?? 'User';
+        final friendName = userData['displayName'] as String? ?? _l.defaultUser;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Friend request sent to $friendName!')),
+          SnackBar(content: Text(_l.friendRequestSentTo(friendName))),
         );
       }
     } catch (e) {
       debugPrint('Error sending friend request: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
+          SnackBar(content: Text(_l.genericError(e.toString()))),
         );
       }
     }
@@ -595,22 +599,22 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
 
       // Update request status
       await _firestore.collection('friendRequests').doc(requestId).update({
-        'status': 'accepted',
-        'respondedAt': FieldValue.serverTimestamp(),
-      });
+            'status': 'accepted',
+            'respondedAt': FieldValue.serverTimestamp(),
+          });
 
       // (No cache subscription) Updates will come from Firestore streams when viewing lists
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend request accepted!')),
+          SnackBar(content: Text(_l.friendRequestAccepted)),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(content: Text(_l.genericError(e.toString()))));
       }
     }
   }
@@ -625,13 +629,13 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Friend request denied')));
+        ).showSnackBar(SnackBar(content: Text(_l.friendRequestDenied)));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(content: Text(_l.genericError(e.toString()))));
       }
     }
   }
@@ -666,13 +670,13 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('User blocked')));
+        ).showSnackBar(SnackBar(content: Text(_l.userBlocked)));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(content: Text(_l.genericError(e.toString()))));
       }
     }
   }
@@ -716,13 +720,13 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('User blocked')));
+        ).showSnackBar(SnackBar(content: Text(_l.userBlocked)));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(content: Text(_l.genericError(e.toString()))));
       }
     }
   }
@@ -742,13 +746,13 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('User unblocked')));
+        ).showSnackBar(SnackBar(content: Text(_l.userUnblocked)));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(content: Text(_l.genericError(e.toString()))));
       }
     }
   }
@@ -757,14 +761,14 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Remove Friend'),
+        title: Text(_l.removeFriend),
         content: Text(
-          'Are you sure you want to remove $friendName from your friends?',
+          _l.removeFriendConfirm(friendName),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: Text(_l.cancel),
           ),
           TextButton(
             onPressed: () async {
@@ -772,7 +776,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
               await _removeFriend(friendId);
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Remove'),
+            child: Text(_l.remove),
           ),
         ],
       ),
@@ -803,13 +807,13 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Friend removed')));
+        ).showSnackBar(SnackBar(content: Text(_l.friendRemoved)));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(content: Text(_l.genericError(e.toString()))));
       }
     }
   }
@@ -837,7 +841,8 @@ class _FriendListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final displayName = initialData['displayName'] ?? 'User';
+    final l = AppLocalizations.of(context);
+    final displayName = initialData['displayName'] ?? l.defaultUser;
     final email = initialData['email'] ?? '';
     final photoURL =
         (initialData['photoURL'] ?? initialData['photoUrl'])?.toString() ?? '';
@@ -891,23 +896,23 @@ class _FriendListTile extends StatelessWidget {
               }
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'remove',
                 child: Row(
                   children: [
-                    Icon(Icons.person_remove, size: 20),
-                    SizedBox(width: 8),
-                    Text('Remove Friend'),
+                    const Icon(Icons.person_remove, size: 20),
+                    const SizedBox(width: 8),
+                    Text(l.removeFriendMenu),
                   ],
                 ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'block',
                 child: Row(
                   children: [
-                    Icon(Icons.block, size: 20, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('Block', style: TextStyle(color: Colors.red)),
+                    const Icon(Icons.block, size: 20, color: Colors.red),
+                    const SizedBox(width: 8),
+                    Text(l.block, style: const TextStyle(color: Colors.red)),
                   ],
                 ),
               ),
@@ -984,11 +989,12 @@ class _FriendRequestTileState extends State<_FriendRequestTile> {
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final displayName = _userData?['displayName'] ?? 'User';
+    final displayName = _userData?['displayName'] ?? l.defaultUser;
     final email = _userData?['email'] ?? '';
     final photoURL =
         (_userData?['photoURL'] ?? _userData?['photoUrl'])?.toString() ?? '';

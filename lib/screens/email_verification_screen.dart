@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../generated/app_localizations.dart';
 import '../services/email_verification_service.dart';
 import '../services/user_service_e2ee.dart';
 
@@ -46,6 +47,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   }
 
   Future<void> _sendVerificationEmail() async {
+    final l = AppLocalizations.of(context);
     try {
       final user = _auth.currentUser;
       if (user != null && !user.emailVerified) {
@@ -56,7 +58,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
         if (!mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Verification email sent!')),
+            SnackBar(content: Text(l.verificationEmailSent)),
           );
         }
 
@@ -83,7 +85,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(content: Text(l.genericError(e.toString()))));
       }
     }
   }
@@ -141,13 +143,14 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   }
 
   Future<void> _signOut() async {
+    final l = AppLocalizations.of(context);
     try {
       await UserService().signOut();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Logout failed: $e')));
+        ).showSnackBar(SnackBar(content: Text(l.logoutFailed(e.toString()))));
       }
     }
   }
@@ -155,6 +158,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   @override
   Widget build(BuildContext context) {
     final user = _auth.currentUser;
+    final l = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
@@ -171,14 +175,14 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                 ),
                 const SizedBox(height: 32),
                 Text(
-                  'Verify Your Email',
+                  l.verifyYourEmail,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'We sent a verification email to:',
+                  l.verificationEmailSentTo,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     fontSize: 16,
@@ -199,7 +203,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                 if (Platform.isWindows) ...[
                   const SizedBox(height: 12),
                   Text(
-                    'Auto-check runs in the background on Windows. If it doesn\'t update, tap "I\'ve Verified My Email".',
+                    l.verificationWindowsHint,
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(
@@ -227,8 +231,8 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                       : const Icon(Icons.refresh),
                   label: Text(
                     _resendCountdown > 0
-                        ? 'Resend in $_resendCountdown seconds'
-                        : 'Resend Verification Email',
+                        ? l.resendInSeconds(_resendCountdown)
+                        : l.resendVerificationEmail,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -250,16 +254,12 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                       }
                       if (!mounted) return;
                       messenger.showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Email not verified yet. Please check your inbox.',
-                          ),
-                        ),
+                        SnackBar(content: Text(l.emailNotVerifiedYet)),
                       );
                     }
                   },
                   icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('I\'ve Verified My Email'),
+                  label: Text(l.iveVerifiedMyEmail),
                 ),
                 const SizedBox(height: 16),
 
@@ -267,7 +267,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                 OutlinedButton.icon(
                   onPressed: _signOut,
                   icon: const Icon(Icons.logout),
-                  label: const Text('Sign Out'),
+                  label: Text(l.signOut),
                 ),
               ],
             ),

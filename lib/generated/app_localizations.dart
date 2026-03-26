@@ -760,6 +760,660 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Select language'**
   String get selectLanguage;
+
+  /// No description provided for @settingsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings'**
+  String get settingsTitle;
+
+  /// No description provided for @sectionNotifications.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get sectionNotifications;
+
+  /// No description provided for @sectionAppearance.
+  ///
+  /// In en, this message translates to:
+  /// **'Appearance'**
+  String get sectionAppearance;
+
+  /// No description provided for @friendRequestsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Friend Requests'**
+  String get friendRequestsTitle;
+
+  /// No description provided for @friendRequestsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Get notified when someone sends you a friend request'**
+  String get friendRequestsSubtitle;
+
+  /// No description provided for @messagesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages'**
+  String get messagesTitle;
+
+  /// No description provided for @messagesSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Get notified when you receive a new message'**
+  String get messagesSubtitle;
+
+  /// No description provided for @textSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Text Size'**
+  String get textSize;
+
+  /// No description provided for @textSizeSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{percent}% - Text size multiplier'**
+  String textSizeSubtitle(int percent);
+
+  /// No description provided for @welcomeBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome Back'**
+  String get welcomeBack;
+
+  /// No description provided for @signInToContinue.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to continue'**
+  String get signInToContinue;
+
+  /// No description provided for @rememberMe.
+  ///
+  /// In en, this message translates to:
+  /// **'Remember me'**
+  String get rememberMe;
+
+  /// No description provided for @dontHaveAnAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Don\'t have an account? '**
+  String get dontHaveAnAccount;
+
+  /// No description provided for @alreadyHaveAnAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Already have an account? '**
+  String get alreadyHaveAnAccount;
+
+  /// No description provided for @acceptTermsPrefix.
+  ///
+  /// In en, this message translates to:
+  /// **'I accept the '**
+  String get acceptTermsPrefix;
+
+  /// No description provided for @couldNotOpenLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open link'**
+  String get couldNotOpenLink;
+
+  /// No description provided for @accountCreatedVerificationSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Account created. Verification email sent. Please verify from the screen.'**
+  String get accountCreatedVerificationSent;
+
+  /// No description provided for @verifyYourEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Verify Your Email'**
+  String get verifyYourEmail;
+
+  /// No description provided for @verificationEmailSentTo.
+  ///
+  /// In en, this message translates to:
+  /// **'We sent a verification email to:'**
+  String get verificationEmailSentTo;
+
+  /// No description provided for @verificationWindowsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto-check runs in the background on Windows. If it doesn\'t update, tap \"I\'ve Verified My Email\".'**
+  String get verificationWindowsHint;
+
+  /// No description provided for @resendInSeconds.
+  ///
+  /// In en, this message translates to:
+  /// **'Resend in {seconds} seconds'**
+  String resendInSeconds(int seconds);
+
+  /// No description provided for @emailNotVerifiedYet.
+  ///
+  /// In en, this message translates to:
+  /// **'Email not verified yet. Please check your inbox.'**
+  String get emailNotVerifiedYet;
+
+  /// No description provided for @iveVerifiedMyEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'I\'ve Verified My Email'**
+  String get iveVerifiedMyEmail;
+
+  /// No description provided for @logoutFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Logout failed: {error}'**
+  String logoutFailed(String error);
+
+  /// No description provided for @createAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get createAction;
+
+  /// No description provided for @createFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Create folder'**
+  String get createFolder;
+
+  /// No description provided for @createGroupChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Create group chat'**
+  String get createGroupChat;
+
+  /// No description provided for @createServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Create server'**
+  String get createServer;
+
+  /// No description provided for @folderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder name'**
+  String get folderName;
+
+  /// No description provided for @folderNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Work, Family, Gaming...'**
+  String get folderNameHint;
+
+  /// No description provided for @folderAlreadyExists.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder already exists'**
+  String get folderAlreadyExists;
+
+  /// No description provided for @defaultUser.
+  ///
+  /// In en, this message translates to:
+  /// **'User'**
+  String get defaultUser;
+
+  /// No description provided for @addFriendsFirstToCreateRoom.
+  ///
+  /// In en, this message translates to:
+  /// **'Add friends first to create a room'**
+  String get addFriendsFirstToCreateRoom;
+
+  /// No description provided for @createGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Create group'**
+  String get createGroup;
+
+  /// No description provided for @groupName.
+  ///
+  /// In en, this message translates to:
+  /// **'Group name'**
+  String get groupName;
+
+  /// No description provided for @groupNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekend project'**
+  String get groupNameHint;
+
+  /// No description provided for @selectMembers.
+  ///
+  /// In en, this message translates to:
+  /// **'Select members'**
+  String get selectMembers;
+
+  /// No description provided for @selectAtLeastOneMember.
+  ///
+  /// In en, this message translates to:
+  /// **'Select at least one member'**
+  String get selectAtLeastOneMember;
+
+  /// No description provided for @serverName.
+  ///
+  /// In en, this message translates to:
+  /// **'Server name'**
+  String get serverName;
+
+  /// No description provided for @serverNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'My server'**
+  String get serverNameHint;
+
+  /// No description provided for @serverIconPersonalizeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'You can personalize the server icon from Server profile.'**
+  String get serverIconPersonalizeHint;
+
+  /// No description provided for @inviteLinkOrCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite link or code'**
+  String get inviteLinkOrCode;
+
+  /// No description provided for @pasteInviteLinkOrServerCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste invite link or server code'**
+  String get pasteInviteLinkOrServerCode;
+
+  /// No description provided for @enterValidInviteLinkOrCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid invite link or code'**
+  String get enterValidInviteLinkOrCode;
+
+  /// No description provided for @join.
+  ///
+  /// In en, this message translates to:
+  /// **'Join'**
+  String get join;
+
+  /// No description provided for @inviteLinkInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite link is invalid'**
+  String get inviteLinkInvalid;
+
+  /// No description provided for @inviteLinkExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'This invite link has expired'**
+  String get inviteLinkExpired;
+
+  /// No description provided for @serverNotFoundForInvite.
+  ///
+  /// In en, this message translates to:
+  /// **'Server not found for this invite'**
+  String get serverNotFoundForInvite;
+
+  /// No description provided for @permissionDeniedJoiningServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Permission denied while joining server. Update Firestore rules for server invites and conversation joins.'**
+  String get permissionDeniedJoiningServer;
+
+  /// No description provided for @couldNotJoinServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not join server: {error}'**
+  String couldNotJoinServer(String error);
+
+  /// No description provided for @couldNotJoinServerCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not join server ({code})'**
+  String couldNotJoinServerCode(String code);
+
+  /// No description provided for @atLeastTwoMembersRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'At least 2 members are required'**
+  String get atLeastTwoMembersRequired;
+
+  /// No description provided for @permissionDeniedCreatingRoom.
+  ///
+  /// In en, this message translates to:
+  /// **'Permission denied while creating room. Check Firestore rules for conversations.'**
+  String get permissionDeniedCreatingRoom;
+
+  /// No description provided for @failedToCreateRoom.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to create room: {error}'**
+  String failedToCreateRoom(String error);
+
+  /// No description provided for @failedToCreateRoomCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to create room ({code})'**
+  String failedToCreateRoomCode(String code);
+
+  /// No description provided for @moveConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Move \"{name}\"'**
+  String moveConversation(String name);
+
+  /// No description provided for @allChats.
+  ///
+  /// In en, this message translates to:
+  /// **'All chats'**
+  String get allChats;
+
+  /// No description provided for @createFolderFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'Create a folder first'**
+  String get createFolderFirst;
+
+  /// No description provided for @groupLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Group'**
+  String get groupLabel;
+
+  /// No description provided for @serverLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Server'**
+  String get serverLabel;
+
+  /// No description provided for @groupChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Group chat'**
+  String get groupChat;
+
+  /// No description provided for @searchChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Search chats...'**
+  String get searchChats;
+
+  /// No description provided for @folder.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder'**
+  String get folder;
+
+  /// No description provided for @myProfile.
+  ///
+  /// In en, this message translates to:
+  /// **'My Profile'**
+  String get myProfile;
+
+  /// No description provided for @myFriends.
+  ///
+  /// In en, this message translates to:
+  /// **'My Friends'**
+  String get myFriends;
+
+  /// No description provided for @about.
+  ///
+  /// In en, this message translates to:
+  /// **'About'**
+  String get about;
+
+  /// No description provided for @aboutDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Secure messaging app with end-to-end encryption.'**
+  String get aboutDescription;
+
+  /// No description provided for @notLoggedIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Not logged in'**
+  String get notLoggedIn;
+
+  /// No description provided for @genericError.
+  ///
+  /// In en, this message translates to:
+  /// **'Error: {error}'**
+  String genericError(String error);
+
+  /// No description provided for @chatOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat options'**
+  String get chatOptions;
+
+  /// No description provided for @moveToFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Move to folder'**
+  String get moveToFolder;
+
+  /// No description provided for @removeFromFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from {name}'**
+  String removeFromFolder(String name);
+
+  /// No description provided for @noChatsYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No chats yet'**
+  String get noChatsYet;
+
+  /// No description provided for @addFriendsToStartChatting.
+  ///
+  /// In en, this message translates to:
+  /// **'Add friends to start chatting'**
+  String get addFriendsToStartChatting;
+
+  /// No description provided for @addFriends.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Friends'**
+  String get addFriends;
+
+  /// No description provided for @noChatsInFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'No chats in {name}'**
+  String noChatsInFolder(String name);
+
+  /// No description provided for @moveChatHereHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Move a chat here from the menu on any conversation.'**
+  String get moveChatHereHint;
+
+  /// No description provided for @yesterday.
+  ///
+  /// In en, this message translates to:
+  /// **'Yesterday'**
+  String get yesterday;
+
+  /// No description provided for @daysAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{days}d ago'**
+  String daysAgo(int days);
+
+  /// No description provided for @sentAMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent a message'**
+  String get sentAMessage;
+
+  /// No description provided for @startChatting.
+  ///
+  /// In en, this message translates to:
+  /// **'Start chatting'**
+  String get startChatting;
+
+  /// No description provided for @couldNotOpenInvite.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open invite: {error}'**
+  String couldNotOpenInvite(String error);
+
+  /// No description provided for @friendsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Friends'**
+  String get friendsTitle;
+
+  /// No description provided for @myQrCode.
+  ///
+  /// In en, this message translates to:
+  /// **'My QR Code'**
+  String get myQrCode;
+
+  /// No description provided for @addFriend.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Friend'**
+  String get addFriend;
+
+  /// No description provided for @requestsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Requests'**
+  String get requestsTitle;
+
+  /// No description provided for @blockedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked'**
+  String get blockedTitle;
+
+  /// No description provided for @searchFriends.
+  ///
+  /// In en, this message translates to:
+  /// **'Search friends'**
+  String get searchFriends;
+
+  /// No description provided for @noFriendsYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No friends yet'**
+  String get noFriendsYet;
+
+  /// No description provided for @sendFriendRequestsToConnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Send friend requests to connect'**
+  String get sendFriendRequestsToConnect;
+
+  /// No description provided for @noFriendsMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'No friends match \"{filter}\"'**
+  String noFriendsMatch(String filter);
+
+  /// No description provided for @noFriendRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'No friend requests'**
+  String get noFriendRequests;
+
+  /// No description provided for @noBlockedUsers.
+  ///
+  /// In en, this message translates to:
+  /// **'No blocked users'**
+  String get noBlockedUsers;
+
+  /// No description provided for @unblock.
+  ///
+  /// In en, this message translates to:
+  /// **'Unblock'**
+  String get unblock;
+
+  /// No description provided for @invalidUserData.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid user data'**
+  String get invalidUserData;
+
+  /// No description provided for @cannotAddYourself.
+  ///
+  /// In en, this message translates to:
+  /// **'You cannot add yourself'**
+  String get cannotAddYourself;
+
+  /// No description provided for @alreadyFriends.
+  ///
+  /// In en, this message translates to:
+  /// **'Already friends'**
+  String get alreadyFriends;
+
+  /// No description provided for @friendRequestAlreadySent.
+  ///
+  /// In en, this message translates to:
+  /// **'Friend request already sent'**
+  String get friendRequestAlreadySent;
+
+  /// No description provided for @friendRequestSentTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Friend request sent to {name}!'**
+  String friendRequestSentTo(String name);
+
+  /// No description provided for @friendRequestAccepted.
+  ///
+  /// In en, this message translates to:
+  /// **'Friend request accepted!'**
+  String get friendRequestAccepted;
+
+  /// No description provided for @friendRequestDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Friend request denied'**
+  String get friendRequestDenied;
+
+  /// No description provided for @userBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'User blocked'**
+  String get userBlocked;
+
+  /// No description provided for @userUnblocked.
+  ///
+  /// In en, this message translates to:
+  /// **'User unblocked'**
+  String get userUnblocked;
+
+  /// No description provided for @removeFriend.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove Friend'**
+  String get removeFriend;
+
+  /// No description provided for @removeFriendConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to remove {name} from your friends?'**
+  String removeFriendConfirm(String name);
+
+  /// No description provided for @remove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get remove;
+
+  /// No description provided for @friendRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Friend removed'**
+  String get friendRemoved;
+
+  /// No description provided for @removeFriendMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove Friend'**
+  String get removeFriendMenu;
+
+  /// No description provided for @block.
+  ///
+  /// In en, this message translates to:
+  /// **'Block'**
+  String get block;
 }
 
 class _AppLocalizationsDelegate

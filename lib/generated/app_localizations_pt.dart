@@ -362,6 +362,383 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get selectLanguage => 'Selecionar idioma';
+
+  @override
+  String get settingsTitle => 'Definições';
+
+  @override
+  String get sectionNotifications => 'Notificações';
+
+  @override
+  String get sectionAppearance => 'Aspeto';
+
+  @override
+  String get friendRequestsTitle => 'Pedidos de amizade';
+
+  @override
+  String get friendRequestsSubtitle =>
+      'Receba notificações quando alguém lhe envia um pedido de amizade';
+
+  @override
+  String get messagesTitle => 'Mensagens';
+
+  @override
+  String get messagesSubtitle =>
+      'Receba notificações quando receber uma nova mensagem';
+
+  @override
+  String get textSize => 'Tamanho do texto';
+
+  @override
+  String textSizeSubtitle(int percent) {
+    return '$percent% - Multiplicador do tamanho do texto';
+  }
+
+  @override
+  String get welcomeBack => 'Bem-vindo de volta';
+
+  @override
+  String get signInToContinue => 'Inicie sessão para continuar';
+
+  @override
+  String get rememberMe => 'Lembrar-me';
+
+  @override
+  String get dontHaveAnAccount => 'Não tem conta? ';
+
+  @override
+  String get alreadyHaveAnAccount => 'Já tem conta? ';
+
+  @override
+  String get acceptTermsPrefix => 'Aceito os ';
+
+  @override
+  String get couldNotOpenLink => 'Não foi possível abrir a ligação';
+
+  @override
+  String get accountCreatedVerificationSent =>
+      'Conta criada. Foi enviado um e-mail de verificação. Valide-o a partir deste ecrã.';
+
+  @override
+  String get verifyYourEmail => 'Verifique o seu e-mail';
+
+  @override
+  String get verificationEmailSentTo =>
+      'Enviámos um e-mail de verificação para:';
+
+  @override
+  String get verificationWindowsHint =>
+      'A verificação automática é executada em segundo plano no Windows. Se não atualizar, toque em \"Já verifiquei o meu e-mail\".';
+
+  @override
+  String resendInSeconds(int seconds) {
+    return 'Reenviar em $seconds segundos';
+  }
+
+  @override
+  String get emailNotVerifiedYet =>
+      'O e-mail ainda não foi verificado. Verifique a sua caixa de entrada.';
+
+  @override
+  String get iveVerifiedMyEmail => 'Já verifiquei o meu e-mail';
+
+  @override
+  String logoutFailed(String error) {
+    return 'Falha ao terminar sessão: $error';
+  }
+
+  @override
+  String get createAction => 'Criar';
+
+  @override
+  String get createFolder => 'Criar pasta';
+
+  @override
+  String get createGroupChat => 'Criar grupo';
+
+  @override
+  String get createServer => 'Criar servidor';
+
+  @override
+  String get folderName => 'Nome da pasta';
+
+  @override
+  String get folderNameHint => 'Trabalho, Família, Gaming...';
+
+  @override
+  String get folderAlreadyExists => 'A pasta já existe';
+
+  @override
+  String get defaultUser => 'Utilizador';
+
+  @override
+  String get addFriendsFirstToCreateRoom =>
+      'Adicione amigos primeiro para criar uma sala';
+
+  @override
+  String get createGroup => 'Criar grupo';
+
+  @override
+  String get groupName => 'Nome do grupo';
+
+  @override
+  String get groupNameHint => 'Projeto de fim de semana';
+
+  @override
+  String get selectMembers => 'Selecionar membros';
+
+  @override
+  String get selectAtLeastOneMember => 'Selecione pelo menos um membro';
+
+  @override
+  String get serverName => 'Nome do servidor';
+
+  @override
+  String get serverNameHint => 'O meu servidor';
+
+  @override
+  String get serverIconPersonalizeHint =>
+      'Pode personalizar o ícone do servidor em Perfil do servidor.';
+
+  @override
+  String get inviteLinkOrCode => 'Ligação ou código de convite';
+
+  @override
+  String get pasteInviteLinkOrServerCode =>
+      'Cole a ligação de convite ou o código do servidor';
+
+  @override
+  String get enterValidInviteLinkOrCode =>
+      'Introduza uma ligação de convite ou código válido';
+
+  @override
+  String get join => 'Entrar';
+
+  @override
+  String get inviteLinkInvalid => 'A ligação de convite é inválida';
+
+  @override
+  String get inviteLinkExpired => 'Esta ligação de convite expirou';
+
+  @override
+  String get serverNotFoundForInvite =>
+      'Servidor não encontrado para este convite';
+
+  @override
+  String get permissionDeniedJoiningServer =>
+      'Permissão negada ao entrar no servidor. Atualize as regras do Firestore para convites de servidor e entradas em conversas.';
+
+  @override
+  String couldNotJoinServer(String error) {
+    return 'Não foi possível entrar no servidor: $error';
+  }
+
+  @override
+  String couldNotJoinServerCode(String code) {
+    return 'Não foi possível entrar no servidor ($code)';
+  }
+
+  @override
+  String get atLeastTwoMembersRequired =>
+      'São necessários pelo menos 2 membros';
+
+  @override
+  String get permissionDeniedCreatingRoom =>
+      'Permissão negada ao criar a sala. Verifique as regras do Firestore para conversas.';
+
+  @override
+  String failedToCreateRoom(String error) {
+    return 'Falha ao criar a sala: $error';
+  }
+
+  @override
+  String failedToCreateRoomCode(String code) {
+    return 'Falha ao criar a sala ($code)';
+  }
+
+  @override
+  String moveConversation(String name) {
+    return 'Mover \"$name\"';
+  }
+
+  @override
+  String get allChats => 'Todas as conversas';
+
+  @override
+  String get createFolderFirst => 'Crie primeiro uma pasta';
+
+  @override
+  String get groupLabel => 'Grupo';
+
+  @override
+  String get serverLabel => 'Servidor';
+
+  @override
+  String get groupChat => 'Grupo';
+
+  @override
+  String get searchChats => 'Pesquisar conversas...';
+
+  @override
+  String get folder => 'Pasta';
+
+  @override
+  String get myProfile => 'O meu perfil';
+
+  @override
+  String get myFriends => 'Os meus amigos';
+
+  @override
+  String get about => 'Sobre';
+
+  @override
+  String get aboutDescription =>
+      'Aplicação de mensagens segura com encriptação de ponta a ponta.';
+
+  @override
+  String get notLoggedIn => 'Sessão não iniciada';
+
+  @override
+  String genericError(String error) {
+    return 'Erro: $error';
+  }
+
+  @override
+  String get chatOptions => 'Opções do chat';
+
+  @override
+  String get moveToFolder => 'Mover para pasta';
+
+  @override
+  String removeFromFolder(String name) {
+    return 'Remover de $name';
+  }
+
+  @override
+  String get noChatsYet => 'Ainda não há conversas';
+
+  @override
+  String get addFriendsToStartChatting =>
+      'Adicione amigos para começar a conversar';
+
+  @override
+  String get addFriends => 'Adicionar amigos';
+
+  @override
+  String noChatsInFolder(String name) {
+    return 'Não há conversas em $name';
+  }
+
+  @override
+  String get moveChatHereHint =>
+      'Mova uma conversa para aqui a partir do menu de qualquer conversa.';
+
+  @override
+  String get yesterday => 'Ontem';
+
+  @override
+  String daysAgo(int days) {
+    return '${days}d atrás';
+  }
+
+  @override
+  String get sentAMessage => 'Enviou uma mensagem';
+
+  @override
+  String get startChatting => 'Comece a conversar';
+
+  @override
+  String couldNotOpenInvite(String error) {
+    return 'Não foi possível abrir o convite: $error';
+  }
+
+  @override
+  String get friendsTitle => 'Amigos';
+
+  @override
+  String get myQrCode => 'O meu código QR';
+
+  @override
+  String get addFriend => 'Adicionar amigo';
+
+  @override
+  String get requestsTitle => 'Pedidos';
+
+  @override
+  String get blockedTitle => 'Bloqueados';
+
+  @override
+  String get searchFriends => 'Pesquisar amigos';
+
+  @override
+  String get noFriendsYet => 'Ainda não há amigos';
+
+  @override
+  String get sendFriendRequestsToConnect =>
+      'Envie pedidos de amizade para se ligar';
+
+  @override
+  String noFriendsMatch(String filter) {
+    return 'Nenhum amigo corresponde a \"$filter\"';
+  }
+
+  @override
+  String get noFriendRequests => 'Sem pedidos de amizade';
+
+  @override
+  String get noBlockedUsers => 'Sem utilizadores bloqueados';
+
+  @override
+  String get unblock => 'Desbloquear';
+
+  @override
+  String get invalidUserData => 'Dados de utilizador inválidos';
+
+  @override
+  String get cannotAddYourself => 'Não pode adicionar-se a si próprio';
+
+  @override
+  String get alreadyFriends => 'Já são amigos';
+
+  @override
+  String get friendRequestAlreadySent => 'Pedido de amizade já enviado';
+
+  @override
+  String friendRequestSentTo(String name) {
+    return 'Pedido de amizade enviado para $name!';
+  }
+
+  @override
+  String get friendRequestAccepted => 'Pedido de amizade aceite!';
+
+  @override
+  String get friendRequestDenied => 'Pedido de amizade recusado';
+
+  @override
+  String get userBlocked => 'Utilizador bloqueado';
+
+  @override
+  String get userUnblocked => 'Utilizador desbloqueado';
+
+  @override
+  String get removeFriend => 'Remover amigo';
+
+  @override
+  String removeFriendConfirm(String name) {
+    return 'Tem a certeza de que pretende remover $name dos seus amigos?';
+  }
+
+  @override
+  String get remove => 'Remover';
+
+  @override
+  String get friendRemoved => 'Amigo removido';
+
+  @override
+  String get removeFriendMenu => 'Remover amigo';
+
+  @override
+  String get block => 'Bloquear';
 }
 
 /// The translations for Portuguese, as used in Portugal (`pt_PT`).
@@ -722,4 +1099,381 @@ class AppLocalizationsPtPt extends AppLocalizationsPt {
 
   @override
   String get selectLanguage => 'Selecionar idioma';
+
+  @override
+  String get settingsTitle => 'Definições';
+
+  @override
+  String get sectionNotifications => 'Notificações';
+
+  @override
+  String get sectionAppearance => 'Aspeto';
+
+  @override
+  String get friendRequestsTitle => 'Pedidos de amizade';
+
+  @override
+  String get friendRequestsSubtitle =>
+      'Receba notificações quando alguém lhe envia um pedido de amizade';
+
+  @override
+  String get messagesTitle => 'Mensagens';
+
+  @override
+  String get messagesSubtitle =>
+      'Receba notificações quando receber uma nova mensagem';
+
+  @override
+  String get textSize => 'Tamanho do texto';
+
+  @override
+  String textSizeSubtitle(int percent) {
+    return '$percent% - Multiplicador do tamanho do texto';
+  }
+
+  @override
+  String get welcomeBack => 'Bem-vindo de volta';
+
+  @override
+  String get signInToContinue => 'Inicie sessão para continuar';
+
+  @override
+  String get rememberMe => 'Lembrar-me';
+
+  @override
+  String get dontHaveAnAccount => 'Não tem conta? ';
+
+  @override
+  String get alreadyHaveAnAccount => 'Já tem conta? ';
+
+  @override
+  String get acceptTermsPrefix => 'Aceito os ';
+
+  @override
+  String get couldNotOpenLink => 'Não foi possível abrir a ligação';
+
+  @override
+  String get accountCreatedVerificationSent =>
+      'Conta criada. Foi enviado um e-mail de verificação. Valide-o a partir deste ecrã.';
+
+  @override
+  String get verifyYourEmail => 'Verifique o seu e-mail';
+
+  @override
+  String get verificationEmailSentTo =>
+      'Enviámos um e-mail de verificação para:';
+
+  @override
+  String get verificationWindowsHint =>
+      'A verificação automática é executada em segundo plano no Windows. Se não atualizar, toque em \"Já verifiquei o meu e-mail\".';
+
+  @override
+  String resendInSeconds(int seconds) {
+    return 'Reenviar em $seconds segundos';
+  }
+
+  @override
+  String get emailNotVerifiedYet =>
+      'O e-mail ainda não foi verificado. Verifique a sua caixa de entrada.';
+
+  @override
+  String get iveVerifiedMyEmail => 'Já verifiquei o meu e-mail';
+
+  @override
+  String logoutFailed(String error) {
+    return 'Falha ao terminar sessão: $error';
+  }
+
+  @override
+  String get createAction => 'Criar';
+
+  @override
+  String get createFolder => 'Criar pasta';
+
+  @override
+  String get createGroupChat => 'Criar grupo';
+
+  @override
+  String get createServer => 'Criar servidor';
+
+  @override
+  String get folderName => 'Nome da pasta';
+
+  @override
+  String get folderNameHint => 'Trabalho, Família, Gaming...';
+
+  @override
+  String get folderAlreadyExists => 'A pasta já existe';
+
+  @override
+  String get defaultUser => 'Utilizador';
+
+  @override
+  String get addFriendsFirstToCreateRoom =>
+      'Adicione amigos primeiro para criar uma sala';
+
+  @override
+  String get createGroup => 'Criar grupo';
+
+  @override
+  String get groupName => 'Nome do grupo';
+
+  @override
+  String get groupNameHint => 'Projeto de fim de semana';
+
+  @override
+  String get selectMembers => 'Selecionar membros';
+
+  @override
+  String get selectAtLeastOneMember => 'Selecione pelo menos um membro';
+
+  @override
+  String get serverName => 'Nome do servidor';
+
+  @override
+  String get serverNameHint => 'O meu servidor';
+
+  @override
+  String get serverIconPersonalizeHint =>
+      'Pode personalizar o ícone do servidor em Perfil do servidor.';
+
+  @override
+  String get inviteLinkOrCode => 'Ligação ou código de convite';
+
+  @override
+  String get pasteInviteLinkOrServerCode =>
+      'Cole a ligação de convite ou o código do servidor';
+
+  @override
+  String get enterValidInviteLinkOrCode =>
+      'Introduza uma ligação de convite ou código válido';
+
+  @override
+  String get join => 'Entrar';
+
+  @override
+  String get inviteLinkInvalid => 'A ligação de convite é inválida';
+
+  @override
+  String get inviteLinkExpired => 'Esta ligação de convite expirou';
+
+  @override
+  String get serverNotFoundForInvite =>
+      'Servidor não encontrado para este convite';
+
+  @override
+  String get permissionDeniedJoiningServer =>
+      'Permissão negada ao entrar no servidor. Atualize as regras do Firestore para convites de servidor e entradas em conversas.';
+
+  @override
+  String couldNotJoinServer(String error) {
+    return 'Não foi possível entrar no servidor: $error';
+  }
+
+  @override
+  String couldNotJoinServerCode(String code) {
+    return 'Não foi possível entrar no servidor ($code)';
+  }
+
+  @override
+  String get atLeastTwoMembersRequired =>
+      'São necessários pelo menos 2 membros';
+
+  @override
+  String get permissionDeniedCreatingRoom =>
+      'Permissão negada ao criar a sala. Verifique as regras do Firestore para conversas.';
+
+  @override
+  String failedToCreateRoom(String error) {
+    return 'Falha ao criar a sala: $error';
+  }
+
+  @override
+  String failedToCreateRoomCode(String code) {
+    return 'Falha ao criar a sala ($code)';
+  }
+
+  @override
+  String moveConversation(String name) {
+    return 'Mover \"$name\"';
+  }
+
+  @override
+  String get allChats => 'Todas as conversas';
+
+  @override
+  String get createFolderFirst => 'Crie primeiro uma pasta';
+
+  @override
+  String get groupLabel => 'Grupo';
+
+  @override
+  String get serverLabel => 'Servidor';
+
+  @override
+  String get groupChat => 'Grupo';
+
+  @override
+  String get searchChats => 'Pesquisar conversas...';
+
+  @override
+  String get folder => 'Pasta';
+
+  @override
+  String get myProfile => 'O meu perfil';
+
+  @override
+  String get myFriends => 'Os meus amigos';
+
+  @override
+  String get about => 'Sobre';
+
+  @override
+  String get aboutDescription =>
+      'Aplicação de mensagens segura com encriptação de ponta a ponta.';
+
+  @override
+  String get notLoggedIn => 'Sessão não iniciada';
+
+  @override
+  String genericError(String error) {
+    return 'Erro: $error';
+  }
+
+  @override
+  String get chatOptions => 'Opções do chat';
+
+  @override
+  String get moveToFolder => 'Mover para pasta';
+
+  @override
+  String removeFromFolder(String name) {
+    return 'Remover de $name';
+  }
+
+  @override
+  String get noChatsYet => 'Ainda não há conversas';
+
+  @override
+  String get addFriendsToStartChatting =>
+      'Adicione amigos para começar a conversar';
+
+  @override
+  String get addFriends => 'Adicionar amigos';
+
+  @override
+  String noChatsInFolder(String name) {
+    return 'Não há conversas em $name';
+  }
+
+  @override
+  String get moveChatHereHint =>
+      'Mova uma conversa para aqui a partir do menu de qualquer conversa.';
+
+  @override
+  String get yesterday => 'Ontem';
+
+  @override
+  String daysAgo(int days) {
+    return '${days}d atrás';
+  }
+
+  @override
+  String get sentAMessage => 'Enviou uma mensagem';
+
+  @override
+  String get startChatting => 'Comece a conversar';
+
+  @override
+  String couldNotOpenInvite(String error) {
+    return 'Não foi possível abrir o convite: $error';
+  }
+
+  @override
+  String get friendsTitle => 'Amigos';
+
+  @override
+  String get myQrCode => 'O meu código QR';
+
+  @override
+  String get addFriend => 'Adicionar amigo';
+
+  @override
+  String get requestsTitle => 'Pedidos';
+
+  @override
+  String get blockedTitle => 'Bloqueados';
+
+  @override
+  String get searchFriends => 'Pesquisar amigos';
+
+  @override
+  String get noFriendsYet => 'Ainda não há amigos';
+
+  @override
+  String get sendFriendRequestsToConnect =>
+      'Envie pedidos de amizade para se ligar';
+
+  @override
+  String noFriendsMatch(String filter) {
+    return 'Nenhum amigo corresponde a \"$filter\"';
+  }
+
+  @override
+  String get noFriendRequests => 'Sem pedidos de amizade';
+
+  @override
+  String get noBlockedUsers => 'Sem utilizadores bloqueados';
+
+  @override
+  String get unblock => 'Desbloquear';
+
+  @override
+  String get invalidUserData => 'Dados de utilizador inválidos';
+
+  @override
+  String get cannotAddYourself => 'Não pode adicionar-se a si próprio';
+
+  @override
+  String get alreadyFriends => 'Já são amigos';
+
+  @override
+  String get friendRequestAlreadySent => 'Pedido de amizade já enviado';
+
+  @override
+  String friendRequestSentTo(String name) {
+    return 'Pedido de amizade enviado para $name!';
+  }
+
+  @override
+  String get friendRequestAccepted => 'Pedido de amizade aceite!';
+
+  @override
+  String get friendRequestDenied => 'Pedido de amizade recusado';
+
+  @override
+  String get userBlocked => 'Utilizador bloqueado';
+
+  @override
+  String get userUnblocked => 'Utilizador desbloqueado';
+
+  @override
+  String get removeFriend => 'Remover amigo';
+
+  @override
+  String removeFriendConfirm(String name) {
+    return 'Tem a certeza de que pretende remover $name dos seus amigos?';
+  }
+
+  @override
+  String get remove => 'Remover';
+
+  @override
+  String get friendRemoved => 'Amigo removido';
+
+  @override
+  String get removeFriendMenu => 'Remover amigo';
+
+  @override
+  String get block => 'Bloquear';
 }

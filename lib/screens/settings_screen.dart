@@ -46,17 +46,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final l = AppLocalizations.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(title: Text(l.settingsTitle)),
       body: ListView(
         children: [
           // ── Notifications ─────────────────────────────────────────────────
-          _SectionHeader(label: 'Notifications'),
+          _SectionHeader(label: l.sectionNotifications),
           SwitchListTile(
             secondary: const Icon(Icons.person_add_alt),
-            title: const Text('Friend Requests'),
-            subtitle: const Text(
-              'Get notified when someone sends you a friend request',
-            ),
+            title: Text(l.friendRequestsTitle),
+            subtitle: Text(l.friendRequestsSubtitle),
             value: _friendRequestsEnabled,
             onChanged: (value) {
               setState(() => _friendRequestsEnabled = value);
@@ -65,8 +63,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           SwitchListTile(
             secondary: const Icon(Icons.message),
-            title: const Text('Messages'),
-            subtitle: const Text('Get notified when you receive a new message'),
+            title: Text(l.messagesTitle),
+            subtitle: Text(l.messagesSubtitle),
             value: _messagesEnabled,
             onChanged: (value) {
               setState(() => _messagesEnabled = value);
@@ -76,7 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Divider(),
 
           // ── Appearance ────────────────────────────────────────────────────
-          _SectionHeader(label: 'Appearance'),
+          _SectionHeader(label: l.sectionAppearance),
           SwitchListTile(
             secondary: Icon(
               themeService.isDarkMode ? Icons.dark_mode : Icons.light_mode,
@@ -108,10 +106,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           ListTile(
             leading: const Icon(Icons.format_size),
-            title: const Text('Text Size'),
-            subtitle: Text(
-              '${(themeService.textScale * 100).round()}% - Text size multiplier',
-            ),
+            title: Text(l.textSize),
+            subtitle: Text(l.textSizeSubtitle((themeService.textScale * 100).round())),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),

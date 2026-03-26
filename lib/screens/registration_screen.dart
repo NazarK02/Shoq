@@ -219,7 +219,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           SnackBar(
             content: Text(
               Platform.isWindows
-                  ? 'Account created. Verification email sent. Please verify from the screen.'
+                  ? l.accountCreatedVerificationSent
                   : l.verificationEmailSent,
             ),
           ),
@@ -554,7 +554,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                     fontSize: 14,
                                   ),
                                   children: [
-                                    TextSpan(text: 'I accept the '),
+                                    TextSpan(text: l.acceptTermsPrefix),
                                     WidgetSpan(
                                       child: GestureDetector(
                                         onTap: () async {
@@ -571,9 +571,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                               context,
                                             ).showSnackBar(
                                               SnackBar(
-                                                content: Text(
-                                                  'Could not open link',
-                                                ),
+                                                content: Text(l.couldNotOpenLink),
                                               ),
                                             );
                                           }
@@ -681,7 +679,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(
-                            'Already have an account? ',
+                            l.alreadyHaveAnAccount,
                             style: TextStyle(color: Colors.grey[600]),
                           ),
                           GestureDetector(

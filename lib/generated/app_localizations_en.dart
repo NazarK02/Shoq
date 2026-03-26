@@ -358,4 +358,373 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get selectLanguage => 'Select language';
+
+  @override
+  String get settingsTitle => 'Settings';
+
+  @override
+  String get sectionNotifications => 'Notifications';
+
+  @override
+  String get sectionAppearance => 'Appearance';
+
+  @override
+  String get friendRequestsTitle => 'Friend Requests';
+
+  @override
+  String get friendRequestsSubtitle =>
+      'Get notified when someone sends you a friend request';
+
+  @override
+  String get messagesTitle => 'Messages';
+
+  @override
+  String get messagesSubtitle => 'Get notified when you receive a new message';
+
+  @override
+  String get textSize => 'Text Size';
+
+  @override
+  String textSizeSubtitle(int percent) {
+    return '$percent% - Text size multiplier';
+  }
+
+  @override
+  String get welcomeBack => 'Welcome Back';
+
+  @override
+  String get signInToContinue => 'Sign in to continue';
+
+  @override
+  String get rememberMe => 'Remember me';
+
+  @override
+  String get dontHaveAnAccount => 'Don\'t have an account? ';
+
+  @override
+  String get alreadyHaveAnAccount => 'Already have an account? ';
+
+  @override
+  String get acceptTermsPrefix => 'I accept the ';
+
+  @override
+  String get couldNotOpenLink => 'Could not open link';
+
+  @override
+  String get accountCreatedVerificationSent =>
+      'Account created. Verification email sent. Please verify from the screen.';
+
+  @override
+  String get verifyYourEmail => 'Verify Your Email';
+
+  @override
+  String get verificationEmailSentTo => 'We sent a verification email to:';
+
+  @override
+  String get verificationWindowsHint =>
+      'Auto-check runs in the background on Windows. If it doesn\'t update, tap \"I\'ve Verified My Email\".';
+
+  @override
+  String resendInSeconds(int seconds) {
+    return 'Resend in $seconds seconds';
+  }
+
+  @override
+  String get emailNotVerifiedYet =>
+      'Email not verified yet. Please check your inbox.';
+
+  @override
+  String get iveVerifiedMyEmail => 'I\'ve Verified My Email';
+
+  @override
+  String logoutFailed(String error) {
+    return 'Logout failed: $error';
+  }
+
+  @override
+  String get createAction => 'Create';
+
+  @override
+  String get createFolder => 'Create folder';
+
+  @override
+  String get createGroupChat => 'Create group chat';
+
+  @override
+  String get createServer => 'Create server';
+
+  @override
+  String get folderName => 'Folder name';
+
+  @override
+  String get folderNameHint => 'Work, Family, Gaming...';
+
+  @override
+  String get folderAlreadyExists => 'Folder already exists';
+
+  @override
+  String get defaultUser => 'User';
+
+  @override
+  String get addFriendsFirstToCreateRoom =>
+      'Add friends first to create a room';
+
+  @override
+  String get createGroup => 'Create group';
+
+  @override
+  String get groupName => 'Group name';
+
+  @override
+  String get groupNameHint => 'Weekend project';
+
+  @override
+  String get selectMembers => 'Select members';
+
+  @override
+  String get selectAtLeastOneMember => 'Select at least one member';
+
+  @override
+  String get serverName => 'Server name';
+
+  @override
+  String get serverNameHint => 'My server';
+
+  @override
+  String get serverIconPersonalizeHint =>
+      'You can personalize the server icon from Server profile.';
+
+  @override
+  String get inviteLinkOrCode => 'Invite link or code';
+
+  @override
+  String get pasteInviteLinkOrServerCode => 'Paste invite link or server code';
+
+  @override
+  String get enterValidInviteLinkOrCode => 'Enter a valid invite link or code';
+
+  @override
+  String get join => 'Join';
+
+  @override
+  String get inviteLinkInvalid => 'Invite link is invalid';
+
+  @override
+  String get inviteLinkExpired => 'This invite link has expired';
+
+  @override
+  String get serverNotFoundForInvite => 'Server not found for this invite';
+
+  @override
+  String get permissionDeniedJoiningServer =>
+      'Permission denied while joining server. Update Firestore rules for server invites and conversation joins.';
+
+  @override
+  String couldNotJoinServer(String error) {
+    return 'Could not join server: $error';
+  }
+
+  @override
+  String couldNotJoinServerCode(String code) {
+    return 'Could not join server ($code)';
+  }
+
+  @override
+  String get atLeastTwoMembersRequired => 'At least 2 members are required';
+
+  @override
+  String get permissionDeniedCreatingRoom =>
+      'Permission denied while creating room. Check Firestore rules for conversations.';
+
+  @override
+  String failedToCreateRoom(String error) {
+    return 'Failed to create room: $error';
+  }
+
+  @override
+  String failedToCreateRoomCode(String code) {
+    return 'Failed to create room ($code)';
+  }
+
+  @override
+  String moveConversation(String name) {
+    return 'Move \"$name\"';
+  }
+
+  @override
+  String get allChats => 'All chats';
+
+  @override
+  String get createFolderFirst => 'Create a folder first';
+
+  @override
+  String get groupLabel => 'Group';
+
+  @override
+  String get serverLabel => 'Server';
+
+  @override
+  String get groupChat => 'Group chat';
+
+  @override
+  String get searchChats => 'Search chats...';
+
+  @override
+  String get folder => 'Folder';
+
+  @override
+  String get myProfile => 'My Profile';
+
+  @override
+  String get myFriends => 'My Friends';
+
+  @override
+  String get about => 'About';
+
+  @override
+  String get aboutDescription =>
+      'Secure messaging app with end-to-end encryption.';
+
+  @override
+  String get notLoggedIn => 'Not logged in';
+
+  @override
+  String genericError(String error) {
+    return 'Error: $error';
+  }
+
+  @override
+  String get chatOptions => 'Chat options';
+
+  @override
+  String get moveToFolder => 'Move to folder';
+
+  @override
+  String removeFromFolder(String name) {
+    return 'Remove from $name';
+  }
+
+  @override
+  String get noChatsYet => 'No chats yet';
+
+  @override
+  String get addFriendsToStartChatting => 'Add friends to start chatting';
+
+  @override
+  String get addFriends => 'Add Friends';
+
+  @override
+  String noChatsInFolder(String name) {
+    return 'No chats in $name';
+  }
+
+  @override
+  String get moveChatHereHint =>
+      'Move a chat here from the menu on any conversation.';
+
+  @override
+  String get yesterday => 'Yesterday';
+
+  @override
+  String daysAgo(int days) {
+    return '${days}d ago';
+  }
+
+  @override
+  String get sentAMessage => 'Sent a message';
+
+  @override
+  String get startChatting => 'Start chatting';
+
+  @override
+  String couldNotOpenInvite(String error) {
+    return 'Could not open invite: $error';
+  }
+
+  @override
+  String get friendsTitle => 'Friends';
+
+  @override
+  String get myQrCode => 'My QR Code';
+
+  @override
+  String get addFriend => 'Add Friend';
+
+  @override
+  String get requestsTitle => 'Requests';
+
+  @override
+  String get blockedTitle => 'Blocked';
+
+  @override
+  String get searchFriends => 'Search friends';
+
+  @override
+  String get noFriendsYet => 'No friends yet';
+
+  @override
+  String get sendFriendRequestsToConnect => 'Send friend requests to connect';
+
+  @override
+  String noFriendsMatch(String filter) {
+    return 'No friends match \"$filter\"';
+  }
+
+  @override
+  String get noFriendRequests => 'No friend requests';
+
+  @override
+  String get noBlockedUsers => 'No blocked users';
+
+  @override
+  String get unblock => 'Unblock';
+
+  @override
+  String get invalidUserData => 'Invalid user data';
+
+  @override
+  String get cannotAddYourself => 'You cannot add yourself';
+
+  @override
+  String get alreadyFriends => 'Already friends';
+
+  @override
+  String get friendRequestAlreadySent => 'Friend request already sent';
+
+  @override
+  String friendRequestSentTo(String name) {
+    return 'Friend request sent to $name!';
+  }
+
+  @override
+  String get friendRequestAccepted => 'Friend request accepted!';
+
+  @override
+  String get friendRequestDenied => 'Friend request denied';
+
+  @override
+  String get userBlocked => 'User blocked';
+
+  @override
+  String get userUnblocked => 'User unblocked';
+
+  @override
+  String get removeFriend => 'Remove Friend';
+
+  @override
+  String removeFriendConfirm(String name) {
+    return 'Are you sure you want to remove $name from your friends?';
+  }
+
+  @override
+  String get remove => 'Remove';
+
+  @override
+  String get friendRemoved => 'Friend removed';
+
+  @override
+  String get removeFriendMenu => 'Remove Friend';
+
+  @override
+  String get block => 'Block';
 }

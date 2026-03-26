@@ -359,4 +359,380 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get selectLanguage => 'Виберіть мову';
+
+  @override
+  String get settingsTitle => 'Налаштування';
+
+  @override
+  String get sectionNotifications => 'Сповіщення';
+
+  @override
+  String get sectionAppearance => 'Зовнішній вигляд';
+
+  @override
+  String get friendRequestsTitle => 'Запити в друзі';
+
+  @override
+  String get friendRequestsSubtitle =>
+      'Отримуйте сповіщення, коли хтось надсилає вам запит у друзі';
+
+  @override
+  String get messagesTitle => 'Повідомлення';
+
+  @override
+  String get messagesSubtitle =>
+      'Отримуйте сповіщення, коли надходить нове повідомлення';
+
+  @override
+  String get textSize => 'Розмір тексту';
+
+  @override
+  String textSizeSubtitle(int percent) {
+    return '$percent% - Множник розміру тексту';
+  }
+
+  @override
+  String get welcomeBack => 'З поверненням';
+
+  @override
+  String get signInToContinue => 'Увійдіть, щоб продовжити';
+
+  @override
+  String get rememberMe => 'Запам\'ятати мене';
+
+  @override
+  String get dontHaveAnAccount => 'Немає облікового запису? ';
+
+  @override
+  String get alreadyHaveAnAccount => 'Вже є обліковий запис? ';
+
+  @override
+  String get acceptTermsPrefix => 'Я приймаю ';
+
+  @override
+  String get couldNotOpenLink => 'Не вдалося відкрити посилання';
+
+  @override
+  String get accountCreatedVerificationSent =>
+      'Обліковий запис створено. Лист для підтвердження надіслано. Підтвердьте адресу на цьому екрані.';
+
+  @override
+  String get verifyYourEmail => 'Підтвердьте свою електронну пошту';
+
+  @override
+  String get verificationEmailSentTo =>
+      'Ми надіслали лист для підтвердження на:';
+
+  @override
+  String get verificationWindowsHint =>
+      'Автоперевірка працює у фоновому режимі на Windows. Якщо стан не оновився, натисніть \"Я підтвердив(-ла) електронну пошту\".';
+
+  @override
+  String resendInSeconds(int seconds) {
+    return 'Надіслати повторно через $seconds с';
+  }
+
+  @override
+  String get emailNotVerifiedYet =>
+      'Електронну пошту ще не підтверджено. Перевірте свою скриньку.';
+
+  @override
+  String get iveVerifiedMyEmail => 'Я підтвердив(-ла) електронну пошту';
+
+  @override
+  String logoutFailed(String error) {
+    return 'Не вдалося вийти: $error';
+  }
+
+  @override
+  String get createAction => 'Створити';
+
+  @override
+  String get createFolder => 'Створити папку';
+
+  @override
+  String get createGroupChat => 'Створити груповий чат';
+
+  @override
+  String get createServer => 'Створити сервер';
+
+  @override
+  String get folderName => 'Назва папки';
+
+  @override
+  String get folderNameHint => 'Робота, Сім\'я, Ігри...';
+
+  @override
+  String get folderAlreadyExists => 'Папка вже існує';
+
+  @override
+  String get defaultUser => 'Користувач';
+
+  @override
+  String get addFriendsFirstToCreateRoom =>
+      'Спочатку додайте друзів, щоб створити кімнату';
+
+  @override
+  String get createGroup => 'Створити групу';
+
+  @override
+  String get groupName => 'Назва групи';
+
+  @override
+  String get groupNameHint => 'Проєкт на вихідні';
+
+  @override
+  String get selectMembers => 'Виберіть учасників';
+
+  @override
+  String get selectAtLeastOneMember => 'Виберіть принаймні одного учасника';
+
+  @override
+  String get serverName => 'Назва сервера';
+
+  @override
+  String get serverNameHint => 'Мій сервер';
+
+  @override
+  String get serverIconPersonalizeHint =>
+      'Ви можете налаштувати значок сервера в профілі сервера.';
+
+  @override
+  String get inviteLinkOrCode => 'Посилання або код запрошення';
+
+  @override
+  String get pasteInviteLinkOrServerCode =>
+      'Вставте посилання-запрошення або код сервера';
+
+  @override
+  String get enterValidInviteLinkOrCode =>
+      'Введіть дійсне посилання-запрошення або код';
+
+  @override
+  String get join => 'Приєднатися';
+
+  @override
+  String get inviteLinkInvalid => 'Посилання-запрошення недійсне';
+
+  @override
+  String get inviteLinkExpired => 'Термін дії цього запрошення закінчився';
+
+  @override
+  String get serverNotFoundForInvite =>
+      'Сервер для цього запрошення не знайдено';
+
+  @override
+  String get permissionDeniedJoiningServer =>
+      'Немає дозволу на приєднання до сервера. Оновіть правила Firestore для серверних запрошень і входу в розмови.';
+
+  @override
+  String couldNotJoinServer(String error) {
+    return 'Не вдалося приєднатися до сервера: $error';
+  }
+
+  @override
+  String couldNotJoinServerCode(String code) {
+    return 'Не вдалося приєднатися до сервера ($code)';
+  }
+
+  @override
+  String get atLeastTwoMembersRequired => 'Потрібно щонайменше 2 учасники';
+
+  @override
+  String get permissionDeniedCreatingRoom =>
+      'Немає дозволу на створення кімнати. Перевірте правила Firestore для розмов.';
+
+  @override
+  String failedToCreateRoom(String error) {
+    return 'Не вдалося створити кімнату: $error';
+  }
+
+  @override
+  String failedToCreateRoomCode(String code) {
+    return 'Не вдалося створити кімнату ($code)';
+  }
+
+  @override
+  String moveConversation(String name) {
+    return 'Перемістити \"$name\"';
+  }
+
+  @override
+  String get allChats => 'Усі чати';
+
+  @override
+  String get createFolderFirst => 'Спочатку створіть папку';
+
+  @override
+  String get groupLabel => 'Група';
+
+  @override
+  String get serverLabel => 'Сервер';
+
+  @override
+  String get groupChat => 'Груповий чат';
+
+  @override
+  String get searchChats => 'Пошук чатів...';
+
+  @override
+  String get folder => 'Папка';
+
+  @override
+  String get myProfile => 'Мій профіль';
+
+  @override
+  String get myFriends => 'Мої друзі';
+
+  @override
+  String get about => 'Про застосунок';
+
+  @override
+  String get aboutDescription =>
+      'Безпечний месенджер із наскрізним шифруванням.';
+
+  @override
+  String get notLoggedIn => 'Ви не увійшли';
+
+  @override
+  String genericError(String error) {
+    return 'Помилка: $error';
+  }
+
+  @override
+  String get chatOptions => 'Параметри чату';
+
+  @override
+  String get moveToFolder => 'Перемістити до папки';
+
+  @override
+  String removeFromFolder(String name) {
+    return 'Видалити з $name';
+  }
+
+  @override
+  String get noChatsYet => 'Чатів поки немає';
+
+  @override
+  String get addFriendsToStartChatting =>
+      'Додайте друзів, щоб почати спілкування';
+
+  @override
+  String get addFriends => 'Додати друзів';
+
+  @override
+  String noChatsInFolder(String name) {
+    return 'У $name немає чатів';
+  }
+
+  @override
+  String get moveChatHereHint =>
+      'Перемістіть чат сюди через меню будь-якої розмови.';
+
+  @override
+  String get yesterday => 'Учора';
+
+  @override
+  String daysAgo(int days) {
+    return '$days дн. тому';
+  }
+
+  @override
+  String get sentAMessage => 'Надіслав(-ла) повідомлення';
+
+  @override
+  String get startChatting => 'Почніть спілкування';
+
+  @override
+  String couldNotOpenInvite(String error) {
+    return 'Не вдалося відкрити запрошення: $error';
+  }
+
+  @override
+  String get friendsTitle => 'Друзі';
+
+  @override
+  String get myQrCode => 'Мій QR-код';
+
+  @override
+  String get addFriend => 'Додати друга';
+
+  @override
+  String get requestsTitle => 'Запити';
+
+  @override
+  String get blockedTitle => 'Заблоковані';
+
+  @override
+  String get searchFriends => 'Пошук друзів';
+
+  @override
+  String get noFriendsYet => 'Друзів поки немає';
+
+  @override
+  String get sendFriendRequestsToConnect =>
+      'Надсилайте запити в друзі, щоб спілкуватися';
+
+  @override
+  String noFriendsMatch(String filter) {
+    return 'Немає друзів за запитом \"$filter\"';
+  }
+
+  @override
+  String get noFriendRequests => 'Немає запитів у друзі';
+
+  @override
+  String get noBlockedUsers => 'Немає заблокованих користувачів';
+
+  @override
+  String get unblock => 'Розблокувати';
+
+  @override
+  String get invalidUserData => 'Недійсні дані користувача';
+
+  @override
+  String get cannotAddYourself => 'Не можна додати себе';
+
+  @override
+  String get alreadyFriends => 'Ви вже друзі';
+
+  @override
+  String get friendRequestAlreadySent => 'Запит у друзі вже надіслано';
+
+  @override
+  String friendRequestSentTo(String name) {
+    return 'Запит у друзі надіслано користувачу $name!';
+  }
+
+  @override
+  String get friendRequestAccepted => 'Запит у друзі прийнято!';
+
+  @override
+  String get friendRequestDenied => 'Запит у друзі відхилено';
+
+  @override
+  String get userBlocked => 'Користувача заблоковано';
+
+  @override
+  String get userUnblocked => 'Користувача розблоковано';
+
+  @override
+  String get removeFriend => 'Видалити друга';
+
+  @override
+  String removeFriendConfirm(String name) {
+    return 'Ви впевнені, що хочете видалити $name зі списку друзів?';
+  }
+
+  @override
+  String get remove => 'Видалити';
+
+  @override
+  String get friendRemoved => 'Друга видалено';
+
+  @override
+  String get removeFriendMenu => 'Видалити друга';
+
+  @override
+  String get block => 'Заблокувати';
 }

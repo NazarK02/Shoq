@@ -339,5 +339,428 @@
   "@systemDefault": {},
 
   "selectLanguage": "Select language",
-  "@selectLanguage": {}
+  "@selectLanguage": {},
+
+  "settingsTitle": "Settings",
+  "@settingsTitle": {},
+
+  "sectionNotifications": "Notifications",
+  "@sectionNotifications": {},
+
+  "sectionAppearance": "Appearance",
+  "@sectionAppearance": {},
+
+  "friendRequestsTitle": "Friend Requests",
+  "@friendRequestsTitle": {},
+
+  "friendRequestsSubtitle": "Get notified when someone sends you a friend request",
+  "@friendRequestsSubtitle": {},
+
+  "messagesTitle": "Messages",
+  "@messagesTitle": {},
+
+  "messagesSubtitle": "Get notified when you receive a new message",
+  "@messagesSubtitle": {},
+
+  "textSize": "Text Size",
+  "@textSize": {},
+
+  "textSizeSubtitle": "{percent}% - Text size multiplier",
+  "@textSizeSubtitle": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+
+  "welcomeBack": "Welcome Back",
+  "@welcomeBack": {},
+
+  "signInToContinue": "Sign in to continue",
+  "@signInToContinue": {},
+
+  "rememberMe": "Remember me",
+  "@rememberMe": {},
+
+  "dontHaveAnAccount": "Don't have an account? ",
+  "@dontHaveAnAccount": {},
+
+  "alreadyHaveAnAccount": "Already have an account? ",
+  "@alreadyHaveAnAccount": {},
+
+  "acceptTermsPrefix": "I accept the ",
+  "@acceptTermsPrefix": {},
+
+  "couldNotOpenLink": "Could not open link",
+  "@couldNotOpenLink": {},
+
+  "accountCreatedVerificationSent": "Account created. Verification email sent. Please verify from the screen.",
+  "@accountCreatedVerificationSent": {},
+
+  "verifyYourEmail": "Verify Your Email",
+  "@verifyYourEmail": {},
+
+  "verificationEmailSentTo": "We sent a verification email to:",
+  "@verificationEmailSentTo": {},
+
+  "verificationWindowsHint": "Auto-check runs in the background on Windows. If it doesn't update, tap \"I've Verified My Email\".",
+  "@verificationWindowsHint": {},
+
+  "resendInSeconds": "Resend in {seconds} seconds",
+  "@resendInSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+
+  "emailNotVerifiedYet": "Email not verified yet. Please check your inbox.",
+  "@emailNotVerifiedYet": {},
+
+  "iveVerifiedMyEmail": "I've Verified My Email",
+  "@iveVerifiedMyEmail": {},
+
+  "logoutFailed": "Logout failed: {error}",
+  "@logoutFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+
+  "createAction": "Create",
+  "@createAction": {},
+
+  "createFolder": "Create folder",
+  "@createFolder": {},
+
+  "createGroupChat": "Create group chat",
+  "@createGroupChat": {},
+
+  "createServer": "Create server",
+  "@createServer": {},
+
+  "folderName": "Folder name",
+  "@folderName": {},
+
+  "folderNameHint": "Work, Family, Gaming...",
+  "@folderNameHint": {},
+
+  "folderAlreadyExists": "Folder already exists",
+  "@folderAlreadyExists": {},
+
+  "defaultUser": "User",
+  "@defaultUser": {},
+
+  "addFriendsFirstToCreateRoom": "Add friends first to create a room",
+  "@addFriendsFirstToCreateRoom": {},
+
+  "createGroup": "Create group",
+  "@createGroup": {},
+
+  "groupName": "Group name",
+  "@groupName": {},
+
+  "groupNameHint": "Weekend project",
+  "@groupNameHint": {},
+
+  "selectMembers": "Select members",
+  "@selectMembers": {},
+
+  "selectAtLeastOneMember": "Select at least one member",
+  "@selectAtLeastOneMember": {},
+
+  "serverName": "Server name",
+  "@serverName": {},
+
+  "serverNameHint": "My server",
+  "@serverNameHint": {},
+
+  "serverIconPersonalizeHint": "You can personalize the server icon from Server profile.",
+  "@serverIconPersonalizeHint": {},
+
+  "inviteLinkOrCode": "Invite link or code",
+  "@inviteLinkOrCode": {},
+
+  "pasteInviteLinkOrServerCode": "Paste invite link or server code",
+  "@pasteInviteLinkOrServerCode": {},
+
+  "enterValidInviteLinkOrCode": "Enter a valid invite link or code",
+  "@enterValidInviteLinkOrCode": {},
+
+  "join": "Join",
+  "@join": {},
+
+  "inviteLinkInvalid": "Invite link is invalid",
+  "@inviteLinkInvalid": {},
+
+  "inviteLinkExpired": "This invite link has expired",
+  "@inviteLinkExpired": {},
+
+  "serverNotFoundForInvite": "Server not found for this invite",
+  "@serverNotFoundForInvite": {},
+
+  "permissionDeniedJoiningServer": "Permission denied while joining server. Update Firestore rules for server invites and conversation joins.",
+  "@permissionDeniedJoiningServer": {},
+
+  "couldNotJoinServer": "Could not join server: {error}",
+  "@couldNotJoinServer": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+
+  "couldNotJoinServerCode": "Could not join server ({code})",
+  "@couldNotJoinServerCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+
+  "atLeastTwoMembersRequired": "At least 2 members are required",
+  "@atLeastTwoMembersRequired": {},
+
+  "permissionDeniedCreatingRoom": "Permission denied while creating room. Check Firestore rules for conversations.",
+  "@permissionDeniedCreatingRoom": {},
+
+  "failedToCreateRoom": "Failed to create room: {error}",
+  "@failedToCreateRoom": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+
+  "failedToCreateRoomCode": "Failed to create room ({code})",
+  "@failedToCreateRoomCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+
+  "moveConversation": "Move \"{name}\"",
+  "@moveConversation": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+
+  "allChats": "All chats",
+  "@allChats": {},
+
+  "createFolderFirst": "Create a folder first",
+  "@createFolderFirst": {},
+
+  "groupLabel": "Group",
+  "@groupLabel": {},
+
+  "serverLabel": "Server",
+  "@serverLabel": {},
+
+  "groupChat": "Group chat",
+  "@groupChat": {},
+
+  "searchChats": "Search chats...",
+  "@searchChats": {},
+
+  "folder": "Folder",
+  "@folder": {},
+
+  "myProfile": "My Profile",
+  "@myProfile": {},
+
+  "myFriends": "My Friends",
+  "@myFriends": {},
+
+  "about": "About",
+  "@about": {},
+
+  "aboutDescription": "Secure messaging app with end-to-end encryption.",
+  "@aboutDescription": {},
+
+  "notLoggedIn": "Not logged in",
+  "@notLoggedIn": {},
+
+  "genericError": "Error: {error}",
+  "@genericError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+
+  "chatOptions": "Chat options",
+  "@chatOptions": {},
+
+  "moveToFolder": "Move to folder",
+  "@moveToFolder": {},
+
+  "removeFromFolder": "Remove from {name}",
+  "@removeFromFolder": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+
+  "noChatsYet": "No chats yet",
+  "@noChatsYet": {},
+
+  "addFriendsToStartChatting": "Add friends to start chatting",
+  "@addFriendsToStartChatting": {},
+
+  "addFriends": "Add Friends",
+  "@addFriends": {},
+
+  "noChatsInFolder": "No chats in {name}",
+  "@noChatsInFolder": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+
+  "moveChatHereHint": "Move a chat here from the menu on any conversation.",
+  "@moveChatHereHint": {},
+
+  "yesterday": "Yesterday",
+  "@yesterday": {},
+
+  "daysAgo": "{days}d ago",
+  "@daysAgo": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+
+  "sentAMessage": "Sent a message",
+  "@sentAMessage": {},
+
+  "startChatting": "Start chatting",
+  "@startChatting": {},
+
+  "couldNotOpenInvite": "Could not open invite: {error}",
+  "@couldNotOpenInvite": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+
+  "friendsTitle": "Friends",
+  "@friendsTitle": {},
+
+  "myQrCode": "My QR Code",
+  "@myQrCode": {},
+
+  "addFriend": "Add Friend",
+  "@addFriend": {},
+
+  "requestsTitle": "Requests",
+  "@requestsTitle": {},
+
+  "blockedTitle": "Blocked",
+  "@blockedTitle": {},
+
+  "searchFriends": "Search friends",
+  "@searchFriends": {},
+
+  "noFriendsYet": "No friends yet",
+  "@noFriendsYet": {},
+
+  "sendFriendRequestsToConnect": "Send friend requests to connect",
+  "@sendFriendRequestsToConnect": {},
+
+  "noFriendsMatch": "No friends match \"{filter}\"",
+  "@noFriendsMatch": {
+    "placeholders": {
+      "filter": {
+        "type": "String"
+      }
+    }
+  },
+
+  "noFriendRequests": "No friend requests",
+  "@noFriendRequests": {},
+
+  "noBlockedUsers": "No blocked users",
+  "@noBlockedUsers": {},
+
+  "unblock": "Unblock",
+  "@unblock": {},
+
+  "invalidUserData": "Invalid user data",
+  "@invalidUserData": {},
+
+  "cannotAddYourself": "You cannot add yourself",
+  "@cannotAddYourself": {},
+
+  "alreadyFriends": "Already friends",
+  "@alreadyFriends": {},
+
+  "friendRequestAlreadySent": "Friend request already sent",
+  "@friendRequestAlreadySent": {},
+
+  "friendRequestSentTo": "Friend request sent to {name}!",
+  "@friendRequestSentTo": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+
+  "friendRequestAccepted": "Friend request accepted!",
+  "@friendRequestAccepted": {},
+
+  "friendRequestDenied": "Friend request denied",
+  "@friendRequestDenied": {},
+
+  "userBlocked": "User blocked",
+  "@userBlocked": {},
+
+  "userUnblocked": "User unblocked",
+  "@userUnblocked": {},
+
+  "removeFriend": "Remove Friend",
+  "@removeFriend": {},
+
+  "removeFriendConfirm": "Are you sure you want to remove {name} from your friends?",
+  "@removeFriendConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+
+  "remove": "Remove",
+  "@remove": {},
+
+  "friendRemoved": "Friend removed",
+  "@friendRemoved": {},
+
+  "removeFriendMenu": "Remove Friend",
+  "@removeFriendMenu": {},
+
+  "block": "Block",
+  "@block": {}
 }

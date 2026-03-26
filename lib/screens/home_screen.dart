@@ -5,6 +5,7 @@ import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../generated/app_localizations.dart';
 import '../services/firestore_streams.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'friends_list_screen.dart';
@@ -67,6 +68,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _launchInviteHandled = false;
   bool _inviteJoinInProgress = false;
   StreamSubscription<Uri>? _inviteLinkSub;
+
+  AppLocalizations get _l => AppLocalizations.of(context);
 
   @override
   void initState() {
@@ -186,7 +189,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       debugPrint('Join from invite failed: $e');
       if (mounted) {
-        _showSnack('Could not open invite: $e');
+        _showSnack(_l.couldNotOpenInvite(e.toString()));
       }
     } finally {
       _inviteJoinInProgress = false;
@@ -213,7 +216,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Logout failed: $e')));
+        ).showSnackBar(SnackBar(content: Text(_l.logoutFailed(e.toString()))));
       }
     }
   }
@@ -268,28 +271,28 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               ListTile(
                 leading: const Icon(Icons.create_new_folder_outlined),
-                title: const Text('Create folder'),
+                title: Text(_l.createFolder),
                 onTap: () {
                   Navigator.pop(sheetContext, _CreateSheetAction.createFolder);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.groups_outlined),
-                title: const Text('Create group chat'),
+                title: Text(_l.createGroupChat),
                 onTap: () {
                   Navigator.pop(sheetContext, _CreateSheetAction.createGroup);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.forum_outlined),
-                title: const Text('Create server'),
+                title: Text(_l.createServer),
                 onTap: () {
                   Navigator.pop(sheetContext, _CreateSheetAction.createServer);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.link_outlined),
-                title: const Text('Join server'),
+                title: Text(_l.joinServer),
                 onTap: () {
                   Navigator.pop(sheetContext, _CreateSheetAction.joinServer);
                 },
@@ -325,14 +328,14 @@ class _HomeScreenState extends State<HomeScreen> {
       useRootNavigator: true,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Create folder'),
+          title: Text(_l.createFolder),
           content: TextField(
             autofocus: false,
             textCapitalization: TextCapitalization.words,
             maxLength: 24,
-            decoration: const InputDecoration(
-              labelText: 'Folder name',
-              hintText: 'Work, Family, Gaming...',
+            decoration: InputDecoration(
+              labelText: _l.folderName,
+              hintText: _l.folderNameHint,
             ),
             onChanged: (value) {
               draftName = value;
@@ -348,7 +351,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () {
                 navigator.pop();
               },
-              child: const Text('Cancel'),
+              child: Text(_l.cancel),
             ),
             ElevatedButton(
               onPressed: () {
@@ -356,7 +359,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (name.isEmpty) return;
                 navigator.pop(name);
               },
-              child: const Text('Create'),
+              child: Text(_l.createAction),
             ),
           ],
         );
@@ -370,7 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
       (folder) => folder.name.toLowerCase() == name.toLowerCase(),
     );
     if (exists) {
-      _showSnack('Folder already exists');
+      _showSnack(_l.folderAlreadyExists);
       return;
     }
 
@@ -408,7 +411,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _FriendSeed(
           userId: uid,
           displayName: (displayName == null || displayName.isEmpty)
-              ? 'User'
+              ? _l.defaultUser
               : displayName,
           photoUrl: photoUrl,
         ),
@@ -423,7 +426,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
 
     if (friends.isEmpty) {
-      _showSnack('Add friends first to create a room');
+      _showSnack(_l.addFriendsFirstToCreateRoom);
       return;
     }
 
@@ -439,7 +442,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Create group'),
+              title: Text(_l.createGroup),
               content: SizedBox(
                 width: 430,
                 child: Column(
@@ -449,9 +452,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     TextField(
                       textCapitalization: TextCapitalization.words,
                       maxLength: 40,
-                      decoration: const InputDecoration(
-                        labelText: 'Group name',
-                        hintText: 'Weekend project',
+                      decoration: InputDecoration(
+                        labelText: _l.groupName,
+                        hintText: _l.groupNameHint,
                       ),
                       onChanged: (value) {
                         titleDraft = value;
@@ -459,7 +462,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Select members',
+                      _l.selectMembers,
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     const SizedBox(height: 8),
@@ -510,7 +513,7 @@ class _HomeScreenState extends State<HomeScreen> {
               actions: [
                 TextButton(
                   onPressed: isSubmitting ? null : () => navigator.pop(),
-                  child: const Text('Cancel'),
+                  child: Text(_l.cancel),
                 ),
                 ElevatedButton(
                   onPressed: isSubmitting
@@ -519,7 +522,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           final title = titleDraft.trim();
                           if (title.isEmpty) return;
                           if (selectedFriendIds.isEmpty) {
-                            _showSnack('Select at least one member');
+                            _showSnack(_l.selectAtLeastOneMember);
                             return;
                           }
 
@@ -567,7 +570,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Create'),
+                      : Text(_l.createAction),
                 ),
               ],
             );
@@ -589,7 +592,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Create server'),
+              title: Text(_l.createServer),
               content: SizedBox(
                 width: 420,
                 child: Column(
@@ -599,9 +602,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     TextField(
                       textCapitalization: TextCapitalization.words,
                       maxLength: 40,
-                      decoration: const InputDecoration(
-                        labelText: 'Server name',
-                        hintText: 'My server',
+                      decoration: InputDecoration(
+                        labelText: _l.serverName,
+                        hintText: _l.serverNameHint,
                       ),
                       onChanged: (value) {
                         titleDraft = value;
@@ -609,7 +612,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'You can personalize the server icon from Server profile.',
+                      _l.serverIconPersonalizeHint,
                       style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -621,7 +624,7 @@ class _HomeScreenState extends State<HomeScreen> {
               actions: [
                 TextButton(
                   onPressed: isSubmitting ? null : () => navigator.pop(),
-                  child: const Text('Cancel'),
+                  child: Text(_l.cancel),
                 ),
                 ElevatedButton(
                   onPressed: isSubmitting
@@ -674,7 +677,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Create'),
+                      : Text(_l.createAction),
                 ),
               ],
             );
@@ -696,15 +699,15 @@ class _HomeScreenState extends State<HomeScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Join server'),
+              title: Text(_l.joinServer),
               content: SizedBox(
                 width: 420,
                 child: TextField(
                   autofocus: false,
                   textCapitalization: TextCapitalization.none,
-                  decoration: const InputDecoration(
-                    labelText: 'Invite link or code',
-                    hintText: 'Paste invite link or server code',
+                  decoration: InputDecoration(
+                    labelText: _l.inviteLinkOrCode,
+                    hintText: _l.pasteInviteLinkOrServerCode,
                   ),
                   onChanged: (value) {
                     inviteDraft = value;
@@ -714,7 +717,7 @@ class _HomeScreenState extends State<HomeScreen> {
               actions: [
                 TextButton(
                   onPressed: isJoining ? null : () => navigator.pop(),
-                  child: const Text('Cancel'),
+                  child: Text(_l.cancel),
                 ),
                 ElevatedButton(
                   onPressed: isJoining
@@ -722,7 +725,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       : () async {
                           final code = _extractInviteCode(inviteDraft);
                           if (code.isEmpty) {
-                            _showSnack('Enter a valid invite link or code');
+                            _showSnack(_l.enterValidInviteLinkOrCode);
                             return;
                           }
 
@@ -761,7 +764,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Join'),
+                      : Text(_l.join),
                 ),
               ],
             );
@@ -786,18 +789,18 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       final inviteData = inviteSnap.data();
       if (inviteData == null) {
-        _showSnack('Invite link is invalid');
+        _showSnack(_l.inviteLinkInvalid);
         return null;
       }
 
       if (inviteData['revokedAt'] != null) {
-        _showSnack('This invite link has expired');
+        _showSnack(_l.inviteLinkExpired);
         return null;
       }
 
       final conversationId = inviteData['serverId']?.toString().trim() ?? '';
       if (conversationId.isEmpty) {
-        _showSnack('Invite link is invalid');
+        _showSnack(_l.inviteLinkInvalid);
         return null;
       }
 
@@ -821,7 +824,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (conversationData == null ||
           conversationData['type']?.toString().trim().toLowerCase() !=
               'server') {
-        _showSnack('Server not found for this invite');
+        _showSnack(_l.serverNotFoundForInvite);
         return null;
       }
       final participants = _participantsFromConversation(conversationData);
@@ -830,7 +833,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       final title = conversationData['title']?.toString().trim();
-      final resolvedTitle = (title == null || title.isEmpty) ? 'Server' : title;
+      final resolvedTitle =
+          (title == null || title.isEmpty) ? _l.serverLabel : title;
       return _JoinedServerResult(
         conversationId: conversationId,
         title: resolvedTitle,
@@ -838,24 +842,22 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } on FirebaseException catch (e) {
       if (e.code == 'not-found') {
-        _showSnack('Server not found for this invite');
+        _showSnack(_l.serverNotFoundForInvite);
         return null;
       }
       if (e.code == 'permission-denied') {
-        _showSnack(
-          'Permission denied while joining server. Update Firestore rules for server invites and conversation joins.',
-        );
+        _showSnack(_l.permissionDeniedJoiningServer);
         return null;
       }
       final detail = e.message?.trim();
       _showSnack(
         detail == null || detail.isEmpty
-            ? 'Could not join server (${e.code})'
-            : 'Could not join server: $detail',
+            ? _l.couldNotJoinServerCode(e.code)
+            : _l.couldNotJoinServer(detail),
       );
       return null;
     } catch (e) {
-      _showSnack('Could not join server: $e');
+      _showSnack(_l.couldNotJoinServer(e.toString()));
       return null;
     }
   }
@@ -873,7 +875,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ..removeWhere((id) => id.isEmpty);
 
     if (!isServer && participants.length < 2) {
-      _showSnack('At least 2 members are required');
+      _showSnack(_l.atLeastTwoMembersRequired);
       return null;
     }
 
@@ -893,20 +895,18 @@ class _HomeScreenState extends State<HomeScreen> {
       return ref.id;
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') {
-        _showSnack(
-          'Permission denied while creating room. Check Firestore rules for conversations.',
-        );
+        _showSnack(_l.permissionDeniedCreatingRoom);
         return null;
       }
       final detail = e.message?.trim();
       _showSnack(
         detail == null || detail.isEmpty
-            ? 'Failed to create room (${e.code})'
-            : 'Failed to create room: $detail',
+            ? _l.failedToCreateRoomCode(e.code)
+            : _l.failedToCreateRoom(detail),
       );
       return null;
     } catch (e) {
-      _showSnack('Failed to create room: $e');
+      _showSnack(_l.failedToCreateRoom(e.toString()));
       return null;
     }
   }
@@ -945,14 +945,14 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               ListTile(
                 title: Text(
-                  'Move "$conversationName"',
+                  _l.moveConversation(conversationName),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               ListTile(
                 leading: const Icon(Icons.all_inbox_outlined),
-                title: const Text('All chats'),
+                title: Text(_l.allChats),
                 trailing: currentFolderId == null
                     ? const Icon(Icons.check, color: Colors.green)
                     : null,
@@ -977,17 +977,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               }),
               if (_folders.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 4, 16, 14),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
                   child: Text(
-                    'Create a folder first',
-                    style: TextStyle(color: Colors.grey),
+                    _l.createFolderFirst,
+                    style: const TextStyle(color: Colors.grey),
                   ),
                 ),
               const Divider(height: 0),
               ListTile(
                 leading: const Icon(Icons.create_new_folder_outlined),
-                title: const Text('Create folder'),
+                title: Text(_l.createFolder),
                 onTap: () {
                   Navigator.pop(sheetContext, true);
                 },
@@ -1006,7 +1006,7 @@ class _HomeScreenState extends State<HomeScreen> {
     for (final folder in _folders) {
       if (folder.id == folderId) return folder.name;
     }
-    return 'folder';
+    return _l.folder;
   }
 
   String _conversationType(Map<String, dynamic> chatData) {
@@ -1016,8 +1016,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String? _conversationTypeLabel(String type) {
-    if (type == 'group') return 'Group';
-    if (type == 'server') return 'Server';
+    if (type == 'group') return _l.groupLabel;
+    if (type == 'server') return _l.serverLabel;
     return null;
   }
 
@@ -1050,11 +1050,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final type = _conversationType(chatData);
     if (type == 'direct') {
       final otherUserId = _resolveDirectOtherUserId(chatData, currentUserId);
-      if (otherUserId == null || otherUserId.isEmpty) return 'User';
+      if (otherUserId == null || otherUserId.isEmpty) return _l.defaultUser;
       final userData = _userCache.getCachedUser(otherUserId);
       return userData?['displayName']?.toString().trim().isNotEmpty == true
           ? userData!['displayName'].toString().trim()
-          : 'User';
+          : _l.defaultUser;
     }
 
     final title = chatData['title']?.toString().trim() ?? '';
@@ -1064,14 +1064,14 @@ class _HomeScreenState extends State<HomeScreen> {
       chatData,
     ).where((id) => id != currentUserId).toList();
     if (participants.isEmpty) {
-      return type == 'server' ? 'Server' : 'Group chat';
+      return type == 'server' ? _l.serverLabel : _l.groupChat;
     }
 
     final names = <String>[];
     for (final uid in participants.take(3)) {
       final data = _userCache.getCachedUser(uid);
       final name = data?['displayName']?.toString().trim();
-      names.add((name == null || name.isEmpty) ? 'User' : name);
+      names.add((name == null || name.isEmpty) ? _l.defaultUser : name);
     }
     if (participants.length > 3) {
       names.add('+${participants.length - 3}');
@@ -1131,7 +1131,7 @@ class _HomeScreenState extends State<HomeScreen> {
         title: TextField(
           controller: _searchController,
           decoration: InputDecoration(
-            hintText: 'Search chats...',
+            hintText: _l.searchChats,
             border: InputBorder.none,
             prefixIcon: const Icon(Icons.search, color: Colors.grey),
             suffixIcon: _searchQuery.isNotEmpty
@@ -1156,7 +1156,7 @@ class _HomeScreenState extends State<HomeScreen> {
         elevation: 1,
         actions: [
           IconButton(
-            tooltip: 'Create',
+            tooltip: _l.createAction,
             onPressed: _showCreateSheet,
             icon: const Icon(Icons.add_circle_outline),
           ),
@@ -1190,7 +1190,7 @@ class _HomeScreenState extends State<HomeScreen> {
         scrollDirection: Axis.horizontal,
         children: [
           ChoiceChip(
-            label: const Text('All'),
+            label: Text(_l.allChats),
             selected: _selectedFolderId == null,
             onSelected: (_) {
               setState(() {
@@ -1224,7 +1224,7 @@ class _HomeScreenState extends State<HomeScreen> {
           }),
           ActionChip(
             avatar: const Icon(Icons.add, size: 18),
-            label: const Text('Folder'),
+            label: Text(_l.folder),
             onPressed: _showCreateFolderDialog,
           ),
         ],
@@ -1302,14 +1302,14 @@ class _HomeScreenState extends State<HomeScreen> {
               Theme.of(context).primaryColor,
             ),
             accountName: Text(
-              user?.displayName ?? 'User',
+              user?.displayName ?? _l.defaultUser,
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             accountEmail: Text(user?.email ?? ''),
           ),
           ListTile(
             leading: const Icon(Icons.person),
-            title: const Text('My Profile'),
+            title: Text(_l.myProfile),
             onTap: () {
               Navigator.pop(context);
               Navigator.push(
@@ -1320,7 +1320,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           ListTile(
             leading: const Icon(Icons.people),
-            title: const Text('My Friends'),
+            title: Text(_l.myFriends),
             onTap: () {
               Navigator.pop(context);
               Navigator.push(
@@ -1333,7 +1333,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           ListTile(
             leading: const Icon(Icons.settings),
-            title: const Text('Settings'),
+            title: Text(_l.settingsTitle),
             onTap: () {
               Navigator.pop(context);
               Navigator.push(
@@ -1345,7 +1345,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const Divider(),
           ListTile(
             leading: const Icon(Icons.info_outline),
-            title: const Text('About'),
+            title: Text(_l.about),
             onTap: () {
               Navigator.pop(context);
               showAboutDialog(
@@ -1354,16 +1354,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 applicationVersion: '1.0.0',
                 applicationIcon: const Icon(Icons.shopping_bag, size: 48),
                 children: [
-                  const Text(
-                    'Secure messaging app with end-to-end encryption.',
-                  ),
+                  Text(_l.aboutDescription),
                 ],
               );
             },
           ),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),
-            title: const Text('Logout', style: TextStyle(color: Colors.red)),
+            title: Text(
+              _l.signOut,
+              style: const TextStyle(color: Colors.red),
+            ),
             onTap: _handleLogout,
           ),
         ],
@@ -1374,7 +1375,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildChatsList() {
     final user = _auth.currentUser;
     if (user == null) {
-      return const Center(child: Text('Not logged in'));
+      return Center(child: Text(_l.notLoggedIn));
     }
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -1384,7 +1385,7 @@ class _HomeScreenState extends State<HomeScreen> {
           .safeSnapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
+          return Center(child: Text(_l.genericError('${snapshot.error}')));
         }
 
         final hasSnapshot = snapshot.hasData;
@@ -1595,7 +1596,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     trailing: SizedBox(
                       width: 32,
                       child: PopupMenuButton<String>(
-                        tooltip: 'Chat options',
+                        tooltip: _l.chatOptions,
                         padding: EdgeInsets.zero,
                         iconSize: 18,
                         splashRadius: 18,
@@ -1613,15 +1614,17 @@ class _HomeScreenState extends State<HomeScreen> {
                           }
                         },
                         itemBuilder: (menuContext) => [
-                          const PopupMenuItem(
+                          PopupMenuItem(
                             value: 'move',
-                            child: Text('Move to folder'),
+                            child: Text(_l.moveToFolder),
                           ),
                           if (assignedFolderId != null)
                             PopupMenuItem(
                               value: 'remove_folder',
                               child: Text(
-                                'Remove from ${_folderName(assignedFolderId)}',
+                                _l.removeFromFolder(
+                                  _folderName(assignedFolderId),
+                                ),
                               ),
                             ),
                         ],
@@ -1645,12 +1648,12 @@ class _HomeScreenState extends State<HomeScreen> {
           Icon(Icons.chat_bubble_outline, size: 80, color: Colors.grey[400]),
           const SizedBox(height: 16),
           Text(
-            'No chats yet',
+            _l.noChatsYet,
             style: TextStyle(fontSize: 18, color: Colors.grey[600]),
           ),
           const SizedBox(height: 8),
           Text(
-            'Add friends to start chatting',
+            _l.addFriendsToStartChatting,
             style: TextStyle(fontSize: 14, color: Colors.grey[500]),
           ),
           const SizedBox(height: 24),
@@ -1659,7 +1662,7 @@ class _HomeScreenState extends State<HomeScreen> {
               _openScreen(const ImprovedFriendsListScreen());
             },
             icon: const Icon(Icons.person_add),
-            label: const Text('Add Friends'),
+            label: Text(_l.addFriends),
           ),
         ],
       ),
@@ -1668,7 +1671,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildFilteredEmptyState() {
     final folderName = _selectedFolderId == null
-        ? 'All chats'
+        ? _l.allChats
         : _folderName(_selectedFolderId!);
     return Center(
       child: Padding(
@@ -1679,12 +1682,12 @@ class _HomeScreenState extends State<HomeScreen> {
             Icon(Icons.folder_open, size: 66, color: Colors.grey[400]),
             const SizedBox(height: 14),
             Text(
-              'No chats in $folderName',
+              _l.noChatsInFolder(folderName),
               style: TextStyle(fontSize: 17, color: Colors.grey[700]),
             ),
             const SizedBox(height: 8),
             Text(
-              'Move a chat here from the menu on any conversation.',
+              _l.moveChatHereHint,
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: Colors.grey[500]),
             ),
@@ -1754,9 +1757,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (diff.inDays == 0) {
       return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
     } else if (diff.inDays == 1) {
-      return 'Yesterday';
+      return _l.yesterday;
     } else if (diff.inDays < 7) {
-      return '${diff.inDays}d ago';
+      return _l.daysAgo(diff.inDays);
     } else {
       return '${date.day}/${date.month}/${date.year}';
     }
@@ -1964,10 +1967,11 @@ class _ConversationLastMessagePreviewState
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     final raw = widget.chatData['lastMessage'];
     final fallback = widget.chatData['hasMessages'] == true
-        ? 'Sent a message'
-        : 'Start chatting';
+        ? l.sentAMessage
+        : l.startChatting;
 
     final resolved = _resolvedText?.trim() ?? '';
     final displayText = resolved.isNotEmpty
