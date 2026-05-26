@@ -194,7 +194,76 @@
       }
 
       /* ── Utility ── */
+      .project-section {
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+      }
+
+      .project-copy {
+        color: var(--muted);
+        font-size: 0.88rem;
+        line-height: 1.6;
+      }
+
+      .project-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.55rem;
+      }
+
+      .project-pill {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.65rem;
+        background: rgba(255,255,255,0.04);
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+
+      .project-pill strong {
+        display: block;
+        color: var(--text);
+        font-size: 0.8rem;
+        margin-bottom: 0.12rem;
+      }
+
+      .project-links {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.6rem;
+      }
+
+      .project-links a {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        border-radius: 10px;
+        text-decoration: none;
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      .project-links .primary-link {
+        background: var(--accent);
+        color: #000;
+      }
+
+      .project-links .secondary-link {
+        color: var(--accent);
+        border: 1px solid rgba(0,200,255,0.25);
+        background: rgba(0,200,255,0.12);
+      }
+
       .hidden { display: none !important; }
+
+      @media (max-width: 420px) {
+        .project-grid,
+        .project-links {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
 
@@ -228,17 +297,35 @@
       </section>
 
       <!-- Steps -->
-      <ol class="steps">
+      <ol class="steps" id="inviteSteps">
         <li data-i18n="inviteStep1">Open Shoq.</li>
         <li data-i18n="inviteStep2">Tap Join Server.</li>
         <li data-i18n="inviteStep3">Paste the invite code and confirm.</li>
       </ol>
 
       <!-- CTA buttons -->
-      <div class="actions">
+      <div class="actions" id="inviteActions">
         <button class="primary" id="openInShoqBtn" data-i18n="openInShoq">Open in Shoq</button>
         <button class="enter" id="copyCodeBtn" data-i18n="copyCode">Copy Code</button>
       </div>
+
+      <section id="projectSection" class="project-section hidden">
+        <p class="project-copy">
+          Shoq is a Flutter and Firebase messenger with client-side encrypted
+          message bodies, rooms, QR contacts, WebRTC calls, voice channels, and
+          desktop/mobile clients.
+        </p>
+        <div class="project-grid">
+          <div class="project-pill"><strong>Client</strong>Flutter / Dart</div>
+          <div class="project-pill"><strong>Backend</strong>Firebase</div>
+          <div class="project-pill"><strong>Crypto</strong>libsodium crypto.box</div>
+          <div class="project-pill"><strong>Status</strong>Active development</div>
+        </div>
+        <div class="project-links">
+          <a class="primary-link" href="https://github.com/NazarK02/Shoq">View source</a>
+          <a class="secondary-link" href="https://github.com/NazarK02/Shoq#security-model">Security status</a>
+        </div>
+      </section>
 
       <!-- Footer note -->
       <p class="page-note" data-i18n="pageNote">
@@ -366,11 +453,15 @@
 
         if (!code) {
           console.warn('No invite code in URL');
+          document.querySelector('[data-i18n="pageTitle"]').textContent = 'Shoq';
+          document.getElementById('subtitle').textContent =
+            'Encrypted Flutter messenger';
           document.getElementById('codeSection').classList.add('hidden');
-          document.getElementById('openInShoqBtn').disabled = true;
-          document.getElementById('copyCodeBtn').disabled = true;
-          document.getElementById('openInShoqBtn').style.opacity = '0.5';
-          document.getElementById('copyCodeBtn').style.opacity = '0.5';
+          document.getElementById('inviteSteps').classList.add('hidden');
+          document.getElementById('inviteActions').classList.add('hidden');
+          document.getElementById('projectSection').classList.remove('hidden');
+          document.querySelector('.page-note').textContent =
+            'Security status is documented openly. Message bodies are encrypted, but key verification, key rotation, key-backup redesign, and file-byte encryption are still planned.';
           return;
         }
 

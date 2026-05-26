@@ -3,7 +3,7 @@
 /// The payload intentionally contains only the UID so that Firestore
 /// profile data (display name, avatar) can be fetched separately.
 /// No keys, no tokens, no session data are encoded here.
-library qr_utils;
+library;
 
 class QrUtils {
   static const _scheme = 'shoq://user/';
