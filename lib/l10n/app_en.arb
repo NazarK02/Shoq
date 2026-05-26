@@ -132,6 +132,18 @@
   "forgotPassword": "Forgot password?",
   "@forgotPassword": {},
 
+  "resetPasswordTitle": "Reset password",
+  "@resetPasswordTitle": {},
+
+  "resetPasswordBody": "Enter your email address and we'll send you a password reset link.",
+  "@resetPasswordBody": {},
+
+  "sendResetLink": "Send reset link",
+  "@sendResetLink": {},
+
+  "passwordResetEmailSent": "Password reset email sent. Check your inbox.",
+  "@passwordResetEmailSent": {},
+
   "continueWithGoogle": "Continue with Google",
   "@continueWithGoogle": {},
 

@@ -7,27 +7,94 @@ import 'package:flutter/foundation.dart';
 
 extension SafeQuerySnapshots<T extends Object?> on Query<T> {
   Stream<QuerySnapshot<T>> safeSnapshots({
-    Duration windowsPollInterval = const Duration(milliseconds: 650),
+    Duration windowsPollInterval = const Duration(seconds: 2),
   }) {
     if (!Platform.isWindows) {
       return snapshots();
     }
     assert(windowsPollInterval > Duration.zero);
-    // Native listeners are dramatically cheaper than polling Firestore on
-    // Windows. The previous server-poll loop caused sustained UI stalls.
-    return _distinctStream(snapshots(), _queryDigest);
+    // The Windows Firestore listener can emit platform-channel messages from a
+    // background thread. Polling avoids that native listener path while still
+    // keeping desktop UI reasonably fresh.
+    return _distinctStream(
+      _pollQuerySnapshots(this, windowsPollInterval),
+      _queryDigest,
+    );
   }
 }
 
 extension SafeDocumentSnapshots<T extends Object?> on DocumentReference<T> {
   Stream<DocumentSnapshot<T>> safeSnapshots({
-    Duration windowsPollInterval = const Duration(milliseconds: 650),
+    Duration windowsPollInterval = const Duration(seconds: 2),
   }) {
     if (!Platform.isWindows) {
       return snapshots();
     }
     assert(windowsPollInterval > Duration.zero);
-    return _distinctStream(snapshots(), _documentDigest);
+    return _distinctStream(
+      _pollDocumentSnapshots(this, windowsPollInterval),
+      _documentDigest,
+    );
+  }
+}
+
+Stream<QuerySnapshot<T>> _pollQuerySnapshots<T extends Object?>(
+  Query<T> query,
+  Duration interval,
+) async* {
+  QuerySnapshot<T>? lastSnapshot;
+
+  try {
+    final cached = await query.get(const GetOptions(source: Source.cache));
+    lastSnapshot = cached;
+    yield cached;
+  } catch (_) {
+    // Empty cache is normal on first desktop launch.
+  }
+
+  while (true) {
+    try {
+      final snapshot = await query.get();
+      lastSnapshot = snapshot;
+      yield snapshot;
+    } catch (e, stack) {
+      if (lastSnapshot == null) {
+        Error.throwWithStackTrace(e, stack);
+      }
+      debugPrint('Firestore query poll failed: $e');
+    }
+
+    await Future<void>.delayed(interval);
+  }
+}
+
+Stream<DocumentSnapshot<T>> _pollDocumentSnapshots<T extends Object?>(
+  DocumentReference<T> document,
+  Duration interval,
+) async* {
+  DocumentSnapshot<T>? lastSnapshot;
+
+  try {
+    final cached = await document.get(const GetOptions(source: Source.cache));
+    lastSnapshot = cached;
+    yield cached;
+  } catch (_) {
+    // Empty cache is normal on first desktop launch.
+  }
+
+  while (true) {
+    try {
+      final snapshot = await document.get();
+      lastSnapshot = snapshot;
+      yield snapshot;
+    } catch (e, stack) {
+      if (lastSnapshot == null) {
+        Error.throwWithStackTrace(e, stack);
+      }
+      debugPrint('Firestore document poll failed: $e');
+    }
+
+    await Future<void>.delayed(interval);
   }
 }
 

@@ -10,6 +10,8 @@ import 'crypto_service.dart';
 import 'device_info_service.dart';
 
 class UserService {
+  static const String authRestoreHintKey = 'auth_last_bootstrapped_uid';
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final CryptoService _crypto = CryptoService();
@@ -46,14 +48,31 @@ class UserService {
 
       print('Saving user document for: ${user.uid}');
 
-      final profilePayload = <String, dynamic>{
-        'uid': user.uid,
-        'email': user.email ?? '',
-        'emailLower': (user.email ?? '').trim().toLowerCase(),
-        'displayName': user.displayName ?? '',
-        'photoUrl': user.photoURL ?? '',
-        'friendId': friendId,
-        'friendIdLower': friendId.toLowerCase(),
+      final profilePayload = <String, dynamic>{'friendId': friendId};
+
+      final displayName = user.displayName?.trim() ?? '';
+      if (displayName.isNotEmpty) {
+        profilePayload['displayName'] = displayName;
+      }
+
+      final photoUrl = user.photoURL?.trim() ?? '';
+      if (photoUrl.isNotEmpty) {
+        profilePayload['photoUrl'] = photoUrl;
+      }
+
+      final cleanupPayload = <String, dynamic>{
+        if (existingData.containsKey('uid')) 'uid': FieldValue.delete(),
+        if (existingData.containsKey('email')) 'email': FieldValue.delete(),
+        if (existingData.containsKey('emailLower'))
+          'emailLower': FieldValue.delete(),
+        if (existingData.containsKey('friendIdLower'))
+          'friendIdLower': FieldValue.delete(),
+        if (existingData.containsKey('lastHeartbeat'))
+          'lastHeartbeat': FieldValue.delete(),
+        if (existingData.containsKey('lastTokenUpdate'))
+          'lastTokenUpdate': FieldValue.delete(),
+        if (existingData.containsKey('lastTokenDeviceId'))
+          'lastTokenDeviceId': FieldValue.delete(),
       };
 
       var needsWrite = !existingDoc.exists;
@@ -69,11 +88,15 @@ class UserService {
       if (existingFriendId.isEmpty) {
         needsWrite = true;
       }
+      if (cleanupPayload.isNotEmpty) {
+        needsWrite = true;
+      }
 
       if (needsWrite) {
         // Create/update user document WITHOUT E2EE (that happens separately)
         await userRef.set({
           ...profilePayload,
+          ...cleanupPayload,
           if (existingFriendId.isEmpty)
             'friendIdCreatedAt': FieldValue.serverTimestamp(),
           if (!existingDoc.exists) 'createdAt': FieldValue.serverTimestamp(),
@@ -103,7 +126,7 @@ class UserService {
       try {
         final existing = await _firestore
             .collection('users')
-            .where('friendIdLower', isEqualTo: candidateLower)
+            .where('friendId', isEqualTo: candidateLower)
             .limit(1)
             .get();
         if (existing.docs.isEmpty || existing.docs.first.id == uid) {
@@ -260,7 +283,6 @@ class UserService {
     if (user == null) throw Exception('No user logged in');
 
     try {
-      final userDoc = await _firestore.collection('users').doc(user.uid).get();
       await _crypto.initialize();
 
       final publicKey = _crypto.myPublicKeyBase64;
@@ -277,12 +299,9 @@ class UserService {
       final updates = <String, dynamic>{
         'devices.$deviceId.publicKey': publicKey,
         'devices.$deviceId.publicKeyUpdatedAt': FieldValue.serverTimestamp(),
+        'publicKey': FieldValue.delete(),
+        'publicKeyUpdatedAt': FieldValue.delete(),
       };
-
-      if (userDoc.data()?['publicKey'] == null) {
-        updates['publicKey'] = publicKey;
-        updates['publicKeyUpdatedAt'] = FieldValue.serverTimestamp();
-      }
 
       await _firestore
           .collection('users')
@@ -314,7 +333,7 @@ class UserService {
 
     await _firestore.collection('users').doc(user.uid).update({
       'lastSeen': FieldValue.serverTimestamp(),
-      'lastHeartbeat': FieldValue.serverTimestamp(),
+      'lastHeartbeat': FieldValue.delete(),
     });
   }
 
@@ -326,7 +345,7 @@ class UserService {
     await _firestore.collection('users').doc(user.uid).update({
       'status': 'online',
       'lastSeen': FieldValue.serverTimestamp(),
-      'lastHeartbeat': FieldValue.serverTimestamp(),
+      'lastHeartbeat': FieldValue.delete(),
     });
   }
 
@@ -338,6 +357,7 @@ class UserService {
     await _firestore.collection('users').doc(user.uid).update({
       'status': 'offline',
       'lastSeen': FieldValue.serverTimestamp(),
+      'lastHeartbeat': FieldValue.delete(),
     });
   }
 
@@ -372,6 +392,10 @@ class UserService {
     await setOffline();
     await _crypto.clear();
     stopUserDocListener();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(authRestoreHintKey);
+    } catch (_) {}
     try {
       final googleSignIn = GoogleSignIn();
       await googleSignIn.signOut();

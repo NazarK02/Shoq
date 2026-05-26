@@ -138,6 +138,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   String _activeChannelId = ServerChannel.generalId;
   Map<String, List<_ChannelFolder>> _channelFolders = const {};
   Map<String, List<_ChannelAssignment>> _channelAssignments = const {};
+  Map<String, Map<String, dynamic>> _pinnedMessages = const {};
   String? _selectedFolderId;
   Set<String> _adminIds = const <String>{};
   String _title = '';
@@ -526,6 +527,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
           final channelAssignments = _parseChannelAssignments(
             data['channelAssignments'],
           );
+          final pinnedMessages = _parsePinnedMessages(data['pinnedMessages']);
 
           _warmParticipants(participants);
           _scheduleAvatarPrecache(avatarUrl);
@@ -542,6 +544,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
             }
             _channelFolders = channelFolders;
             _channelAssignments = channelAssignments;
+            _pinnedMessages = pinnedMessages;
             final activeFolders = _channelFolders[_activeChannelId] ?? const [];
             if (_selectedFolderId != null &&
                 !activeFolders.any(
@@ -553,6 +556,19 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
             }
           });
         });
+  }
+
+  Map<String, Map<String, dynamic>> _parsePinnedMessages(dynamic raw) {
+    if (raw is! Map) return const {};
+    final result = <String, Map<String, dynamic>>{};
+    raw.forEach((key, value) {
+      final id = key.toString().trim();
+      if (id.isEmpty || value is! Map) return;
+      final data = Map<String, dynamic>.from(value);
+      data['messageId'] ??= id;
+      result[id] = data;
+    });
+    return result;
   }
 
   Set<String> _parseAdminIds(dynamic raw) {
@@ -1438,6 +1454,139 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     return true;
   }
 
+  bool _pinMatchesActiveChannel(Map<String, dynamic> data) {
+    if (!_isServer) return true;
+    final channelId = data['channelId']?.toString().trim() ?? '';
+    if (_activeChannelId == ServerChannel.generalId) {
+      return channelId.isEmpty || channelId == ServerChannel.generalId;
+    }
+    return channelId == _activeChannelId;
+  }
+
+  List<Map<String, dynamic>> _visiblePinnedMessages() {
+    final items = _pinnedMessages.values
+        .where(_pinMatchesActiveChannel)
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    items.sort((a, b) {
+      final aTime = a['pinnedAt'] is Timestamp
+          ? (a['pinnedAt'] as Timestamp).millisecondsSinceEpoch
+          : 0;
+      final bTime = b['pinnedAt'] is Timestamp
+          ? (b['pinnedAt'] as Timestamp).millisecondsSinceEpoch
+          : 0;
+      return bTime.compareTo(aTime);
+    });
+    return items;
+  }
+
+  String _messagePreviewForPin(String messageId, Map<String, dynamic> data) {
+    final type = data['type']?.toString().trim().toLowerCase() ?? 'text';
+    if (type == 'file') {
+      final fileName = data['fileName']?.toString().trim() ?? '';
+      return fileName.isEmpty ? 'Shared file' : 'Shared file: $fileName';
+    }
+    if (type == 'sticker') return 'Sticker';
+
+    final optimistic = _optimisticTextByMessageId[messageId]?.trim() ?? '';
+    if (optimistic.isNotEmpty) return optimistic;
+    final cached = _decryptedCache[messageId]?.trim() ?? '';
+    if (cached.isNotEmpty) return cached;
+    final persisted = _persistedTextForMessage(messageId);
+    if (persisted.isNotEmpty) return persisted;
+    final plain = data['text']?.toString().trim() ?? '';
+    if (plain.isNotEmpty) return plain;
+    return 'Pinned message';
+  }
+
+  Future<void> _togglePinnedMessage({
+    required String messageId,
+    required Map<String, dynamic> message,
+  }) async {
+    final isPinned = _pinnedMessages.containsKey(messageId);
+    try {
+      await _chatService.setMessagePinned(
+        conversationId: widget.conversationId,
+        messageId: messageId,
+        pinned: !isPinned,
+        previewText: _messagePreviewForPin(messageId, message),
+        senderId: message['senderId']?.toString(),
+        channelId: _isServer ? _activeChannelId : null,
+        type: message['type']?.toString(),
+      );
+    } catch (e) {
+      _showSnack('Could not update pin: $e');
+    }
+  }
+
+  Map<String, List<String>> _roomReactions(Map<String, dynamic> data) {
+    final raw = data['reactions'];
+    if (raw is! Map) return const {};
+    final result = <String, List<String>>{};
+    raw.forEach((key, value) {
+      final uid = key.toString().trim();
+      if (uid.isEmpty) return;
+      final emojis = <String>{};
+      if (value is String) {
+        if (value.trim().isNotEmpty) emojis.add(value.trim());
+      } else if (value is List) {
+        for (final item in value) {
+          final emoji = item?.toString().trim() ?? '';
+          if (emoji.isNotEmpty) emojis.add(emoji);
+        }
+      }
+      if (emojis.isNotEmpty) result[uid] = emojis.toList();
+    });
+    return result;
+  }
+
+  int _reactionCount(Map<String, dynamic> data, String emoji) {
+    var count = 0;
+    for (final emojis in _roomReactions(data).values) {
+      if (emojis.contains(emoji)) count++;
+    }
+    return count;
+  }
+
+  bool _currentUserReacted(Map<String, dynamic> data, String emoji) {
+    final uid = _currentUid;
+    if (uid.isEmpty) return false;
+    return _roomReactions(data)[uid]?.contains(emoji) == true;
+  }
+
+  Future<void> _toggleRoomReaction({
+    required String messageId,
+    required Map<String, dynamic> data,
+    required String emoji,
+  }) async {
+    final uid = _currentUid;
+    if (uid.isEmpty) return;
+    final reactions = _roomReactions(data);
+    final mine = reactions[uid]?.toSet() ?? <String>{};
+    if (mine.contains(emoji)) {
+      mine.remove(emoji);
+    } else {
+      mine.add(emoji);
+    }
+
+    final ref = _firestore
+        .collection('conversations')
+        .doc(widget.conversationId)
+        .collection('messages')
+        .doc(messageId);
+    try {
+      if (mine.isEmpty) {
+        await ref.update({'reactions.$uid': FieldValue.delete()});
+      } else {
+        await ref.set({
+          'reactions': {uid: mine.toList()},
+        }, SetOptions(merge: true));
+      }
+    } catch (e) {
+      _showSnack('Could not save reaction: $e');
+    }
+  }
+
   String _activeChannelName() {
     return _activeChannel.name;
   }
@@ -1571,6 +1720,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         Expanded(
           child: Column(
             children: [
+              _buildPinnedMessagesBar(),
               if (_activeChannelType() == ServerChannelType.file)
                 _buildFileChannelFoldersBar(),
               if (_activeChannelType() == ServerChannelType.assignments)
@@ -1593,6 +1743,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     return Column(
       children: [
         if (_isServer) _buildServerChannelBar(),
+        _buildPinnedMessagesBar(),
         if (_isServer && _activeChannelType() == ServerChannelType.file)
           _buildFileChannelFoldersBar(),
         if (_isServer && _activeChannelType() == ServerChannelType.assignments)
@@ -1600,6 +1751,100 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         Expanded(child: _buildMessagesView()),
         _buildInputBar(),
       ],
+    );
+  }
+
+  Widget _buildPinnedMessagesBar() {
+    final pinned = _visiblePinnedMessages();
+    if (pinned.isEmpty) return const SizedBox.shrink();
+    final first = pinned.first;
+    final text = first['previewText']?.toString().trim().isNotEmpty == true
+        ? first['previewText'].toString()
+        : 'Pinned message';
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.surfaceContainerLow,
+      child: InkWell(
+        onTap: _showPinnedMessagesSheet,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: colorScheme.outlineVariant),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.push_pin_outlined,
+                size: 18,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  pinned.length == 1 ? text : '$text  +${pinned.length - 1}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Pinned messages',
+                icon: const Icon(Icons.keyboard_arrow_down),
+                onPressed: _showPinnedMessagesSheet,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showPinnedMessagesSheet() async {
+    final items = _visiblePinnedMessages();
+    if (items.isEmpty) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            children: [
+              const ListTile(
+                leading: Icon(Icons.push_pin_outlined),
+                title: Text('Pinned messages'),
+              ),
+              for (final item in items)
+                ListTile(
+                  title: Text(
+                    item['previewText']?.toString().trim().isNotEmpty == true
+                        ? item['previewText'].toString()
+                        : 'Pinned message',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: IconButton(
+                    tooltip: 'Unpin',
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      unawaited(
+                        _chatService.setMessagePinned(
+                          conversationId: widget.conversationId,
+                          messageId: item['messageId']?.toString() ?? '',
+                          pinned: false,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1792,6 +2037,9 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   Widget _buildAssignmentsPanel({required double maxHeight}) {
     final assignments = _activeAssignments();
     final colorScheme = Theme.of(context).colorScheme;
+    final completed = assignments
+        .where((assignment) => assignment.completedBy.contains(_currentUid))
+        .length;
     return Container(
       width: double.infinity,
       constraints: BoxConstraints(maxHeight: maxHeight),
@@ -1810,6 +2058,16 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                 'Assignments',
                 style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
               ),
+              if (assignments.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '$completed/${assignments.length} done',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
               const Spacer(),
               if (_canManage)
                 TextButton.icon(
@@ -2054,79 +2312,203 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     final textColor = isMe
         ? Theme.of(context).colorScheme.onPrimary
         : Theme.of(context).colorScheme.onSurface;
+    final isPinned = _pinnedMessages.containsKey(messageId);
 
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.78,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.max,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            if (!isMe) ...[
-              CircleAvatar(
-                radius: 13,
-                backgroundColor: Colors.grey[300],
-                backgroundImage: senderAvatar != null
-                    ? CachedNetworkImageProvider(senderAvatar)
-                    : null,
-                child: senderAvatar == null
-                    ? Icon(Icons.person, size: 14, color: Colors.grey[700])
-                    : null,
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onLongPress: () =>
+          _showRoomMessageActions(messageId: messageId, data: data),
+      child: Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.78,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.max,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (!isMe) ...[
+                CircleAvatar(
+                  radius: 13,
+                  backgroundColor: Colors.grey[300],
+                  backgroundImage: senderAvatar != null
+                      ? CachedNetworkImageProvider(senderAvatar)
+                      : null,
+                  child: senderAvatar == null
+                      ? Icon(Icons.person, size: 14, color: Colors.grey[700])
+                      : null,
+                ),
+                const SizedBox(width: 8),
+              ],
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
+                    color: bubbleColor,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (isPinned)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.push_pin,
+                                size: 12,
+                                color: textColor.withValues(alpha: 0.75),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Pinned',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: textColor.withValues(alpha: 0.75),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (!isMe)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            senderName,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: textColor.withValues(alpha: 0.8),
+                            ),
+                          ),
+                        ),
+                      _buildMessageBody(
+                        messageId: messageId,
+                        type: type,
+                        data: data,
+                        textColor: textColor,
+                      ),
+                      if (_isServer &&
+                          _activeChannelType() == ServerChannelType.forum)
+                        _buildForumPostActions(
+                          messageId: messageId,
+                          data: data,
+                          textColor: textColor,
+                        ),
+                      if (timestamp != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 5),
+                          child: Text(
+                            _formatTime(timestamp.toDate()),
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: textColor.withValues(alpha: 0.7),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(width: 8),
             ],
-            Flexible(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 9,
-                ),
-                decoration: BoxDecoration(
-                  color: bubbleColor,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (!isMe)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Text(
-                          senderName,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: textColor.withValues(alpha: 0.8),
-                          ),
-                        ),
-                      ),
-                    _buildMessageBody(
-                      messageId: messageId,
-                      type: type,
-                      data: data,
-                      textColor: textColor,
-                    ),
-                    if (timestamp != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 5),
-                        child: Text(
-                          _formatTime(timestamp.toDate()),
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: textColor.withValues(alpha: 0.7),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Future<void> _showRoomMessageActions({
+    required String messageId,
+    required Map<String, dynamic> data,
+  }) async {
+    final isPinned = _pinnedMessages.containsKey(messageId);
+    final preview = _messagePreviewForPin(messageId, data);
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: Icon(
+                  isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                ),
+                title: Text(isPinned ? 'Unpin message' : 'Pin message'),
+                subtitle: Text(
+                  preview,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(
+                    _togglePinnedMessage(messageId: messageId, message: data),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.copy),
+                title: const Text('Copy text'),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  await Clipboard.setData(ClipboardData(text: preview));
+                  _showSnack('Copied');
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildForumPostActions({
+    required String messageId,
+    required Map<String, dynamic> data,
+    required Color textColor,
+  }) {
+    final upvotes = _reactionCount(data, '⬆');
+    final mine = _currentUserReacted(data, '⬆');
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          ActionChip(
+            avatar: Icon(
+              mine ? Icons.arrow_upward : Icons.arrow_upward_outlined,
+              size: 16,
+              color: mine ? Theme.of(context).colorScheme.primary : textColor,
+            ),
+            label: Text(upvotes == 0 ? 'Upvote' : '$upvotes'),
+            onPressed: () => unawaited(
+              _toggleRoomReaction(messageId: messageId, data: data, emoji: '⬆'),
+            ),
+            visualDensity: VisualDensity.compact,
+          ),
+          ActionChip(
+            avatar: Icon(Icons.chat_bubble_outline, size: 16, color: textColor),
+            label: const Text('Discuss'),
+            onPressed: () {
+              _messageController.text =
+                  '> ${_messagePreviewForPin(messageId, data)}\n';
+              _messageController.selection = TextSelection.fromPosition(
+                TextPosition(offset: _messageController.text.length),
+              );
+            },
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
       ),
     );
   }
@@ -2597,7 +2979,9 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                 padding: const EdgeInsets.only(right: 6),
                 child: IconButton(
                   tooltip: 'Create assignment',
-                  onPressed: isComposerBusy ? null : _addAssignmentToActiveChannel,
+                  onPressed: isComposerBusy
+                      ? null
+                      : _addAssignmentToActiveChannel,
                   icon: const Icon(Icons.assignment_add),
                 ),
               ),

@@ -336,8 +336,9 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
 
   Future<void> _refreshPresenceFromServer() async {
     try {
-      final snapshot =
-          await _voiceDocRef.get(const GetOptions(source: Source.server));
+      final snapshot = await _voiceDocRef.get(
+        const GetOptions(source: Source.server),
+      );
       final data = snapshot.data();
       if (data == null) return;
       final parsed = _mergeSelfMember(_parseMembers(data['activeMembers']));
@@ -366,7 +367,9 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
       // Increased timeout from 40 to 70 seconds to accommodate network delays
       if (seenAt != null &&
           now.difference(seenAt) > const Duration(seconds: 70)) {
-        debugPrint('Voice: Removing stale member $userId (seen ${now.difference(seenAt).inSeconds}s ago)');
+        debugPrint(
+          'Voice: Removing stale member $userId (seen ${now.difference(seenAt).inSeconds}s ago)',
+        );
         return;
       }
       result[userId] = member;
@@ -842,6 +845,7 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
           'activeMembers.$uid': FieldValue.delete(),
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
+        await _deleteVoiceDocIfEmpty();
       } catch (_) {}
     }
 
@@ -849,6 +853,22 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
     ActiveSessionService().clearSession(sessionId: _sessionId);
     if (closeScreen && mounted) {
       Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _deleteVoiceDocIfEmpty() async {
+    try {
+      final snapshot = await _voiceDocRef.get(
+        const GetOptions(source: Source.server),
+      );
+      final data = snapshot.data();
+      final activeMembers = data?['activeMembers'];
+      final isEmpty = activeMembers is! Map || activeMembers.isEmpty;
+      if (isEmpty) {
+        await _voiceDocRef.delete();
+      }
+    } catch (e) {
+      debugPrint('Voice empty-session cleanup skipped: $e');
     }
   }
 
@@ -1020,7 +1040,9 @@ class _VoiceChannelScreenState extends State<VoiceChannelScreen> {
               Icon(
                 Icons.group,
                 size: 48,
-                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
               ),
               const SizedBox(height: 16),
               Text(

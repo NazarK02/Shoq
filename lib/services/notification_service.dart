@@ -369,8 +369,8 @@ class NotificationService {
       await _firestore.collection('users').doc(user.uid).set({
         'fcmToken': FieldValue.delete(),
         'fcmTokens.$deviceId': token,
-        'lastTokenUpdate': FieldValue.serverTimestamp(),
-        'lastTokenDeviceId': deviceId,
+        'lastTokenUpdate': FieldValue.delete(),
+        'lastTokenDeviceId': FieldValue.delete(),
       }, SetOptions(merge: true));
 
       print('Saved FCM token for ${user.uid} on device $deviceId');
@@ -387,8 +387,8 @@ class NotificationService {
         await _firestore.collection('users').doc(user.uid).set({
           'fcmToken': FieldValue.delete(),
           'fcmTokens.$deviceId': FieldValue.delete(),
-          'lastTokenUpdate': FieldValue.serverTimestamp(),
-          'lastTokenDeviceId': deviceId,
+          'lastTokenUpdate': FieldValue.delete(),
+          'lastTokenDeviceId': FieldValue.delete(),
         }, SetOptions(merge: true));
         print('Cleared FCM token for ${user.uid} on device $deviceId');
       } catch (e) {

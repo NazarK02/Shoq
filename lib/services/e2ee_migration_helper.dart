@@ -19,13 +19,17 @@ class E2EEMigrationHelper {
     final data = userDoc.data();
     if (data == null) return false;
     if (data['publicKey'] != null) return true;
-    final devices = data['devices'];
-    if (devices is Map) {
-      for (final entry in devices.entries) {
-        final value = entry.value;
-        if (value is Map && value['publicKey'] is String) {
-          return true;
-        }
+    return _hasDevicePublicKey(data['devices']);
+  }
+
+  bool _hasDevicePublicKey(dynamic devices) {
+    if (devices is! Map) return false;
+    for (final value in devices.values) {
+      if (value is Map && value['publicKey'] is String) {
+        return true;
+      }
+      if (_hasDevicePublicKey(value)) {
+        return true;
       }
     }
     return false;
@@ -38,7 +42,8 @@ class E2EEMigrationHelper {
 
     // Check if user already has a public key
     final userDoc = await _firestore.collection('users').doc(user.uid).get();
-    if (userDoc.data()?['publicKey'] != null) {
+    final existingData = userDoc.data();
+    if (existingData != null && _hasDevicePublicKey(existingData['devices'])) {
       print('User already has encryption enabled');
       return;
     }
@@ -59,12 +64,9 @@ class E2EEMigrationHelper {
     final updates = <String, dynamic>{
       'devices.$deviceId.publicKey': publicKey,
       'devices.$deviceId.publicKeyUpdatedAt': FieldValue.serverTimestamp(),
+      'publicKey': FieldValue.delete(),
+      'publicKeyUpdatedAt': FieldValue.delete(),
     };
-
-    if (userDoc.data()?['publicKey'] == null) {
-      updates['publicKey'] = publicKey;
-      updates['publicKeyUpdatedAt'] = FieldValue.serverTimestamp();
-    }
 
     await _firestore
         .collection('users')

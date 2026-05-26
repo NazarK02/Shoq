@@ -141,7 +141,6 @@ class CryptoService {
     );
 
     await _syncDevicePublicKey(selected.publicKeyBase64);
-    await _maybeWriteLegacyPublicKey(selected.publicKeyBase64);
   }
 
   bool _matchesLegacyPublicKey(
@@ -434,21 +433,42 @@ class CryptoService {
     await _firestore.collection('users').doc(user.uid).set({
       'devices.$deviceId.publicKey': publicKeyBase64,
       'devices.$deviceId.publicKeyUpdatedAt': FieldValue.serverTimestamp(),
+      'publicKey': FieldValue.delete(),
+      'publicKeyUpdatedAt': FieldValue.delete(),
     }, SetOptions(merge: true));
   }
 
-  Future<void> _maybeWriteLegacyPublicKey(String publicKeyBase64) async {
-    final user = _auth.currentUser;
-    if (user == null) return;
+  String? _preferredPublicKeyFromUserData(Map<String, dynamic>? data) {
+    if (data == null || data.isEmpty) return null;
 
-    final userDoc = await _firestore.collection('users').doc(user.uid).get();
-    final existing = userDoc.data()?['publicKey'] as String?;
-    if (existing != null && existing.isNotEmpty) return;
+    final candidates = <String>[];
+    void addCandidate(String? value) {
+      if (value == null) return;
+      final trimmed = value.trim();
+      if (trimmed.isEmpty || candidates.contains(trimmed)) return;
+      candidates.add(trimmed);
+    }
 
-    await _firestore.collection('users').doc(user.uid).set({
-      'publicKey': publicKeyBase64,
-      'publicKeyUpdatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    final devices = data['devices'];
+    void walk(dynamic node) {
+      if (node is! Map) return;
+      for (final value in node.values) {
+        if (value is Map && value['publicKey'] is String) {
+          addCandidate(value['publicKey'] as String?);
+        }
+        walk(value);
+      }
+    }
+
+    walk(devices);
+    addCandidate(data['publicKey'] as String?);
+
+    for (final candidate in candidates) {
+      if (_decodeBase64OrNull(candidate) != null) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   /// Encrypt message
@@ -465,8 +485,9 @@ class CryptoService {
         .doc(recipientUserId)
         .get();
 
-    final recipientPublicKeyBase64 =
-        recipientDoc.data()?['publicKey'] as String?;
+    final recipientPublicKeyBase64 = _preferredPublicKeyFromUserData(
+      recipientDoc.data(),
+    );
 
     if (recipientPublicKeyBase64 == null) {
       throw Exception('Recipient has no public key');
@@ -492,7 +513,9 @@ class CryptoService {
         .doc(senderUserId)
         .get();
 
-    final senderPublicKeyBase64 = senderDoc.data()?['publicKey'] as String?;
+    final senderPublicKeyBase64 = _preferredPublicKeyFromUserData(
+      senderDoc.data(),
+    );
 
     if (senderPublicKeyBase64 == null) {
       throw Exception('Sender has no public key');

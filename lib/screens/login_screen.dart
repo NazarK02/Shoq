@@ -1,10 +1,11 @@
 import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 import '../services/theme_service.dart';
+import '../services/password_reset_service.dart';
 import '../services/windows_google_auth_service.dart';
 import '../generated/app_localizations.dart';
 import 'registration_screen.dart';
@@ -27,6 +28,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
+  final PasswordResetService _passwordResetService = PasswordResetService();
 
   bool get _googleSignInSupportedDesktop {
     if (kIsWeb) return true;
@@ -53,6 +55,23 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  String _authErrorMessage(AppLocalizations l, FirebaseAuthException e) {
+    switch (e.code) {
+      case 'user-not-found':
+        return l.authErrorUserNotFound;
+      case 'wrong-password':
+        return l.authErrorWrongPassword;
+      case 'invalid-email':
+        return l.authErrorInvalidEmail;
+      case 'network-request-failed':
+        return l.authErrorNetwork;
+      case 'too-many-requests':
+        return l.authErrorTooManyRequests;
+      default:
+        return l.authErrorDefault;
+    }
+  }
+
   // Email/Password Login
   Future<void> _loginWithEmail() async {
     final l = AppLocalizations.of(context);
@@ -70,33 +89,140 @@ class _LoginScreenState extends State<LoginScreen> {
         // AuthWrapper will automatically navigate
       }
     } on FirebaseAuthException catch (e) {
-      String message = l.authErrorDefault;
-      if (e.code == 'user-not-found') {
-        message = l.authErrorUserNotFound;
-      } else if (e.code == 'wrong-password') {
-        message = l.authErrorWrongPassword;
-      } else if (e.code == 'invalid-email') {
-        message = l.authErrorInvalidEmail;
-      } else if (e.code == 'user-disabled') {
-        message = l.authErrorDefault;
-      } else if (e.code == 'too-many-requests') {
-        message = l.authErrorTooManyRequests;
-      }
-
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        ).showSnackBar(SnackBar(content: Text(_authErrorMessage(l, e))));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('${l.authErrorDefault}: ${e.toString()}')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${l.authErrorDefault}: ${e.toString()}')),
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _showForgotPasswordDialog() async {
+    final l = AppLocalizations.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final formKey = GlobalKey<FormState>();
+    final emailController = TextEditingController(
+      text: _emailController.text.trim(),
+    );
+    var isSending = false;
+
+    Future<void> submit(
+      BuildContext dialogContext,
+      void Function(VoidCallback fn) setDialogState,
+    ) async {
+      if (!formKey.currentState!.validate()) return;
+
+      setDialogState(() => isSending = true);
+
+      try {
+        await _passwordResetService.sendPasswordResetEmail(
+          emailController.text,
+        );
+        if (!mounted) return;
+        navigator.pop();
+        messenger.showSnackBar(
+          SnackBar(content: Text(l.passwordResetEmailSent)),
+        );
+      } on FirebaseAuthException catch (e) {
+        if (!mounted) return;
+        messenger.showSnackBar(
+          SnackBar(content: Text(_authErrorMessage(l, e))),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        messenger.showSnackBar(
+          SnackBar(content: Text('${l.authErrorDefault}: ${e.toString()}')),
+        );
+      } finally {
+        if (dialogContext.mounted) {
+          setDialogState(() => isSending = false);
+        }
+      }
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: Text(l.resetPasswordTitle),
+              content: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      l.resetPasswordBody,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        labelText: l.email,
+                        prefixIcon: const Icon(Icons.email_outlined),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return l.pleaseEnterEmail;
+                        }
+                        if (!value.contains('@')) {
+                          return l.authErrorInvalidEmail;
+                        }
+                        return null;
+                      },
+                      onFieldSubmitted: (_) {
+                        if (!isSending) {
+                          submit(dialogContext, setDialogState);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSending
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: Text(l.cancel),
+                ),
+                FilledButton(
+                  onPressed: isSending
+                      ? null
+                      : () => submit(dialogContext, setDialogState),
+                  child: isSending
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(l.sendResetLink),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    emailController.dispose();
   }
 
   // Google Sign-In
@@ -108,11 +234,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (isLinuxDesktop) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l.googleSignInUnsupportedLinux),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l.googleSignInUnsupportedLinux)));
       }
       return;
     }
@@ -179,7 +303,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       if (mounted) {
-        print('Google Sign-In Error: $e');
+        debugPrint('Google Sign-In Error: $e');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${l.authErrorDefault}: ${e.toString()}')),
         );
@@ -308,13 +432,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             ],
                           ),
                           TextButton(
-                            onPressed: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(l.comingSoon),
-                                ),
-                              );
-                            },
+                            onPressed: _isLoading
+                                ? null
+                                : _showForgotPasswordDialog,
                             child: Text(l.forgotPassword),
                           ),
                         ],

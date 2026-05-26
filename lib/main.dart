@@ -8,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shoq/generated/app_localizations.dart';
 import 'services/locale_service.dart';
 import 'screens/login_screen.dart';
@@ -294,11 +295,19 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   String? _bootstrappedUid;
   Timer? _windowsTokenPollTimer;
   bool _windowsTokenCheckInProgress = false;
-  bool _windowsTokenVerified = false;
-  String? _windowsTokenVerifiedUid;
   String? _verificationCheckUid;
   Timer? _verificationPollTimer;
   bool _forceSignOutInProgress = false;
+  User? _authUser;
+  bool _authEventReceived = false;
+  bool _showBootstrapLoading = true;
+  bool _showEmailVerification = false;
+  double _bootstrapProgress = 0.08;
+  String _bootstrapMessage = 'Starting Shoq...';
+  int _authGeneration = 0;
+  bool _authHintLoaded = false;
+  String? _authRestoreHintUid;
+  Timer? _authRestoreGraceTimer;
 
   @override
   void initState() {
@@ -309,67 +318,151 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       _handleCallNotification,
     );
 
-    _authSubscription = FirebaseAuth.instance.userChanges().listen((
-      user,
-    ) async {
-      if (user != null) {
-        _verificationCheckUid = user.uid;
-        final isGoogleUser = user.providerData.any(
-          (p) => p.providerId == 'google.com',
-        );
-        final requiresVerification = !isGoogleUser && !user.emailVerified;
-        if (Platform.isWindows && requiresVerification) {
-          _startWindowsTokenPolling(user);
-        }
-        final shouldSaveUser = !Platform.isWindows || !requiresVerification;
-        if (shouldSaveUser) {
-          try {
-            await UserService().saveUserToFirestore(user: user);
-          } catch (e) {
-            debugPrint('User document save failed: $e');
-          }
-        } else {
-          debugPrint(
-            'Skipping user document save until verification on Windows.',
-          );
-        }
-        final tokenVerifiedForUser =
-            _windowsTokenVerified && _windowsTokenVerifiedUid == user.uid;
-        if (requiresVerification &&
-            !(Platform.isWindows && tokenVerifiedForUser)) {
-          _presenceService.stopPresenceTracking();
-          _stopIncomingCallListener();
-          if (!Platform.isWindows) {
-            _stopVerificationPolling();
-          }
-          return;
-        }
-        await _bootstrapForUser(user);
-      } else {
-        final previousBootstrappedUid = _bootstrappedUid;
-        _presenceService.stopPresenceTracking();
-        UserService().stopUserDocListener();
-        UserCacheService().clear();
-        ConversationCacheService().clearAll();
-        _stopIncomingCallListener();
-        _stopVerificationPolling();
-        _e2eeInitialized = false;
-        _verificationCheckUid = null;
-        _bootstrappedUid = null;
-        _bootstrapInProgress = false;
-        _windowsTokenVerified = false;
-        _windowsTokenVerifiedUid = null;
-        _pendingCallPayload = null;
-        _verificationService.clearLocallyVerified(previousBootstrappedUid ?? '');
-        unawaited(NotificationService().clearPendingCallIntent());
-      }
+    unawaited(_loadAuthRestoreHint());
+
+    _authSubscription = FirebaseAuth.instance.userChanges().listen((user) {
+      unawaited(_handleAuthUserChanged(user));
     });
   }
 
-  Future<void> _forceSignOut() async {
-    if (_forceSignOutInProgress) return;
-    _forceSignOutInProgress = true;
+  Future<void> _loadAuthRestoreHint() async {
+    final uid = await _readAuthRestoreHint();
+    if (!mounted) return;
+    setState(() {
+      _authHintLoaded = true;
+      _authRestoreHintUid = uid;
+    });
+
+    if (_authEventReceived && _authUser == null) {
+      unawaited(_handleAuthUserChanged(null));
+    }
+  }
+
+  Future<String?> _readAuthRestoreHint() async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final uid = prefs.getString(UserService.authRestoreHintKey)?.trim() ?? '';
+      return uid.isEmpty ? null : uid;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _rememberAuthRestoreHint(String uid) async {
+    final normalized = uid.trim();
+    if (normalized.isEmpty) return;
+    _authRestoreHintUid = normalized;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(UserService.authRestoreHintKey, normalized);
+    } catch (_) {}
+  }
+
+  void _cancelAuthRestoreGrace() {
+    _authRestoreGraceTimer?.cancel();
+    _authRestoreGraceTimer = null;
+  }
+
+  void _setBootstrapState({
+    required String message,
+    required double progress,
+    bool loading = true,
+    bool showEmailVerification = false,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      _showBootstrapLoading = loading;
+      _showEmailVerification = showEmailVerification;
+      _bootstrapMessage = message;
+      _bootstrapProgress = progress.clamp(0.0, 1.0);
+    });
+  }
+
+  Future<bool> _isVerifiedForEntry(User user) async {
+    final isGoogleUser = user.providerData.any(
+      (p) => p.providerId == 'google.com',
+    );
+    if (isGoogleUser ||
+        user.emailVerified ||
+        _verificationService.isLocallyVerified(user.uid)) {
+      return true;
+    }
+
+    if (!Platform.isWindows) return false;
+
+    _setBootstrapState(
+      message: 'Checking email verification...',
+      progress: 0.24,
+    );
+    try {
+      final verified = await _verificationService
+          .refreshEmailVerified(user)
+          .timeout(const Duration(seconds: 6), onTimeout: () => false);
+      if (verified) {
+        _verificationService.markLocallyVerified(user.uid);
+      }
+      return verified;
+    } catch (e) {
+      debugPrint('Immediate Windows verification check failed: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _waitForWindowsVerificationSettle(
+    User user,
+    int generation,
+  ) async {
+    if (!Platform.isWindows) return false;
+
+    const attempts = 6;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      if (!mounted || generation != _authGeneration) return false;
+
+      _setBootstrapState(
+        message: 'Checking email verification...',
+        progress: (0.3 + (attempt * 0.09)).clamp(0.3, 0.84),
+      );
+
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (!mounted || generation != _authGeneration) return false;
+
+      final current = FirebaseAuth.instance.currentUser;
+      if (current == null || current.uid != user.uid) return false;
+
+      try {
+        final verified = await _verificationService
+            .refreshEmailVerified(current)
+            .timeout(const Duration(seconds: 4), onTimeout: () => false);
+        if (verified) {
+          _verificationService.markLocallyVerified(user.uid);
+          return true;
+        }
+      } catch (e) {
+        debugPrint('Windows verification settle check failed: $e');
+      }
+    }
+
+    return false;
+  }
+
+  Future<void> _handleAuthUserChanged(User? user) async {
+    final generation = ++_authGeneration;
+    if (mounted) {
+      setState(() {
+        _authEventReceived = true;
+        _authUser = user;
+        _showBootstrapLoading = user != null;
+        _showEmailVerification = false;
+        _bootstrapMessage = user == null
+            ? 'Opening sign in...'
+            : 'Checking your session...';
+        _bootstrapProgress = user == null ? 0 : 0.12;
+      });
+    }
+
+    if (user == null) {
+      _cancelAuthRestoreGrace();
+      final previousBootstrappedUid = _bootstrappedUid;
       _presenceService.stopPresenceTracking();
       UserService().stopUserDocListener();
       UserCacheService().clear();
@@ -378,8 +471,115 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       _stopVerificationPolling();
       _e2eeInitialized = false;
       _verificationCheckUid = null;
-      _windowsTokenVerified = false;
-      _windowsTokenVerifiedUid = null;
+      _bootstrappedUid = null;
+      _bootstrapInProgress = false;
+      _pendingCallPayload = null;
+      if (!_authHintLoaded) {
+        _setBootstrapState(
+          message: 'Checking saved sign-in...',
+          progress: 0.12,
+        );
+        return;
+      }
+
+      final authHintUid = await _readAuthRestoreHint();
+      if (!mounted || generation != _authGeneration) return;
+      _authRestoreHintUid = authHintUid;
+
+      if (Platform.isWindows &&
+          authHintUid != null &&
+          authHintUid.isNotEmpty &&
+          !_forceSignOutInProgress) {
+        _setBootstrapState(
+          message: 'Restoring your session...',
+          progress: 0.18,
+        );
+        _authRestoreGraceTimer = Timer(const Duration(seconds: 16), () {
+          if (!mounted || generation != _authGeneration) return;
+          final current = FirebaseAuth.instance.currentUser;
+          if (current != null) {
+            unawaited(_handleAuthUserChanged(current));
+            return;
+          }
+          _verificationService.clearLocallyVerified(
+            previousBootstrappedUid ?? '',
+          );
+          _setBootstrapState(
+            message: 'Opening sign in...',
+            progress: 0,
+            loading: false,
+          );
+        });
+        return;
+      }
+
+      _verificationService.clearLocallyVerified(previousBootstrappedUid ?? '');
+      unawaited(NotificationService().clearPendingCallIntent());
+      _setBootstrapState(
+        message: 'Opening sign in...',
+        progress: 0,
+        loading: false,
+      );
+      return;
+    }
+
+    _cancelAuthRestoreGrace();
+    final activeUser = FirebaseAuth.instance.currentUser ?? user;
+    _verificationCheckUid = activeUser.uid;
+
+    final isGoogleUser = activeUser.providerData.any(
+      (p) => p.providerId == 'google.com',
+    );
+    final requiresVerification = !isGoogleUser;
+    var verified = await _isVerifiedForEntry(activeUser);
+    if (!mounted || generation != _authGeneration) return;
+
+    if (requiresVerification && !verified && Platform.isWindows) {
+      verified = await _waitForWindowsVerificationSettle(
+        activeUser,
+        generation,
+      );
+      if (!mounted || generation != _authGeneration) return;
+    }
+
+    if (requiresVerification && !verified) {
+      _presenceService.stopPresenceTracking();
+      _stopIncomingCallListener();
+      if (!Platform.isWindows) {
+        _startVerificationPolling(activeUser);
+      } else {
+        _startWindowsTokenPolling(activeUser);
+      }
+      _setBootstrapState(
+        message: 'Email verification required',
+        progress: 1,
+        loading: false,
+        showEmailVerification: true,
+      );
+      return;
+    }
+
+    _stopVerificationPolling();
+    _setBootstrapState(message: 'Preparing your profile...', progress: 0.36);
+    await _bootstrapForUser(activeUser);
+    if (!mounted || generation != _authGeneration) return;
+    _setBootstrapState(message: 'Ready', progress: 1, loading: false);
+  }
+
+  Future<void> _forceSignOut() async {
+    if (_forceSignOutInProgress) return;
+    _forceSignOutInProgress = true;
+    try {
+      _cancelAuthRestoreGrace();
+      _presenceService.stopPresenceTracking();
+      UserService().stopUserDocListener();
+      UserCacheService().clear();
+      ConversationCacheService().clearAll();
+      _stopIncomingCallListener();
+      _stopVerificationPolling();
+      _e2eeInitialized = false;
+      _verificationCheckUid = null;
+      _authRestoreHintUid = null;
       _pendingCallPayload = null;
       _verificationService.clearLocallyVerified(_bootstrappedUid ?? '');
       unawaited(NotificationService().clearPendingCallIntent());
@@ -396,37 +596,58 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     if (_bootstrappedUid == user.uid) return;
     _bootstrapInProgress = true;
     try {
-      try {
-        await UserService().saveUserToFirestore(user: user);
-      } catch (e) {
-        debugPrint('User document save failed during bootstrap: $e');
-      }
-      UserService().loadCachedProfile();
+      _setBootstrapState(message: 'Loading your profile...', progress: 0.44);
+      unawaited(
+        UserService()
+            .saveUserToFirestore(user: user)
+            .timeout(const Duration(seconds: 5))
+            .catchError((e) {
+              debugPrint('User document save failed during bootstrap: $e');
+            }),
+      );
+      unawaited(UserService().loadCachedProfile());
       UserService().startUserDocListener();
+      _setBootstrapState(
+        message: 'Connecting realtime services...',
+        progress: 0.58,
+      );
       _startIncomingCallListener(user.uid);
       unawaited(_restorePendingCallIntent());
-      // Initialize E2EE for logged-in users (only once per session)
-      if (!_e2eeInitialized) {
-        await _initializeE2EEForUser();
-        _e2eeInitialized = true;
-      }
-
-      try {
-        await ChatService().initializeEncryption();
-      } catch (e) {
-        debugPrint('Chat encryption priming failed: $e');
-      }
-
-      unawaited(AppPrefetchService().warmUpForUser(user.uid));
-
+      _setBootstrapState(message: 'Setting presence...', progress: 0.9);
       _presenceService.startPresenceTracking();
       _bootstrappedUid = user.uid;
+      unawaited(_rememberAuthRestoreHint(user.uid));
+      unawaited(_warmServicesAfterEntry(user.uid));
     } catch (e) {
       debugPrint('Auth bootstrap failed, forcing sign-out: $e');
       await _forceSignOut();
     } finally {
       _bootstrapInProgress = false;
     }
+  }
+
+  Future<void> _warmServicesAfterEntry(String uid) async {
+    if (FirebaseAuth.instance.currentUser?.uid != uid) return;
+
+    if (!_e2eeInitialized) {
+      try {
+        await _initializeE2EEForUser();
+        if (FirebaseAuth.instance.currentUser?.uid == uid) {
+          _e2eeInitialized = true;
+        }
+      } catch (e) {
+        debugPrint('Deferred E2EE initialization failed: $e');
+      }
+    }
+
+    try {
+      await ChatService().initializeEncryption();
+    } catch (e) {
+      debugPrint('Deferred chat encryption priming failed: $e');
+    }
+
+    if (FirebaseAuth.instance.currentUser?.uid != uid) return;
+    await AppPrefetchService().warmUpForUser(uid);
   }
 
   void _startVerificationPolling(User user) {
@@ -451,7 +672,15 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
       if (current.emailVerified) {
         _stopVerificationPolling();
-        if (mounted) setState(() {});
+        if (mounted) {
+          setState(() {
+            _showEmailVerification = false;
+            _showBootstrapLoading = true;
+            _bootstrapMessage = 'Verification confirmed...';
+            _bootstrapProgress = 0.32;
+          });
+        }
+        await _handleAuthUserChanged(current);
         return;
       }
 
@@ -469,6 +698,16 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       }
       if (refreshed.emailVerified) {
         _stopVerificationPolling();
+        if (mounted) {
+          setState(() {
+            _showEmailVerification = false;
+            _showBootstrapLoading = true;
+            _bootstrapMessage = 'Verification confirmed...';
+            _bootstrapProgress = 0.32;
+          });
+        }
+        await _handleAuthUserChanged(refreshed);
+        return;
       }
       setState(() {});
     });
@@ -507,12 +746,17 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         );
         if (verified) {
           _verificationService.markLocallyVerified(user.uid);
-          _windowsTokenVerified = true;
-          _windowsTokenVerifiedUid = user.uid;
           _windowsTokenPollTimer?.cancel();
           _windowsTokenPollTimer = null;
-          if (mounted) setState(() {});
-          await _bootstrapForUser(current);
+          if (mounted) {
+            setState(() {
+              _showEmailVerification = false;
+              _showBootstrapLoading = true;
+              _bootstrapMessage = 'Verification confirmed...';
+              _bootstrapProgress = 0.32;
+            });
+          }
+          await _handleAuthUserChanged(current);
         }
       } catch (e) {
         debugPrint('Windows token verify poll failed: $e');
@@ -659,13 +903,13 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     if (callId.isEmpty) return null;
 
     final fromId = (payload['fromId']?.toString() ?? '').trim();
-    final payloadConversationId =
-        (payload['conversationId']?.toString() ?? '').trim();
+    final payloadConversationId = (payload['conversationId']?.toString() ?? '')
+        .trim();
     final conversationId = payloadConversationId.isNotEmpty
         ? payloadConversationId
         : (fromId.isNotEmpty
-            ? ChatService().getDirectConversationId(fromId, userId)
-            : '');
+              ? ChatService().getDirectConversationId(fromId, userId)
+              : '');
 
     Map<String, dynamic> data = payload;
     if (conversationId.isNotEmpty) {
@@ -783,6 +1027,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.cancel();
     _callNotificationSub?.cancel();
+    _cancelAuthRestoreGrace();
     _stopIncomingCallListener();
     _stopVerificationPolling();
     _presenceService.stopPresenceTracking();
@@ -816,73 +1061,79 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.userChanges(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          unawaited(
-            _logCrash('AuthStream', snapshot.error, snapshot.stackTrace),
-          );
-          _stopVerificationPolling();
-          return const LoginScreen();
-        }
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
+    if (!_authHintLoaded || !_authEventReceived || _showBootstrapLoading) {
+      return _BootstrapLoadingScreen(
+        message: _bootstrapMessage,
+        progress: _bootstrapProgress,
+      );
+    }
 
-        final user = snapshot.data;
+    if (_authUser != null) {
+      if (_showEmailVerification) {
+        return const EmailVerificationScreen();
+      }
+      return const HomeScreen();
+    }
 
-        if (user != null) {
-          final activeUser = FirebaseAuth.instance.currentUser ?? user;
-          final isGoogleUser = activeUser.providerData.any(
-            (p) => p.providerId == 'google.com',
-          );
+    _stopVerificationPolling();
+    return const LoginScreen();
+  }
+}
 
-        if (isGoogleUser) {
-          _stopVerificationPolling();
-          return const HomeScreen();
-        }
+class _BootstrapLoadingScreen extends StatelessWidget {
+  const _BootstrapLoadingScreen({
+    required this.message,
+    required this.progress,
+  });
 
-        if (Platform.isWindows &&
-            _verificationService.isLocallyVerified(activeUser.uid)) {
-          _stopVerificationPolling();
-          return const HomeScreen();
-        }
+  final String message;
+  final double progress;
 
-        if (activeUser.emailVerified) {
-          _stopVerificationPolling();
-          return const HomeScreen();
-        }
-
-          final tokenVerified =
-              _windowsTokenVerified &&
-              _windowsTokenVerifiedUid == activeUser.uid;
-          if (Platform.isWindows && tokenVerified) {
-            _stopVerificationPolling();
-            return const HomeScreen();
-          }
-
-          if (!Platform.isWindows) {
-            _startVerificationPolling(activeUser);
-          } else {
-            _startWindowsTokenPolling(activeUser);
-          }
-
-          final refreshedUser = FirebaseAuth.instance.currentUser;
-          if (refreshedUser != null && refreshedUser.emailVerified) {
-            _stopVerificationPolling();
-            return const HomeScreen();
-          }
-
-          return const EmailVerificationScreen();
-        }
-
-        _stopVerificationPolling();
-        return const LoginScreen();
-      },
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 340),
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    width: 78,
+                    height: 78,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                Text(
+                  'Shoq',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                LinearProgressIndicator(
+                  value: progress <= 0 ? null : progress.clamp(0.05, 0.98),
+                  minHeight: 6,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

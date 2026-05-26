@@ -198,10 +198,10 @@ class ChatService {
       update['missedAt'] = FieldValue.serverTimestamp();
     }
 
-    await _callMessageRef(conversationId, normalizedCallId).set(
-      update,
-      SetOptions(merge: true),
-    );
+    await _callMessageRef(
+      conversationId,
+      normalizedCallId,
+    ).set(update, SetOptions(merge: true));
   }
 
   Future<Map<String, dynamic>?> loadCallMessage({
@@ -318,11 +318,12 @@ class ChatService {
           deviceKeys[deviceId] = publicKey;
         }
 
-        if (legacyKey == null || legacyKey.isEmpty) {
-          updates['publicKey'] = publicKey;
-          updates['publicKeyUpdatedAt'] = FieldValue.serverTimestamp();
-          legacyKey = publicKey;
+        if (data.containsKey('publicKey') ||
+            data.containsKey('publicKeyUpdatedAt')) {
+          updates['publicKey'] = FieldValue.delete();
+          updates['publicKeyUpdatedAt'] = FieldValue.delete();
         }
+        legacyKey = null;
 
         if (updates.isNotEmpty) {
           await _firestore
@@ -576,12 +577,11 @@ class ChatService {
 
     try {
       // Get first 50 chars of plaintext for preview in chat list.
-      final preview =
-          messageType == 'location_live'
-              ? 'Live location'
-              : (messageType == 'location'
-                  ? 'Location'
-                  : _buildMessagePreview(messageText));
+      final preview = messageType == 'location_live'
+          ? 'Live location'
+          : (messageType == 'location'
+                ? 'Location'
+                : _buildMessagePreview(messageText));
 
       final payload = await _buildEncryptedTextPayload(
         messageText: messageText,
@@ -1330,6 +1330,50 @@ class ChatService {
         .collection('messages')
         .doc(messageId)
         .delete();
+  }
+
+  Future<void> setMessagePinned({
+    required String conversationId,
+    required String messageId,
+    required bool pinned,
+    String? previewText,
+    String? senderId,
+    String? channelId,
+    String? type,
+  }) async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) return;
+
+    final trimmedConversationId = conversationId.trim();
+    final trimmedMessageId = messageId.trim();
+    if (trimmedConversationId.isEmpty || trimmedMessageId.isEmpty) return;
+
+    final ref = _firestore
+        .collection('conversations')
+        .doc(trimmedConversationId);
+    final path = 'pinnedMessages.$trimmedMessageId';
+    if (!pinned) {
+      await ref.update({path: FieldValue.delete()});
+      return;
+    }
+
+    final text = (previewText ?? '').trim();
+    final clippedText = text.length > 180
+        ? '${text.substring(0, 180)}...'
+        : text;
+    final trimmedChannelId = channelId?.trim() ?? '';
+    final trimmedType = type?.trim() ?? '';
+    final trimmedSenderId = senderId?.trim() ?? '';
+
+    await ref.set({
+      '$path.messageId': trimmedMessageId,
+      '$path.previewText': clippedText.isEmpty ? 'Pinned message' : clippedText,
+      '$path.senderId': trimmedSenderId,
+      '$path.pinnedBy': currentUser.uid,
+      '$path.pinnedAt': FieldValue.serverTimestamp(),
+      if (trimmedChannelId.isNotEmpty) '$path.channelId': trimmedChannelId,
+      if (trimmedType.isNotEmpty) '$path.type': trimmedType,
+    }, SetOptions(merge: true));
   }
 
   /// Mark messages as read

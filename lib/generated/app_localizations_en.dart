@@ -142,6 +142,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get forgotPassword => 'Forgot password?';
 
   @override
+  String get resetPasswordTitle => 'Reset password';
+
+  @override
+  String get resetPasswordBody =>
+      'Enter your email address and we\'ll send you a password reset link.';
+
+  @override
+  String get sendResetLink => 'Send reset link';
+
+  @override
+  String get passwordResetEmailSent =>
+      'Password reset email sent. Check your inbox.';
+
+  @override
   String get continueWithGoogle => 'Continue with Google';
 
   @override

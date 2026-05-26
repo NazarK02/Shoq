@@ -159,6 +159,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
   String? _conversationId;
   Map<String, dynamic>? _recipientData;
   bool _hasMessages = false;
+  Map<String, Map<String, dynamic>> _pinnedMessages = const {};
   String? _initError;
   bool _sendPulse = false;
   bool _showScrollToBottomButton = false;
@@ -275,9 +276,156 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
             final data = snapshot.data();
             setState(() {
               _hasMessages = data?['hasMessages'] ?? false;
+              _pinnedMessages = _parsePinnedMessages(data?['pinnedMessages']);
             });
           }
         });
+  }
+
+  Map<String, Map<String, dynamic>> _parsePinnedMessages(dynamic raw) {
+    if (raw is! Map) return const {};
+    final result = <String, Map<String, dynamic>>{};
+    raw.forEach((key, value) {
+      final id = key.toString().trim();
+      if (id.isEmpty || value is! Map) return;
+      final data = Map<String, dynamic>.from(value);
+      data['messageId'] ??= id;
+      result[id] = data;
+    });
+    return result;
+  }
+
+  List<Map<String, dynamic>> _visiblePinnedMessages() {
+    final items = _pinnedMessages.values
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    items.sort((a, b) {
+      final aTime = a['pinnedAt'] is Timestamp
+          ? (a['pinnedAt'] as Timestamp).millisecondsSinceEpoch
+          : 0;
+      final bTime = b['pinnedAt'] is Timestamp
+          ? (b['pinnedAt'] as Timestamp).millisecondsSinceEpoch
+          : 0;
+      return bTime.compareTo(aTime);
+    });
+    return items;
+  }
+
+  Future<void> _togglePinnedMessage({
+    required String messageId,
+    required Map<String, dynamic> message,
+    required String previewText,
+  }) async {
+    final conversationId = _conversationId;
+    if (conversationId == null || conversationId.isEmpty) return;
+    final isPinned = _pinnedMessages.containsKey(messageId);
+    try {
+      await _chatService.setMessagePinned(
+        conversationId: conversationId,
+        messageId: messageId,
+        pinned: !isPinned,
+        previewText: previewText,
+        senderId: message['senderId']?.toString(),
+        type: message['type']?.toString(),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not update pin: $e')));
+    }
+  }
+
+  Future<void> _showPinnedMessagesSheet() async {
+    final items = _visiblePinnedMessages();
+    if (items.isEmpty) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            children: [
+              const ListTile(
+                leading: Icon(Icons.push_pin_outlined),
+                title: Text('Pinned messages'),
+              ),
+              for (final item in items)
+                ListTile(
+                  title: Text(
+                    item['previewText']?.toString().trim().isNotEmpty == true
+                        ? item['previewText'].toString()
+                        : 'Pinned message',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: IconButton(
+                    tooltip: 'Unpin',
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      _chatService.setMessagePinned(
+                        conversationId: _conversationId!,
+                        messageId: item['messageId']?.toString() ?? '',
+                        pinned: false,
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPinnedMessagesBar() {
+    final pinned = _visiblePinnedMessages();
+    if (pinned.isEmpty) return const SizedBox.shrink();
+    final first = pinned.first;
+    final text = first['previewText']?.toString().trim().isNotEmpty == true
+        ? first['previewText'].toString()
+        : 'Pinned message';
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.surfaceContainerLow,
+      child: InkWell(
+        onTap: _showPinnedMessagesSheet,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: colorScheme.outlineVariant),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.push_pin_outlined,
+                size: 18,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  pinned.length == 1 ? text : '$text  +${pinned.length - 1}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Pinned messages',
+                icon: const Icon(Icons.keyboard_arrow_down),
+                onPressed: _showPinnedMessagesSheet,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -594,6 +742,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
       appBar: _buildAppBar(displayName, photoUrl),
       body: Column(
         children: [
+          _buildPinnedMessagesBar(),
           Expanded(
             child: Stack(
               children: [
@@ -609,9 +758,11 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                     pendingTextMessages: _pendingTextMessages,
                     pendingUploads: _pendingUploads,
                     optimisticTextByMessageId: _optimisticTextByMessageId,
+                    pinnedMessageIds: _pinnedMessages.keys.toSet(),
                     onPendingTextDelivered: _ackPendingTextMessages,
                     onCancelUpload: _cancelPendingUpload,
                     onReplyRequested: _setReplyDraft,
+                    onTogglePin: _togglePinnedMessage,
                     shouldAutoScroll: _isNearBottom,
                     onAutoScrollToBottom: () =>
                         _scrollToBottom(force: true, animated: true),
@@ -1487,14 +1638,13 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
     final liveLocationRemaining = _liveLocationExpiresAt?.difference(
       DateTime.now(),
     );
-    final liveLocationRemainingText =
-        liveLocationRemaining == null
-            ? null
-            : _formatCompactDuration(
-                liveLocationRemaining.inSeconds < 0
-                    ? 0
-                    : liveLocationRemaining.inSeconds,
-              );
+    final liveLocationRemainingText = liveLocationRemaining == null
+        ? null
+        : _formatCompactDuration(
+            liveLocationRemaining.inSeconds < 0
+                ? 0
+                : liveLocationRemaining.inSeconds,
+          );
 
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
@@ -1632,11 +1782,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                 ),
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.location_on,
-                      size: 16,
-                      color: colorScheme.error,
-                    ),
+                    Icon(Icons.location_on, size: 16, color: colorScheme.error),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Column(
@@ -1655,8 +1801,9 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                             Text(
                               'Ends in $liveLocationRemainingText',
                               style: TextStyle(
-                                color: colorScheme.onErrorContainer
-                                    .withValues(alpha: 0.82),
+                                color: colorScheme.onErrorContainer.withValues(
+                                  alpha: 0.82,
+                                ),
                                 fontSize: 11,
                               ),
                             ),
@@ -1664,9 +1811,8 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                       ),
                     ),
                     TextButton.icon(
-                      onPressed: () => unawaited(
-                        _stopLiveLocation(finalizeMessage: true),
-                      ),
+                      onPressed: () =>
+                          unawaited(_stopLiveLocation(finalizeMessage: true)),
                       icon: Icon(
                         Icons.stop_circle_outlined,
                         size: 18,
@@ -1897,12 +2043,11 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
         final cs = Theme.of(ctx).colorScheme;
         final hasActiveLiveLocation = _liveLocationTimer != null;
         final remaining = _liveLocationExpiresAt?.difference(DateTime.now());
-        final remainingText =
-            remaining == null
-                ? null
-                : _formatCompactDuration(
-                    remaining.inSeconds < 0 ? 0 : remaining.inSeconds,
-                  );
+        final remainingText = remaining == null
+            ? null
+            : _formatCompactDuration(
+                remaining.inSeconds < 0 ? 0 : remaining.inSeconds,
+              );
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
@@ -1928,10 +2073,7 @@ class _ImprovedChatScreenState extends State<ImprovedChatScreen>
                     ),
                     child: Row(
                       children: [
-                        Icon(
-                          Icons.location_on,
-                          color: cs.onErrorContainer,
-                        ),
+                        Icon(Icons.location_on, color: cs.onErrorContainer),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Column(
@@ -2486,9 +2628,16 @@ class _MessagesList extends StatefulWidget {
   final List<_PendingTextMessage> pendingTextMessages;
   final List<_PendingUpload> pendingUploads;
   final Map<String, String> optimisticTextByMessageId;
+  final Set<String> pinnedMessageIds;
   final void Function(Set<String> ids) onPendingTextDelivered;
   final void Function(String id) onCancelUpload;
   final void Function(_ReplyDraft draft) onReplyRequested;
+  final Future<void> Function({
+    required String messageId,
+    required Map<String, dynamic> message,
+    required String previewText,
+  })
+  onTogglePin;
   final bool Function() shouldAutoScroll;
   final VoidCallback onAutoScrollToBottom;
 
@@ -2503,9 +2652,11 @@ class _MessagesList extends StatefulWidget {
     required this.pendingTextMessages,
     required this.pendingUploads,
     required this.optimisticTextByMessageId,
+    required this.pinnedMessageIds,
     required this.onPendingTextDelivered,
     required this.onCancelUpload,
     required this.onReplyRequested,
+    required this.onTogglePin,
     required this.shouldAutoScroll,
     required this.onAutoScrollToBottom,
   });
@@ -2845,7 +2996,8 @@ class _MessagesListState extends State<_MessagesList>
       final type = message['type']?.toString().trim().toLowerCase() ?? 'text';
       if (type == 'file') {
         final fileUrl = message['fileUrl']?.toString().trim() ?? '';
-        final mimeType = message['mimeType']?.toString().trim().toLowerCase() ?? '';
+        final mimeType =
+            message['mimeType']?.toString().trim().toLowerCase() ?? '';
         if (fileUrl.isNotEmpty &&
             (mimeType.startsWith('image/') || _looksLikeImageUrl(fileUrl))) {
           urls.add(fileUrl);
@@ -2884,8 +3036,7 @@ class _MessagesListState extends State<_MessagesList>
 
     for (final url in urls.take(16)) {
       final uri = Uri.tryParse(url);
-      if (uri == null ||
-          (uri.scheme != 'http' && uri.scheme != 'https')) {
+      if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
         continue;
       }
 
@@ -3688,6 +3839,7 @@ class _MessagesListState extends State<_MessagesList>
         isMe &&
         (message['type']?.toString() ?? 'text') == 'text' &&
         message['callSummary'] == null;
+    final isPinned = widget.pinnedMessageIds.contains(messageId);
     final rootContext = context;
 
     await showModalBottomSheet<void>(
@@ -3724,6 +3876,22 @@ class _MessagesListState extends State<_MessagesList>
                     );
                   },
                 ),
+              ListTile(
+                leading: Icon(
+                  isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                ),
+                title: Text(isPinned ? 'Unpin message' : 'Pin message'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(
+                    widget.onTogglePin(
+                      messageId: messageId,
+                      message: message,
+                      previewText: displayText,
+                    ),
+                  );
+                },
+              ),
               if (isMe)
                 ListTile(
                   leading: const Icon(Icons.delete_outline, color: Colors.red),
@@ -4400,9 +4568,7 @@ class _MessagesListState extends State<_MessagesList>
                   lng: lng,
                   isMe: isMe,
                   isLive: isActiveLive,
-                  accentColor: isMe
-                      ? colorScheme.onPrimary
-                      : colorScheme.error,
+                  accentColor: isMe ? colorScheme.onPrimary : colorScheme.error,
                 )
               else
                 Container(
@@ -4520,6 +4686,7 @@ class _MessagesListState extends State<_MessagesList>
         ? 'You'
         : widget.recipientName;
     final isEdited = messageData['edited'] == true;
+    final isPinned = widget.pinnedMessageIds.contains(messageId);
     final callSummary = _extractCallSummaryData(messageData);
     final isCallSummary = callSummary != null;
     final isSticker =
@@ -4591,6 +4758,33 @@ class _MessagesListState extends State<_MessagesList>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (isPinned)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 5),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.push_pin,
+                        size: 13,
+                        color: isMe
+                            ? colorScheme.onPrimary.withValues(alpha: 0.78)
+                            : receivedMetaColor,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Pinned',
+                        style: TextStyle(
+                          color: isMe
+                              ? colorScheme.onPrimary.withValues(alpha: 0.78)
+                              : receivedMetaColor,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               if (!isCallSummary && replyText.isNotEmpty)
                 Container(
                   margin: const EdgeInsets.only(bottom: 6),
@@ -6538,10 +6732,7 @@ class _LocationMapPreview extends StatelessWidget {
               top: 8,
               left: 8,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 3,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.42),
                   borderRadius: BorderRadius.circular(999),
@@ -6561,10 +6752,7 @@ class _LocationMapPreview extends StatelessWidget {
               right: 8,
               bottom: 8,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: liveChipBackground,
                   borderRadius: BorderRadius.circular(999),
@@ -6594,10 +6782,7 @@ class _LocationMapPreview extends StatelessWidget {
               left: 8,
               bottom: 8,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.42),
                   borderRadius: BorderRadius.circular(999),
@@ -6636,10 +6821,9 @@ class _LocationMapScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final point = LatLng(lat, lng);
     final remaining = expiresAt?.difference(DateTime.now());
-    final remainingText =
-        remaining != null && remaining.inSeconds > 0
-            ? _formatCountdown(remaining)
-            : null;
+    final remainingText = remaining != null && remaining.inSeconds > 0
+        ? _formatCountdown(remaining)
+        : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -6681,10 +6865,9 @@ class _LocationMapScreen extends StatelessWidget {
                   color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .outlineVariant
-                        .withValues(alpha: 0.35),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant.withValues(alpha: 0.35),
                   ),
                 ),
                 child: Column(
@@ -6716,9 +6899,9 @@ class _LocationMapScreen extends StatelessWidget {
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .errorContainer,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.errorContainer,
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
@@ -6834,11 +7017,7 @@ class _LocationPin extends StatelessWidget {
     return Stack(
       alignment: Alignment.center,
       children: [
-        Icon(
-          Icons.location_pin,
-          size: 46,
-          color: accentColor,
-        ),
+        Icon(Icons.location_pin, size: 46, color: accentColor),
         Positioned(
           top: 15,
           child: Container(

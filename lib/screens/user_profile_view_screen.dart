@@ -299,8 +299,9 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
           .set({
             'userId': widget.userId,
             'displayName': _userData?['displayName'] ?? 'User',
-            'email': _userData?['email'] ?? '',
             'photoUrl': _userData?['photoUrl'],
+            if (_userData?['friendId'] != null)
+              'friendId': _userData?['friendId'],
             'blockedAt': FieldValue.serverTimestamp(),
           });
 
@@ -374,7 +375,6 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
   Widget build(BuildContext context) {
     final photoUrl = _pickPhotoUrl();
     final displayName = _userData?['displayName'] ?? 'User';
-    final email = _userData?['email'] ?? '';
     final friendId = _userData?['friendId']?.toString().trim() ?? '';
     final bio = _getBio();
     final location = _userData?['location'] ?? '';
@@ -567,13 +567,7 @@ class _UserProfileViewScreenState extends State<UserProfileViewScreen> {
           Card(
             child: Column(
               children: [
-                ListTile(
-                  leading: const Icon(Icons.email_outlined),
-                  title: const Text('Email'),
-                  subtitle: Text(email),
-                ),
                 if (friendId.isNotEmpty) ...[
-                  const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.alternate_email),
                     title: const Text('Friend ID'),

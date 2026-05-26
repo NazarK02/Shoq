@@ -49,7 +49,7 @@ class PresenceService {
       await _firestore.collection('users').doc(user.uid).update({
         'status': 'online',
         'lastSeen': FieldValue.serverTimestamp(),
-        'lastHeartbeat': FieldValue.serverTimestamp(),
+        'lastHeartbeat': FieldValue.delete(),
       });
       _isOnline = true;
       print('✅ User set to online');
@@ -67,6 +67,7 @@ class PresenceService {
       await _firestore.collection('users').doc(user.uid).update({
         'status': 'offline',
         'lastSeen': FieldValue.serverTimestamp(),
+        'lastHeartbeat': FieldValue.delete(),
       });
       _isOnline = false;
       print('✅ User set to offline');
@@ -81,8 +82,8 @@ class PresenceService {
 
     try {
       await _firestore.collection('users').doc(user.uid).update({
-        'lastHeartbeat': FieldValue.serverTimestamp(),
         'lastSeen': FieldValue.serverTimestamp(),
+        'lastHeartbeat': FieldValue.delete(),
       });
       print('💓 Heartbeat updated');
     } catch (e) {
@@ -114,7 +115,9 @@ class PresenceService {
     final status = userData['status'] as String?;
     if (status != 'online') return false;
 
-    final lastHeartbeat = userData['lastHeartbeat'] as Timestamp?;
+    final lastHeartbeat =
+        (userData['lastHeartbeat'] as Timestamp?) ??
+        (userData['lastSeen'] as Timestamp?);
     if (lastHeartbeat == null) return true; // just logged in, no heartbeat yet
 
     return DateTime.now().difference(lastHeartbeat.toDate()).inSeconds < 120;

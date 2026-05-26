@@ -142,6 +142,20 @@ class AppLocalizationsPt extends AppLocalizations {
   String get forgotPassword => 'Esqueceu a palavra-passe?';
 
   @override
+  String get resetPasswordTitle => 'Repor palavra-passe';
+
+  @override
+  String get resetPasswordBody =>
+      'Introduza o seu e-mail e enviaremos uma ligação para repor a palavra-passe.';
+
+  @override
+  String get sendResetLink => 'Enviar ligação';
+
+  @override
+  String get passwordResetEmailSent =>
+      'E-mail para repor a palavra-passe enviado. Verifique a sua caixa de entrada.';
+
+  @override
   String get continueWithGoogle => 'Continuar com o Google';
 
   @override
@@ -877,6 +891,20 @@ class AppLocalizationsPtPt extends AppLocalizationsPt {
 
   @override
   String get forgotPassword => 'Esqueceu a palavra-passe?';
+
+  @override
+  String get resetPasswordTitle => 'Repor palavra-passe';
+
+  @override
+  String get resetPasswordBody =>
+      'Introduza o seu e-mail e enviaremos uma ligação para repor a palavra-passe.';
+
+  @override
+  String get sendResetLink => 'Enviar ligação';
+
+  @override
+  String get passwordResetEmailSent =>
+      'E-mail para repor a palavra-passe enviado. Verifique a sua caixa de entrada.';
 
   @override
   String get continueWithGoogle => 'Continuar com o Google';

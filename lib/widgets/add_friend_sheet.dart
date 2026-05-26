@@ -8,7 +8,7 @@ import '../screens/qr_scanner_screen.dart';
 /// Bottom sheet for adding a new friend.
 ///
 /// The user can either:
-///   (a) type a UID or email into the search field, or
+///   (a) type a UID or friend ID into the search field, or
 ///   (b) tap "Scan QR" to open the camera scanner on mobile.
 ///
 /// On desktop (Windows / macOS / Linux) the QR scan button is hidden
@@ -17,10 +17,7 @@ import '../screens/qr_scanner_screen.dart';
 /// On a successful lookup the [onFriendResolved] callback receives the
 /// Firestore user document so the caller can send a friend request.
 class AddFriendSheet extends StatefulWidget {
-  const AddFriendSheet({
-    super.key,
-    required this.onFriendResolved,
-  });
+  const AddFriendSheet({super.key, required this.onFriendResolved});
 
   /// Called with the Firestore user document when a valid user is found.
   final void Function(Map<String, dynamic> userData) onFriendResolved;
@@ -75,6 +72,23 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
 
     try {
       final db = FirebaseFirestore.instance;
+      Future<QuerySnapshot> findByFriendId(String friendId) async {
+        final normalized = friendId.toLowerCase();
+        var snap = await db
+            .collection('users')
+            .where('friendId', isEqualTo: normalized)
+            .limit(1)
+            .get();
+        if (snap.docs.isNotEmpty) return snap;
+
+        // Compatibility for users created before friend IDs became lowercase.
+        return db
+            .collection('users')
+            .where('friendIdLower', isEqualTo: normalized)
+            .limit(1)
+            .get();
+      }
+
       QuerySnapshot snap;
 
       if (q.startsWith("@")) {
@@ -83,18 +97,7 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
           setState(() => _error = 'Enter a valid friend ID.');
           return;
         }
-        snap = await db
-            .collection('users')
-            .where('friendIdLower', isEqualTo: friendId.toLowerCase())
-            .limit(1)
-            .get();
-      } else if (q.contains('@')) {
-        // Search by email (case-insensitive)
-        snap = await db
-            .collection('users')
-            .where('emailLower', isEqualTo: q.toLowerCase())
-            .limit(1)
-            .get();
+        snap = await findByFriendId(friendId);
       } else {
         // Treat as UID - direct document fetch is faster than a query
         final doc = await db.collection('users').doc(q).get();
@@ -104,19 +107,17 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
           return;
         }
         // Fallback: friendId without leading "@"
-        snap = await db
-            .collection('users')
-            .where('friendIdLower', isEqualTo: q.toLowerCase())
-            .limit(1)
-            .get();
+        snap = await findByFriendId(q);
       }
 
       if (snap.docs.isEmpty) {
-        setState(() => _error = 'No user found with that ID or email.');
+        setState(() => _error = 'No user found with that UID or friend ID.');
       } else {
         final doc = snap.docs.first;
-        setState(() =>
-            _result = {'uid': doc.id, ...doc.data() as Map<String, dynamic>});
+        setState(
+          () =>
+              _result = {'uid': doc.id, ...doc.data() as Map<String, dynamic>},
+        );
       }
     } catch (e) {
       setState(() => _error = 'Something went wrong. Please try again.');
@@ -127,9 +128,9 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
   }
 
   Future<void> _openScanner() async {
-    final uid = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const QrScannerScreen()),
-    );
+    final uid = await Navigator.of(
+      context,
+    ).push<String>(MaterialPageRoute(builder: (_) => const QrScannerScreen()));
     if (uid == null || !mounted) return;
 
     // Populate the field so the user sees what was scanned, then search.
@@ -186,7 +187,7 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
             autofocus: true,
             textInputAction: TextInputAction.search,
             decoration: InputDecoration(
-              hintText: 'UID, email, or @friendId',
+              hintText: 'UID or @friendId',
               prefixIcon: const Icon(Icons.search),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -237,10 +238,7 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
           // Result card
           if (_result != null) ...[
             const SizedBox(height: 20),
-            _UserResultCard(
-              data: _result!,
-              onAdd: _confirm,
-            ),
+            _UserResultCard(data: _result!, onAdd: _confirm),
           ],
         ],
       ),
@@ -272,8 +270,7 @@ class _UserResultCard extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 24,
-            backgroundImage:
-                photoUrl != null ? NetworkImage(photoUrl) : null,
+            backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
             child: photoUrl == null
                 ? Text(
                     name.isNotEmpty ? name[0].toUpperCase() : '?',
@@ -293,7 +290,9 @@ class _UserResultCard extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  data['email'] as String? ?? data['uid'] as String? ?? '',
+                  data['friendId'] == null
+                      ? data['uid'] as String? ?? ''
+                      : '@${data['friendId']}',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: cs.onSurface.withOpacity(0.5),
                   ),
@@ -315,4 +314,3 @@ class _UserResultCard extends StatelessWidget {
     );
   }
 }
-

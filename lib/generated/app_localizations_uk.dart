@@ -142,6 +142,20 @@ class AppLocalizationsUk extends AppLocalizations {
   String get forgotPassword => 'Забули пароль?';
 
   @override
+  String get resetPasswordTitle => 'Скинути пароль';
+
+  @override
+  String get resetPasswordBody =>
+      'Введіть вашу електронну пошту, і ми надішлемо посилання для скидання пароля.';
+
+  @override
+  String get sendResetLink => 'Надіслати посилання';
+
+  @override
+  String get passwordResetEmailSent =>
+      'Лист для скидання пароля надіслано. Перевірте вашу пошту.';
+
+  @override
   String get continueWithGoogle => 'Продовжити з Google';
 
   @override

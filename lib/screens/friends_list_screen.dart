@@ -276,8 +276,12 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           friends = friends.where((f) {
             final fData = f.data() as Map<String, dynamic>;
             final name = (fData['displayName'] as String? ?? '').toLowerCase();
-            final email = (fData['email'] as String? ?? '').toLowerCase();
-            return name.contains(q) || email.contains(q);
+            final friendHandle = (fData['friendId'] as String? ?? '')
+                .toLowerCase();
+            final uid = (fData['userId'] as String? ?? '').toLowerCase();
+            return name.contains(q) ||
+                friendHandle.contains(q) ||
+                uid.contains(q);
           }).toList();
         }
 
@@ -286,7 +290,11 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.search_off_outlined, size: 80, color: Colors.grey[400]),
+                Icon(
+                  Icons.search_off_outlined,
+                  size: 80,
+                  color: Colors.grey[400],
+                ),
                 const SizedBox(height: 16),
                 Text(
                   _l.noFriendsMatch(_filter),
@@ -427,8 +435,12 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
                     ? null
                     : Icon(Icons.person, color: Colors.grey[600]),
               ),
-              title: Text(blocked['displayName']),
-              subtitle: Text(blocked['email']),
+              title: Text(blocked['displayName'] ?? _l.defaultUser),
+              subtitle: Text(
+                (blocked['friendId']?.toString().trim().isNotEmpty ?? false)
+                    ? '@${blocked['friendId']}'
+                    : blocked['userId']?.toString() ?? '',
+              ),
               trailing: ElevatedButton(
                 onPressed: () => _unblockUser(blocked['userId']),
                 child: Text(_l.unblock),
@@ -449,17 +461,17 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
 
     final friendId = userData['uid'] as String?;
     if (friendId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_l.invalidUserData)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_l.invalidUserData)));
       return;
     }
 
     try {
       if (friendId == currentUser.uid) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_l.cannotAddYourself)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_l.cannotAddYourself)));
         return;
       }
 
@@ -472,9 +484,9 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .get();
 
       if (existingFriend.exists) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_l.alreadyFriends)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_l.alreadyFriends)));
         return;
       }
 
@@ -487,9 +499,9 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
           .get();
 
       if (existingRequest.docs.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_l.friendRequestAlreadySent)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_l.friendRequestAlreadySent)));
         return;
       }
 
@@ -527,9 +539,9 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
     } catch (e) {
       debugPrint('Error sending friend request: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_l.genericError(e.toString()))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_l.genericError(e.toString()))));
       }
     }
   }
@@ -570,8 +582,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
             'userId': friendId,
             'friendId': friendData?['friendId'] ?? '',
             'displayName': friendData?['displayName'] ?? 'User',
-            'email': friendData?['email'] ?? '',
-            'photoURL': friendData?['photoUrl'] ?? friendData?['photoURL'],
+            'photoUrl': friendData?['photoUrl'] ?? friendData?['photoURL'],
             'addedAt': FieldValue.serverTimestamp(),
             'conversationId': conversationId,
           });
@@ -589,8 +600,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
             'userId': currentUser.uid,
             'friendId': currentUserData.data()?['friendId'] ?? '',
             'displayName': currentUserData.data()?['displayName'] ?? 'User',
-            'email': currentUserData.data()?['email'] ?? '',
-            'photoURL':
+            'photoUrl':
                 currentUserData.data()?['photoUrl'] ??
                 currentUserData.data()?['photoURL'],
             'addedAt': FieldValue.serverTimestamp(),
@@ -599,16 +609,16 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
 
       // Update request status
       await _firestore.collection('friendRequests').doc(requestId).update({
-            'status': 'accepted',
-            'respondedAt': FieldValue.serverTimestamp(),
-          });
+        'status': 'accepted',
+        'respondedAt': FieldValue.serverTimestamp(),
+      });
 
       // (No cache subscription) Updates will come from Firestore streams when viewing lists
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_l.friendRequestAccepted)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_l.friendRequestAccepted)));
       }
     } catch (e) {
       if (mounted) {
@@ -657,8 +667,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
             'userId': userId,
             'friendId': userData?['friendId'] ?? '',
             'displayName': userData?['displayName'] ?? 'User',
-            'email': userData?['email'] ?? '',
-            'photoURL': userData?['photoUrl'] ?? userData?['photoURL'],
+            'photoUrl': userData?['photoUrl'] ?? userData?['photoURL'],
             'blockedAt': FieldValue.serverTimestamp(),
           });
 
@@ -698,8 +707,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
             'userId': friendId,
             'friendId': friendData['friendId'] ?? '',
             'displayName': friendData['displayName'] ?? 'User',
-            'email': friendData['email'] ?? '',
-            'photoURL': friendData['photoURL'] ?? friendData['photoUrl'],
+            'photoUrl': friendData['photoURL'] ?? friendData['photoUrl'],
             'blockedAt': FieldValue.serverTimestamp(),
           });
 
@@ -762,9 +770,7 @@ class _ImprovedFriendsListScreenState extends State<ImprovedFriendsListScreen>
       context: context,
       builder: (context) => AlertDialog(
         title: Text(_l.removeFriend),
-        content: Text(
-          _l.removeFriendConfirm(friendName),
-        ),
+        content: Text(_l.removeFriendConfirm(friendName)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -843,7 +849,8 @@ class _FriendListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final displayName = initialData['displayName'] ?? l.defaultUser;
-    final email = initialData['email'] ?? '';
+    final friendHandle = initialData['friendId']?.toString().trim() ?? '';
+    final subtitle = friendHandle.isNotEmpty ? '@$friendHandle' : friendId;
     final photoURL =
         (initialData['photoURL'] ?? initialData['photoUrl'])?.toString() ?? '';
     final hasPhoto = photoURL.isNotEmpty;
@@ -869,7 +876,7 @@ class _FriendListTile extends StatelessWidget {
         child: hasPhoto ? null : Icon(Icons.person, color: Colors.grey[600]),
       ),
       title: Text(displayName),
-      subtitle: Text(email),
+      subtitle: Text(subtitle),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -995,7 +1002,10 @@ class _FriendRequestTileState extends State<_FriendRequestTile> {
     }
 
     final displayName = _userData?['displayName'] ?? l.defaultUser;
-    final email = _userData?['email'] ?? '';
+    final friendHandle = _userData?['friendId']?.toString().trim() ?? '';
+    final subtitle = friendHandle.isNotEmpty
+        ? '@$friendHandle'
+        : widget.senderId;
     final photoURL =
         (_userData?['photoURL'] ?? _userData?['photoUrl'])?.toString() ?? '';
     final hasPhoto = photoURL.isNotEmpty;
@@ -1015,7 +1025,7 @@ class _FriendRequestTileState extends State<_FriendRequestTile> {
           displayName,
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
-        subtitle: Text(email),
+        subtitle: Text(subtitle),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

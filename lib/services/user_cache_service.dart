@@ -137,9 +137,7 @@ class UserCacheService extends ChangeNotifier {
 
     for (final key in [
       'displayName',
-      'email',
       'friendId',
-      'friendIdLower',
       'bio',
       'website',
       'location',
@@ -152,7 +150,7 @@ class UserCacheService extends ChangeNotifier {
       normalized[key] = value;
     }
 
-    for (final key in ['createdAt', 'lastSeen', 'lastHeartbeat']) {
+    for (final key in ['createdAt', 'lastSeen']) {
       final value = data[key];
       if (value is Timestamp) {
         normalized[key] = value;
@@ -174,9 +172,7 @@ class UserCacheService extends ChangeNotifier {
       if (decoded is Map<String, dynamic>) {
         final data = <String, dynamic>{};
         for (final entry in decoded.entries) {
-          if (entry.key == 'createdAt' ||
-              entry.key == 'lastSeen' ||
-              entry.key == 'lastHeartbeat') {
+          if (entry.key == 'createdAt' || entry.key == 'lastSeen') {
             if (entry.value is int) {
               data[entry.key] = Timestamp.fromMillisecondsSinceEpoch(
                 entry.value as int,
